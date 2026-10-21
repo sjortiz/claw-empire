@@ -117,10 +117,14 @@ describe("review auto-apply", () => {
     }
   });
 
-  it("leaves video pre-production picks with the CEO, like YOLO mode", () => {
+  it("applies every item for video pre-production tasks too, unlike YOLO mode", () => {
     const db = createDb({ global: true, pack: "video_preprod" });
     try {
-      expect(runAutopilot(db).applyDecisionReply).not.toHaveBeenCalled();
+      const { applyDecisionReply } = runAutopilot(db);
+      expect(applyDecisionReply).toHaveBeenCalledWith("review-round-pick:task-1:meeting-1", {
+        option_number: 1,
+        selected_option_numbers: [1, 2, 3],
+      });
     } finally {
       db.close();
     }

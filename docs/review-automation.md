@@ -50,7 +50,7 @@ has prepared the options, every review item is applied as revision work. The
 round's skip option and the planner's recommendation are ignored. The task logs
 `Review items applied automatically (setting)` after the regular
 `Decision inbox: review decision resolved (action=apply_review_pick, …)` entry.
-Video pre-production tasks keep this decision manual, as in YOLO mode.
+This includes video pre-production tasks, whose picks YOLO mode leaves manual.
 
 With the setting off, revision picks stay manual even when review meetings start
 automatically.

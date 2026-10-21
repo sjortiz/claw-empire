@@ -130,14 +130,7 @@ export function runReviewAutoApplyAutopilot(input: {
     buildReplyPayload: buildReviewAutoApplyReplyPayload,
     shouldSkipItem: (item) => {
       if (item.kind !== "review_round_pick") return true;
-      if (!resolveReviewAutomation(db, "reviewAutoApply", item.project_id).enabled) return true;
-      // Same exception as YOLO mode: video pre-production picks stay with the CEO.
-      const row = item.task_id
-        ? (db.prepare("SELECT workflow_pack_key FROM tasks WHERE id = ? LIMIT 1").get(item.task_id) as
-            | { workflow_pack_key?: string | null }
-            | undefined)
-        : undefined;
-      return row?.workflow_pack_key === "video_preprod";
+      return !resolveReviewAutomation(db, "reviewAutoApply", item.project_id).enabled;
     },
     applyDecisionReply: (decisionId, body) => {
       const result = input.applyDecisionReply(decisionId, body);
