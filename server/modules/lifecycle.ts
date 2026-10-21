@@ -1,5 +1,6 @@
 import { sweepExpiredWorkflowWaits } from "./workflow/core/persistent-wait.ts";
 import { sweepReadyRoots } from "./workflow/core/task-resume.ts";
+import { resumeReviewsOnStartup } from "./workflow/core/review-startup.ts";
 import type { RuntimeContext } from "../types/runtime-context.ts";
 import type { IncomingMessage } from "node:http";
 import type { WebSocket as WsSocket } from "ws";
@@ -362,27 +363,7 @@ export function startLifecycle(ctx: RuntimeContext): void {
     recoverOrphanInProgressTasks("startup");
     recoverOrphanWorkingAgents("startup");
 
-    const reviewTasks = db
-      .prepare(
-        `
-    SELECT id, title
-    FROM tasks
-    WHERE status = 'review'
-    ORDER BY updated_at ASC
-  `,
-      )
-      .all() as Array<{ id: string; title: string }>;
-
-    reviewTasks.forEach((task, idx) => {
-      const delay = 1200 + idx * 400;
-      setTimeout(() => {
-        const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as
-          | { status: string }
-          | undefined;
-        if (!current || current.status !== "review") return;
-        finishReview(task.id, task.title);
-      }, delay);
-    });
+    resumeReviewsOnStartup({ db, finishReview, appendTaskLog });
   }
 
   function sweepPendingSubtaskDelegations(): void {
