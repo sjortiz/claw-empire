@@ -1,6 +1,8 @@
 # Implementation coverage: Planning acceptance criteria
 
-Status: requirements established; implementation and verification evidence pending.
+Status: requirements established. This document records the original acceptance
+contract; the current evidence and decision are in the
+[Planning CEO acceptance review](2026-10-21-planning-ceo-acceptance-review.md).
 
 Planning item: `PLN-01` / `bad7764e-0f51-4233-a990-ae3357c4e475`.
 Parent: `5b948211-0b00-47b1-91f8-9f96a4ecb8ff`.
