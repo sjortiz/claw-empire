@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { isPlanningAgent, selectPlanningAgent } from "./planner-selection.ts";
-import { parsePlanningGraph } from "../../workflow/agents/planning-graph.ts";
+import {
+  detectImplementationIntent,
+  includeImplementationDepartment,
+} from "../../workflow/agents/implementation-intent.ts";
+import { parsePlanningGraph, validateImplementationCoverage } from "../../workflow/agents/planning-graph.ts";
 
 import type { AgentRow } from "./direct-chat.ts";
 import type { DelegationOptions } from "./project-resolution.ts";
@@ -262,7 +266,18 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
 
       broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
 
-      const mentionedDepts = [...new Set(detectTargetDepartments(ceoMessage).filter((d) => d !== leaderDeptId))];
+      const implementationIntent = detectImplementationIntent(ceoMessage, projectContextHint ?? "");
+      const mentionedDepts = includeImplementationDepartment(
+        detectTargetDepartments(ceoMessage),
+        implementationIntent,
+      ).filter((d) => d !== leaderDeptId);
+      if (implementationIntent.requiresImplementation) {
+        appendTaskLog(
+          taskId,
+          "system",
+          `Planning coverage: Development required by code-change intent; units=${implementationIntent.implementationUnits.map((unit) => unit.key).join(", ")}`,
+        );
+      }
 
       if (isPlanningLead) {
         const relatedLabel =
@@ -386,7 +401,23 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       };
 
       const continueAfterPlan = (planningNotes: string[], afterPlan: () => void) => {
-        if (!skipPlanSubtasks) seedApprovedPlanSubtasks(taskId, leaderDeptId, planningNotes);
+        try {
+          const approvedGraph = planningNotes.map(parsePlanningGraph).find((graph) => graph !== null) ?? null;
+          const reasons = validateImplementationCoverage(approvedGraph, implementationIntent);
+          if (implementationIntent.requiresImplementation && skipPlanSubtasks)
+            reasons.push("Implementation task creation cannot be skipped for a code-change directive.");
+          if (reasons.length) throw new Error(reasons.join(" "));
+          if (!skipPlanSubtasks) seedApprovedPlanSubtasks(taskId, leaderDeptId, planningNotes);
+        } catch (error) {
+          const message = `Implementation planning blocked: ${error instanceof Error ? error.message : String(error)}`;
+          appendTaskLog(taskId, "error", message);
+          notifyCeo(message, taskId);
+          db.prepare("UPDATE agents SET current_task_id = NULL WHERE id = ? AND current_task_id = ?").run(
+            teamLeader.id,
+            taskId,
+          );
+          return;
+        }
         const graph = !skipPlanSubtasks && planningNotes.some((note) => parsePlanningGraph(note) !== null);
         if (!graph) {
           processSubtaskDelegations(taskId);

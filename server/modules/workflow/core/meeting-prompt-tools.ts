@@ -1,3 +1,4 @@
+import { implementationPlanningRules } from "../agents/implementation-intent.ts";
 import type { AgentRow, MeetingPromptOptions } from "./conversation-types.ts";
 import type { Lang } from "../../../types/lang.ts";
 
@@ -76,6 +77,12 @@ export function createMeetingPromptTools(deps: CreateMeetingPromptToolsDeps) {
       deptConstraint,
       localeInstruction(lang),
       videoPlanningInvariant,
+      isPlanningWork && opts.requiresImplementation
+        ? implementationPlanningRules({
+            requiresImplementation: true,
+            implementationUnits: opts.implementationUnits ?? [],
+          })
+        : "",
       "Output rules:",
       ...(isPlanningWork
         ? [

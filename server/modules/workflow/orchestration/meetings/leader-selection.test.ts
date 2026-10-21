@@ -254,3 +254,24 @@ describe("meeting leader selection - office pack scope", () => {
     }
   });
 });
+
+it("includes Development alongside Operations when Nexo code intent is absent from keyword hints", () => {
+  const db = setupDb();
+  try {
+    db.exec(
+      `INSERT INTO tasks (id, title, description, department_id) VALUES ('nexo', 'Fix Nexo issues', '[CEO] Fix the first two open issues on Nexo, #84 and #85. Add tests, one branch per issue.', 'planning');`,
+    );
+    const tools = createMeetingLeaderSelectionTools({
+      db,
+      findTeamLeader: buildFindTeamLeader(db),
+      detectTargetDepartments: () => ["operations"],
+    });
+    expect(tools.getTaskRelatedDepartmentIds("nexo", "planning")).toEqual(["planning", "operations", "dev"]);
+    db.prepare("UPDATE tasks SET description = ? WHERE id = 'nexo'").run(
+      "[CEO] Update API documentation\n[PROJECT CORE GOAL] Fix Nexo code issues #84 and #85",
+    );
+    expect(tools.getTaskRelatedDepartmentIds("nexo", "planning")).toEqual(["planning", "operations"]);
+  } finally {
+    db.close();
+  }
+});
