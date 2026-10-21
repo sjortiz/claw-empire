@@ -128,16 +128,11 @@ describe("cooperation late-note launch contract (AC-QA-001)", () => {
         "error",
         expect.stringContaining("isolated worktree creation failed"),
       );
-      // Completion retains its existing responsibility for releasing the agent,
-      // handling linked items and advancing the registered department queue.
+      // Run completion releases the agent and advances the registered department
+      // queue; linked items are reconciled there and complete only after integration.
       expect(crossDeptNextCallbacks.has(taskId)).toBe(true);
-      if (linkedSubtaskId) {
-        expect(handleSubtaskDelegationComplete).toHaveBeenCalledExactlyOnceWith(taskId, linkedSubtaskId, 1);
-        expect(handleTaskRunComplete).not.toHaveBeenCalled();
-      } else {
-        expect(handleTaskRunComplete).toHaveBeenCalledExactlyOnceWith(taskId, 1);
-        expect(handleSubtaskDelegationComplete).not.toHaveBeenCalled();
-      }
+      expect(handleTaskRunComplete).toHaveBeenCalledExactlyOnceWith(taskId, 1);
+      expect(handleSubtaskDelegationComplete).not.toHaveBeenCalled();
       return;
     }
     expect(providerLaunch).toHaveBeenCalledTimes(1);

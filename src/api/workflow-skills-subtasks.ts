@@ -6,6 +6,8 @@ import type { MessengerChannelType, SubTask, WorkflowPackKey } from "../types";
 export interface TaskDiffResult {
   ok: boolean;
   hasWorktree?: boolean;
+  /** "directive" when the diff is a completed directive's integration branch. */
+  mergeSource?: "task" | "directive";
   branchName?: string;
   targetBranch?: string | null;
   projectPath?: string;
@@ -64,6 +66,11 @@ export async function getTaskVerifyCommit(id: string): Promise<TaskVerifyCommitR
 
 export async function mergeTask(id: string, expectedTargetBranch: string): Promise<MergeResult> {
   return post(`/api/tasks/${id}/merge`, { expectedTargetBranch }) as Promise<MergeResult>;
+}
+
+/** Directive approval: integrates the task branch into its directive branch only. */
+export async function integrateTask(id: string): Promise<MergeResult> {
+  return post(`/api/tasks/${id}/merge`, {}) as Promise<MergeResult>;
 }
 
 export async function discardTask(id: string): Promise<{ ok: boolean; message: string }> {

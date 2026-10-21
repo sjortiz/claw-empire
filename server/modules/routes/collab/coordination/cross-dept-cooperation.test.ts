@@ -10,6 +10,8 @@ type ProviderCase = {
   effort?: string;
   defaultEffort?: string;
   expectedEffort?: string;
+  initiallyBusy?: boolean;
+  worktreeFails?: boolean;
 };
 
 type SeededAgents = {
@@ -83,7 +85,34 @@ describe("createCrossDeptCooperationTools", () => {
     db = null;
   });
 
+  it("recovers lost graph callbacks through dependency dispatch without creating legacy department tasks", () => {
+    db = new DatabaseSync(":memory:");
+    applyBaseSchema(db);
+    applyTaskSchemaMigrations(db);
+    seedCollaborationFixture(db, "api");
+    db.exec(`
+      INSERT INTO tasks (id, title, source_task_id, status) VALUES ('graph-child', 'Child', 'task-parent', 'done');
+      INSERT INTO task_logs (task_id, kind, message) VALUES ('task-parent', 'system', 'Planned graph seeded 3 subtasks with explicit dependencies');
+    `);
+    const processSubtaskDelegations = vi.fn();
+    const maybeNotifyAllSubtasksComplete = vi.fn();
+    const startTaskExecutionForAgent = vi.fn();
+    const tools = createCrossDeptCooperationTools({
+      db,
+      processSubtaskDelegations,
+      maybeNotifyAllSubtasksComplete,
+      startTaskExecutionForAgent,
+    });
+    tools.recoverCrossDeptQueueAfterMissingCallback("graph-child");
+    expect(processSubtaskDelegations).toHaveBeenCalledWith("task-parent");
+    expect(maybeNotifyAllSubtasksComplete).toHaveBeenCalledWith("task-parent");
+    expect(startTaskExecutionForAgent).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each<ProviderCase>([
+    { provider: "api", launchKind: "api", initiallyBusy: true },
+    { provider: "api", launchKind: "api", worktreeFails: true },
     { provider: "api", launchKind: "api" },
     { provider: "copilot", launchKind: "http" },
     { provider: "antigravity", launchKind: "http" },
@@ -93,21 +122,22 @@ describe("createCrossDeptCooperationTools", () => {
     { provider: "claude", launchKind: "cli", effort: "low", defaultEffort: "high", expectedEffort: "low" },
   ])(
     "routes $provider collaboration tasks through the $launchKind launcher",
-    ({ provider, launchKind, effort, defaultEffort, expectedEffort }) => {
+    ({ provider, launchKind, effort, defaultEffort, expectedEffort, initiallyBusy, worktreeFails }) => {
       db = new DatabaseSync(":memory:");
       applyBaseSchema(db);
       applyTaskSchemaMigrations(db);
 
       const { teamLeader, crossLeader, execAgent } = seedCollaborationFixture(db, provider);
 
-      execAgent.cli_reasoning_level = effort ?? null;
+      db.prepare("UPDATE agents SET cli_reasoning_level = ? WHERE id = ?").run(effort ?? null, execAgent.id);
       const launchApiProviderAgent = vi.fn();
       const launchHttpAgent = vi.fn();
       const spawnCliAgent = vi.fn((..._args: unknown[]) => ({ on: vi.fn() }));
+      const handleTaskRunComplete = vi.fn();
 
       const { startCrossDeptCooperation } = createCrossDeptCooperationTools({
         db,
-        createWorktree: vi.fn(() => "/workspace/demo/.climpire-worktrees/test"),
+        createWorktree: vi.fn(() => (worktreeFails ? null : "/isolated/collaboration")),
         ensureClaudeMd: vi.fn(),
         nowMs: () => 1_717_171_717_000,
         appendTaskLog: vi.fn(),
@@ -151,7 +181,7 @@ describe("createCrossDeptCooperationTools", () => {
         launchHttpAgent,
         getNextHttpAgentPid: vi.fn(() => 4242),
         handleSubtaskDelegationComplete: vi.fn(),
-        handleTaskRunComplete: vi.fn(),
+        handleTaskRunComplete,
         startProgressTimer: vi.fn(),
       });
 
@@ -166,6 +196,21 @@ describe("createCrossDeptCooperationTools", () => {
         taskId: "task-parent",
         projectId: "project-1",
       });
+
+      if (initiallyBusy) {
+        db.prepare(
+          "UPDATE agents SET status = 'working', current_task_id = 'existing-run' WHERE department_id = 'dev'",
+        ).run();
+        vi.advanceTimersByTime(1500);
+        expect(launchApiProviderAgent).not.toHaveBeenCalled();
+        expect(db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE source_task_id = 'task-parent'").get()).toMatchObject({
+          n: 0,
+        });
+        expect(db.prepare("SELECT current_task_id FROM agents WHERE id = 'dev-worker'").get()).toMatchObject({
+          current_task_id: "existing-run",
+        });
+        db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = 'dev-worker'").run();
+      }
 
       vi.runAllTimers();
 
@@ -184,6 +229,14 @@ describe("createCrossDeptCooperationTools", () => {
         assigned_agent_id: "dev-worker",
         source_task_id: "task-parent",
       });
+      if (worktreeFails) {
+        expect(spawnCliAgent).not.toHaveBeenCalled();
+        expect(launchApiProviderAgent).not.toHaveBeenCalled();
+        expect(launchHttpAgent).not.toHaveBeenCalled();
+        expect(handleTaskRunComplete).toHaveBeenCalledWith(expect.any(String), 1);
+        return;
+      }
+
       if (launchKind === "cli") {
         expect(spawnCliAgent).toHaveBeenCalledTimes(1);
         expect(spawnCliAgent.mock.calls[0][6]).toBe(expectedEffort);
@@ -191,11 +244,14 @@ describe("createCrossDeptCooperationTools", () => {
         expect(launchHttpAgent).not.toHaveBeenCalled();
       } else if (launchKind === "api") {
         expect(spawnCliAgent).not.toHaveBeenCalled();
-        expect(launchApiProviderAgent.mock.calls[0][9]).toBe(effort ?? null);
         expect(launchApiProviderAgent).toHaveBeenCalledTimes(1);
+        expect(launchApiProviderAgent.mock.calls[0][4]).toBe("/isolated/collaboration");
+        expect(launchApiProviderAgent.mock.calls[0][9]).toBe(effort ?? null);
         expect(launchHttpAgent).not.toHaveBeenCalled();
       } else {
+        expect(spawnCliAgent).not.toHaveBeenCalled();
         expect(launchHttpAgent).toHaveBeenCalledTimes(1);
+        expect(launchHttpAgent.mock.calls[0][3]).toBe("/isolated/collaboration");
         expect(launchApiProviderAgent).not.toHaveBeenCalled();
       }
     },
@@ -205,7 +261,7 @@ describe("createCrossDeptCooperationTools", () => {
     { provider: "api", launchKind: "api" },
     { provider: "copilot", launchKind: "http" },
     { provider: "antigravity", launchKind: "http" },
-  ])("finalizes linked subtasks for $provider collaboration runs", ({ provider }) => {
+  ])("waits for approval before finalizing linked subtasks for $provider", ({ provider }) => {
     db = new DatabaseSync(":memory:");
     applyBaseSchema(db);
     applyTaskSchemaMigrations(db);
@@ -292,7 +348,7 @@ describe("createCrossDeptCooperationTools", () => {
       | undefined;
 
     expect(crossTask?.id).toBeTruthy();
-    expect(handleSubtaskDelegationComplete).toHaveBeenCalledWith(crossTask?.id, "subtask-linked", 0);
-    expect(handleTaskRunComplete).not.toHaveBeenCalled();
+    expect(handleSubtaskDelegationComplete).not.toHaveBeenCalled();
+    expect(handleTaskRunComplete).toHaveBeenCalledWith(crossTask?.id, 0);
   });
 });

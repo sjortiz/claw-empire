@@ -75,12 +75,16 @@ function createHarness(
   const db = new DatabaseSync(":memory:");
   db.exec(`
     CREATE TABLE projects (id TEXT PRIMARY KEY, project_path TEXT);
-    CREATE TABLE tasks (id TEXT PRIMARY KEY, project_path TEXT, project_id TEXT, status TEXT);
+    CREATE TABLE tasks (id TEXT PRIMARY KEY, project_path TEXT, project_id TEXT, status TEXT, source_task_id TEXT);
   `);
   registerWorktreeAndUsageRoutes({
     app: app as any,
     taskWorktrees,
     mergeWorktree: (projectPath: string, taskId: string) => {
+      mergeCalls.push({ projectPath, taskId });
+      return mergeResult;
+    },
+    mergeIntoCheckout: (projectPath: string, taskId: string) => {
       mergeCalls.push({ projectPath, taskId });
       return mergeResult;
     },
@@ -397,6 +401,43 @@ describe("retained worktrees after server restart", () => {
         ok: true,
         targetBranch: state === "detached" ? null : state === "changed" ? "other-session" : "main",
       });
+    } finally {
+      h.db.close();
+    }
+  });
+
+  it("offers a completed directive branch for Merge now when no task worktree remains", () => {
+    const repo = initRepo("climpire-directive-route-");
+    tempDirs.push(repo);
+    const taskId = "root0000-0000-0000-0000-000000000000";
+    const directiveBranch = `climpire/d-${taskId}`;
+    runGit(repo, ["checkout", "-b", directiveBranch]);
+    fs.writeFileSync(path.join(repo, "directive.ts"), "export const directive = true;\n", "utf8");
+    runGit(repo, ["add", "."]);
+    runGit(repo, ["commit", "-m", "feat: directive"]);
+    runGit(repo, ["checkout", "main"]);
+    const h = createHarness(new Map());
+    h.db.prepare("INSERT INTO tasks (id, project_path, status) VALUES (?, ?, 'done')").run(taskId, repo);
+    try {
+      const diff = createFakeResponse();
+      h.getRoutes.get("/api/tasks/:id/diff")?.({ params: { id: taskId } }, diff);
+      expect(diff.payload).toMatchObject({
+        ok: true,
+        hasWorktree: true,
+        mergeSource: "directive",
+        branchName: directiveBranch,
+        targetBranch: "main",
+      });
+      expect((diff.payload as { diff: string }).diff).toContain("directive = true");
+
+      const res = createFakeResponse();
+      h.postRoutes.get("/api/tasks/:id/merge")?.(
+        { params: { id: taskId }, body: { expectedTargetBranch: "main" } },
+        res,
+      );
+      expect(res.payload).toMatchObject({ ok: true });
+      expect(h.mergeCalls).toEqual([{ projectPath: repo, taskId }]);
+      expect(h.cleanupCalls).toEqual([]);
     } finally {
       h.db.close();
     }

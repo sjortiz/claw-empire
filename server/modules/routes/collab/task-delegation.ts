@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { isPlanningAgent, selectPlanningAgent } from "./planner-selection.ts";
+import { parsePlanningGraph } from "../../workflow/agents/planning-graph.ts";
 
 import type { AgentRow } from "./direct-chat.ts";
 import type { DelegationOptions } from "./project-resolution.ts";
@@ -129,9 +131,6 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
     options: DelegationOptions = {},
   ): void {
     const lang = resolveLang(ceoMessage);
-    const leaderName = lang === "ko" ? teamLeader.name_ko || teamLeader.name : teamLeader.name;
-    const leaderDeptId = teamLeader.department_id!;
-    const leaderDeptName = getDeptName(leaderDeptId);
     const skipPlannedMeeting = !!options.skipPlannedMeeting;
     const skipPlanSubtasks = !!options.skipPlanSubtasks;
 
@@ -147,11 +146,37 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       });
       const projectCandidateAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
         workflow_pack_key: workflowPackKey,
-        department_id: leaderDeptId,
+        department_id: teamLeader.department_id,
         project_id: selectedProject.id,
       });
-      const subordinate = findBestSubordinate(leaderDeptId, teamLeader.id, projectCandidateAgentIds);
-      const manualFallbackToLeader = Array.isArray(projectCandidateAgentIds) && subordinate === null;
+      const isPlanningLead = isPlanningAgent(teamLeader);
+      if (isPlanningLead) {
+        const planner = selectPlanningAgent(db, projectCandidateAgentIds, workflowPackKey);
+        if (!planner) {
+          notifyCeo(
+            pickL(
+              l(
+                ["사용 가능한 기획 담당자가 없습니다. 워크플로 팩과 공급자 연결을 확인하세요."],
+                ["No eligible planner is available. Check workflow pack assignments and provider connections."],
+                ["利用可能な企画担当者がいません。ワークフローパックの割り当てとプロバイダー接続を確認してください。"],
+                ["没有可用的规划人员。请检查工作流包分配和提供商连接。"],
+              ),
+              lang,
+            ),
+          );
+          return;
+        }
+        teamLeader = planner;
+      }
+      const leaderName = lang === "ko" ? teamLeader.name_ko || teamLeader.name : teamLeader.name;
+      const leaderDeptId = teamLeader.department_id!;
+      const leaderDeptName = getDeptName(leaderDeptId);
+      // Keep the selected planner responsible for consolidation and execution.
+      // Delegating every root back to the same senior defeats load balancing.
+      const subordinate = isPlanningLead
+        ? null
+        : findBestSubordinate(leaderDeptId, teamLeader.id, projectCandidateAgentIds);
+      const manualFallbackToLeader = !isPlanningLead && Array.isArray(projectCandidateAgentIds) && subordinate === null;
 
       const taskId = randomUUID();
       const t = nowMs();
@@ -238,9 +263,6 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
 
       const mentionedDepts = [...new Set(detectTargetDepartments(ceoMessage).filter((d) => d !== leaderDeptId))];
-      const isPlanningLead =
-        leaderDeptId === "planning" ||
-        Number((teamLeader as unknown as { acts_as_planning_leader?: unknown }).acts_as_planning_leader ?? 0) === 1;
 
       if (isPlanningLead) {
         const relatedLabel =
@@ -309,10 +331,8 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         db.prepare("UPDATE tasks SET status = 'collaborating', updated_at = ? WHERE id = ?").run(nowMs(), taskId);
         broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
 
-        startCrossDeptCooperation(
-          mentionedDepts,
-          0,
-          {
+        for (const departmentId of mentionedDepts)
+          startCrossDeptCooperation([departmentId], 0, {
             teamLeader,
             taskTitle,
             ceoMessage,
@@ -323,28 +343,13 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
             taskId,
             projectId: selectedProject.id,
             projectCandidateAgentIds,
-          },
-          () => {
-            if (isTaskWorkflowInterrupted(taskId)) return;
-            notifyCeo(
-              pickL(
-                l(
-                  ["[CEO OFFICE] 유관부서 선행 처리 완료. 이제 내부 업무 하달을 시작합니다."],
-                  ["[CEO OFFICE] Related-department pre-processing complete. Starting internal delegation now."],
-                  ["[CEO OFFICE] 関連部門の先行処理が完了。これより内部委任を開始します。"],
-                  ["[CEO OFFICE] 相关部门前置处理完成，现开始内部下达。"],
-                ),
-                lang,
-              ),
-              taskId,
-            );
-            next();
-          },
-        );
+          });
+        next();
       };
 
+      let usesPlanningGraph = false;
       const runCrossDeptAfterMainIfNeeded = () => {
-        if (isPlanningLead || mentionedDepts.length === 0) return;
+        if (usesPlanningGraph || isPlanningLead || mentionedDepts.length === 0) return;
         const crossDelay = 3000 + Math.random() * 1000;
         setTimeout(() => {
           if (isTaskWorkflowInterrupted(taskId)) return;
@@ -380,22 +385,73 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         }, crossDelay);
       };
 
+      const continueAfterPlan = (planningNotes: string[], afterPlan: () => void) => {
+        if (!skipPlanSubtasks) seedApprovedPlanSubtasks(taskId, leaderDeptId, planningNotes);
+        const graph = !skipPlanSubtasks && planningNotes.some((note) => parsePlanningGraph(note) !== null);
+        if (!graph) {
+          processSubtaskDelegations(taskId);
+          runCrossDeptBeforeDelegationIfNeeded(afterPlan);
+          return;
+        }
+        usesPlanningGraph = true;
+        // Graph items execute as child tasks, including the origin department.
+        // Release the planner's CLI slot and start root consolidation only after
+        // all child approvals have integrated their work into the directive tip.
+        db.prepare("UPDATE agents SET current_task_id = NULL WHERE id = ? AND current_task_id = ?").run(
+          teamLeader.id,
+          taskId,
+        );
+        db.prepare("UPDATE tasks SET status = 'collaborating', updated_at = ? WHERE id = ?").run(nowMs(), taskId);
+        broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+        processSubtaskDelegations(taskId);
+        const waitForIntegration = () => {
+          if (isTaskWorkflowInterrupted(taskId)) return;
+          const latest = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as
+            | { status: string }
+            | undefined;
+          if (latest?.status !== "collaborating") return;
+          const pending = db
+            .prepare(
+              `SELECT COUNT(*) AS count FROM subtasks s
+            LEFT JOIN tasks child ON child.id = s.delegated_task_id
+            WHERE s.task_id = ? AND (s.status NOT IN ('done', 'cancelled')
+              OR (s.status = 'done' AND (child.status IS NULL OR child.status != 'done')))`,
+            )
+            .get(taskId) as { count: number };
+          if (pending.count > 0) {
+            const retry = setTimeout(waitForIntegration, 1_000);
+            retry.unref?.();
+            return;
+          }
+          db.prepare("UPDATE tasks SET status = 'planned', updated_at = ? WHERE id = ?").run(nowMs(), taskId);
+          afterPlan();
+        };
+        waitForIntegration();
+      };
+
       const runPlanningPhase = (afterPlan: () => void) => {
         if (isTaskWorkflowInterrupted(taskId)) return;
+        if (isPlanningLead) {
+          const fresh = db.prepare("SELECT * FROM agents WHERE id = ?").get(teamLeader.id) as AgentRow | undefined;
+          if (
+            !fresh ||
+            !["idle", "break"].includes(fresh.status) ||
+            (fresh.current_task_id && fresh.current_task_id !== taskId)
+          ) {
+            const retry = setTimeout(() => runPlanningPhase(afterPlan), 5_000);
+            retry.unref?.();
+            return;
+          }
+          db.prepare("UPDATE agents SET current_task_id = ? WHERE id = ?").run(taskId, teamLeader.id);
+        }
         if (skipPlannedMeeting) {
           appendTaskLog(taskId, "system", "Planned meeting skipped by CEO directive");
-          if (!skipPlanSubtasks) {
-            seedApprovedPlanSubtasks(taskId, leaderDeptId, []);
-          }
-          runCrossDeptBeforeDelegationIfNeeded(afterPlan);
+          continueAfterPlan([], afterPlan);
           return;
         }
         startPlannedApprovalMeeting(taskId, taskTitle, leaderDeptId, (planningNotes: string[]) => {
           if (isTaskWorkflowInterrupted(taskId)) return;
-          if (!skipPlanSubtasks) {
-            seedApprovedPlanSubtasks(taskId, leaderDeptId, planningNotes ?? []);
-          }
-          runCrossDeptBeforeDelegationIfNeeded(afterPlan);
+          continueAfterPlan(planningNotes ?? [], afterPlan);
         });
       };
 
@@ -463,17 +519,31 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
           t2,
           taskId,
         );
-        db.prepare("UPDATE agents SET current_task_id = ? WHERE id = ?").run(taskId, teamLeader.id);
+        db.prepare(
+          "UPDATE agents SET current_task_id = ? WHERE id = ? AND (current_task_id IS NULL OR current_task_id = '')",
+        ).run(taskId, teamLeader.id);
         appendTaskLog(taskId, "system", `${leaderName} self-assigned (planned)`);
 
         broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
         broadcast("agent_status", db.prepare("SELECT * FROM agents WHERE id = ?").get(teamLeader.id));
 
-        runPlanningPhase(() => {
+        const startWhenAvailable = () => {
           if (isTaskWorkflowInterrupted(taskId)) return;
-          startTaskExecutionForAgent(taskId, teamLeader, leaderDeptId, leaderDeptName);
+          const fresh = db.prepare("SELECT * FROM agents WHERE id = ?").get(teamLeader.id) as AgentRow | undefined;
+          if (
+            !fresh ||
+            !["idle", "break"].includes(fresh.status) ||
+            (fresh.current_task_id && fresh.current_task_id !== taskId)
+          ) {
+            const retry = setTimeout(startWhenAvailable, 5_000);
+            retry.unref?.();
+            return;
+          }
+          db.prepare("UPDATE agents SET current_task_id = ? WHERE id = ?").run(taskId, fresh.id);
+          startTaskExecutionForAgent(taskId, fresh, leaderDeptId, leaderDeptName);
           runCrossDeptAfterMainIfNeeded();
-        });
+        };
+        runPlanningPhase(startWhenAvailable);
       }
     }, ackDelay);
   }

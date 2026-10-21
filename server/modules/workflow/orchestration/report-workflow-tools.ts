@@ -12,19 +12,8 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
     resolveLang,
     pickL,
     l,
-    sendAgentMessage,
     findTeamLeader,
-    getAgentDisplayName,
-    setTaskCreationAuditCompletion,
-    reviewRoundState,
-    reviewInFlight,
-    endTaskExecutionSession,
     notifyTaskStatus,
-    refreshCliUsageData,
-    archivePlanningConsolidatedReport,
-    crossDeptNextCallbacks,
-    recoverCrossDeptQueueAfterMissingCallback,
-    subtaskDelegationCallbacks,
     randomUUID,
     REPORT_DESIGN_TASK_PREFIX,
     REPORT_FLOW_PREFIX,
@@ -36,6 +25,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
     getDeptName,
     randomDelay,
     notifyCeo,
+    finishReview,
   } = deps;
 
   function pickDesignCheckpointAgent(): any | null {
@@ -149,85 +139,24 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
       assigned_agent_id: string | null;
     },
     note: string,
-  ): void {
-    const t = nowMs();
-    const lang = resolveLang(task.description ?? task.title);
+  ): boolean {
+    const transition = db
+      .prepare(
+        "UPDATE tasks SET status = 'review', updated_at = ? WHERE id = ? AND status IN ('in_progress', 'planned', 'pending', 'review')",
+      )
+      .run(nowMs(), task.id) as { changes?: number };
+    if (!transition.changes) return false;
+    // Reports skip the meeting, but share integration, revision recovery, and
+    // dependency release with code tasks.
+    finishReview(task.id, task.title, {
+      bypassProjectDecisionGate: true,
+      skipConsensus: true,
+      trigger: "report_completion",
+    });
+    const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as { status: string } | undefined;
+    if (updated?.status !== "done") return false;
     appendTaskLog(task.id, "system", note);
-    db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(t, t, task.id);
-    setTaskCreationAuditCompletion(task.id, true);
-    reviewRoundState.delete(task.id);
-    reviewInFlight.delete(task.id);
-    endTaskExecutionSession(task.id, "task_done_no_review");
-
-    const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
-    broadcast("task_update", updatedTask);
-    notifyTaskStatus(task.id, task.title, "done", lang);
-
-    refreshCliUsageData()
-      .then((usage: unknown) => broadcast("cli_usage_update", usage))
-      .catch(() => {});
-    const deferTaskReport = shouldDeferTaskReportUntilPlanningArchive(task);
-    if (deferTaskReport) {
-      appendTaskLog(task.id, "system", "Task report popup deferred until planning consolidated archive is ready");
-    } else {
-      emitTaskReportEvent(task.id);
-    }
-
-    const reporter = task.assigned_agent_id
-      ? (db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as any | undefined)
-      : undefined;
-    if (reporter) {
-      sendAgentMessage(
-        reporter,
-        pickL(
-          l(
-            [`대표님, '${task.title}' 보고 업무를 검토 회의 없이 완료 처리했습니다.`],
-            [`CEO, '${task.title}' report work was completed without review meeting.`],
-            [`CEO、'${task.title}' の報告業務をレビュー会議なしで完了処理しました。`],
-            [`CEO，'${task.title}' 报告任务已在无评审会议情况下完成。`],
-          ),
-          lang,
-        ),
-        "report",
-        "all",
-        null,
-        task.id,
-      );
-    }
-
-    const leader = findTeamLeader(task.department_id);
-    const leaderName = leader
-      ? getAgentDisplayName(leader, lang)
-      : pickL(l(["팀장"], ["Team Lead"], ["チームリーダー"], ["组长"]), lang);
-    notifyCeo(
-      pickL(
-        l(
-          [`${leaderName}: '${task.title}' 보고 업무를 검토 회의 없이 마감했습니다.`],
-          [`${leaderName}: '${task.title}' report task was closed without review meeting.`],
-          [`${leaderName}: '${task.title}' の報告業務をレビュー会議なしでクローズしました。`],
-          [`${leaderName}：'${task.title}' 报告任务已无评审会议直接关闭。`],
-        ),
-        lang,
-      ),
-      task.id,
-    );
-
-    if (!task.source_task_id) {
-      void archivePlanningConsolidatedReport(task.id);
-    }
-
-    const nextCallback = crossDeptNextCallbacks.get(task.id);
-    if (nextCallback) {
-      crossDeptNextCallbacks.delete(task.id);
-      nextCallback();
-    } else {
-      recoverCrossDeptQueueAfterMissingCallback(task.id);
-    }
-    const subtaskNext = subtaskDelegationCallbacks.get(task.id);
-    if (subtaskNext) {
-      subtaskDelegationCallbacks.delete(task.id);
-      subtaskNext();
-    }
+    return true;
   }
 
   function startReportDesignCheckpoint(task: {

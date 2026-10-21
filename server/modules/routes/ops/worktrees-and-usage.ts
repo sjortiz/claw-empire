@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { CliUsageEntry } from "../shared/types.ts";
 import { discoverTaskWorktree, discoverTaskWorktrees } from "../../workflow/core/worktree/lifecycle.ts";
+import { autoCommitWorktreePendingChanges } from "../../workflow/core/worktree/shared.ts";
 
 function readGitLines(cwd: string, args: string[], timeout = 8000): string[] {
   const output = execFileSync("git", args, { cwd, stdio: "pipe", timeout }).toString().trim();
@@ -164,6 +165,7 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
     app,
     taskWorktrees,
     mergeWorktree,
+    mergeIntoCheckout,
     cleanupWorktree,
     appendTaskLog,
     resolveLang,
@@ -193,11 +195,60 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
     return recovered;
   }
 
+  // A completed directive root keeps its integration branch after task worktrees are
+  // cleaned up; Merge now can still merge that branch into the checkout.
+  function findDirectiveBranch(taskId: string): { projectPath: string; branchName: string } | undefined {
+    const task = db
+      .prepare(
+        "SELECT t.status, t.source_task_id, COALESCE(NULLIF(TRIM(t.project_path), ''), p.project_path) AS project_path FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.id = ?",
+      )
+      .get(taskId) as { status: string; source_task_id: string | null; project_path: string | null } | undefined;
+    if (!task?.project_path || task.status !== "done" || task.source_task_id) return undefined;
+    const branchName = `climpire/d-${taskId}`;
+    try {
+      readGitLines(task.project_path, ["show-ref", "--verify", `refs/heads/${branchName}`]);
+    } catch {
+      return undefined;
+    }
+    return { projectPath: task.project_path, branchName };
+  }
+
   app.get("/api/tasks/:id/diff", (req, res) => {
     const id = String(req.params.id);
     const wtInfo = findTaskWorktree(id);
     if (!wtInfo) {
-      return res.json({ ok: true, hasWorktree: false, diff: "", stat: "" });
+      const directive = findDirectiveBranch(id);
+      if (!directive) return res.json({ ok: true, hasWorktree: false, diff: "", stat: "" });
+      try {
+        const currentBranch = readGitLines(directive.projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])[0];
+        const range = `${currentBranch}...${directive.branchName}`;
+        const stat = execFileSync("git", ["diff", range, "--stat"], {
+          cwd: directive.projectPath,
+          stdio: "pipe",
+          timeout: 10000,
+        })
+          .toString()
+          .trim();
+        const diff = execFileSync("git", ["diff", range], {
+          cwd: directive.projectPath,
+          stdio: "pipe",
+          timeout: 15000,
+        }).toString();
+        return res.json({
+          ok: true,
+          hasWorktree: true,
+          mergeSource: "directive",
+          branchName: directive.branchName,
+          targetBranch: currentBranch === "HEAD" ? null : currentBranch,
+          projectPath: directive.projectPath,
+          hasUncommittedChanges: false,
+          uncommittedFiles: [],
+          stat,
+          diff: diff.length > 50000 ? diff.slice(0, 50000) + "\n... (truncated)" : diff,
+        });
+      } catch (err: unknown) {
+        return res.json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      }
     }
 
     try {
@@ -240,6 +291,7 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
       res.json({
         ok: true,
         hasWorktree: true,
+        mergeSource: "task",
         branchName: wtInfo.branchName,
         targetBranch: currentBranch === "HEAD" ? null : currentBranch,
         projectPath: wtInfo.projectPath,
@@ -257,18 +309,41 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
   app.post("/api/tasks/:id/merge", (req, res) => {
     const id = String(req.params.id);
     const wtInfo = findTaskWorktree(id);
-    if (!wtInfo) {
+    const expectedTargetBranch = req.body?.expectedTargetBranch;
+
+    // Before completion, a request without a target is directive approval: integrate the
+    // task branch into its directive branch. The project checkout is not touched.
+    const taskStatus = (db.prepare("SELECT status FROM tasks WHERE id = ?").get(id) as { status: string } | undefined)
+      ?.status;
+    if (expectedTargetBranch === undefined && taskStatus !== "done") {
+      if (!wtInfo) {
+        return res.status(404).json({ error: "no_worktree", message: "No worktree found for this task" });
+      }
+      const result = mergeWorktree(wtInfo.projectPath, id);
+      if (result.success) {
+        cleanupWorktree(wtInfo.projectPath, id);
+        appendTaskLog(id, "system", `Directive integration completed: ${result.message}`);
+      } else {
+        appendTaskLog(id, "system", `Directive integration failed: ${result.message}`);
+      }
+      return res.json({ ok: result.success, message: result.message, conflicts: result.conflicts });
+    }
+
+    // Merge now: merge into the project's checkout. The source is a retained task
+    // branch, or the integration branch of a completed directive.
+    const directive = wtInfo ? undefined : findDirectiveBranch(id);
+    const source = wtInfo ?? directive;
+    if (!source) {
       return res.status(404).json({ error: "no_worktree", message: "No worktree found for this task" });
     }
 
     // Explicit merges must name the checkout the user reviewed. Validate before
     // auto-committing pending work or invoking any checkout mutation.
-    const expectedTargetBranch = req.body?.expectedTargetBranch;
     if (typeof expectedTargetBranch !== "string" || !expectedTargetBranch.trim()) {
       return res.status(400).json({ ok: false, error: "expected_target_required" });
     }
     try {
-      const currentBranch = readGitLines(wtInfo.projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])[0];
+      const currentBranch = readGitLines(source.projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])[0];
       const targetBranch = currentBranch === "HEAD" ? null : currentBranch;
       if (!targetBranch || targetBranch !== expectedTargetBranch) {
         return res.status(409).json({
@@ -286,36 +361,44 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
       });
     }
 
-    let verificationState: VerifyCommitState | null = null;
-    try {
-      verificationState = inspectWorktreeVerification(wtInfo);
-    } catch (err: unknown) {
-      appendTaskLog(
-        id,
-        "system",
-        `Final branch verification: skipped (${err instanceof Error ? err.message : String(err)})`,
-      );
-    }
-
-    if (verificationState?.verdict === "ok") {
-      appendTaskLog(
-        id,
-        "system",
-        `Final branch verification: passed (ref=${verificationState.compareRef ?? "unknown"}, commits=${verificationState.commitCount}, files=${verificationState.files.length})`,
-      );
-    } else if (verificationState && verificationState.verdict !== "no_worktree") {
-      appendTaskLog(
-        id,
-        "system",
-        `Final branch verification: warning (verdict=${verificationState.verdict}, commits=${verificationState.commitCount}, uncommitted=${verificationState.uncommittedFiles.length})`,
-      );
-    }
-
-    const result = mergeWorktree(wtInfo.projectPath, id);
     const lang = resolveLang();
+    if (wtInfo) {
+      let verificationState: VerifyCommitState | null = null;
+      try {
+        verificationState = inspectWorktreeVerification(wtInfo);
+      } catch (err: unknown) {
+        appendTaskLog(
+          id,
+          "system",
+          `Final branch verification: skipped (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }
 
+      if (verificationState?.verdict === "ok") {
+        appendTaskLog(
+          id,
+          "system",
+          `Final branch verification: passed (ref=${verificationState.compareRef ?? "unknown"}, commits=${verificationState.commitCount}, files=${verificationState.files.length})`,
+        );
+      } else if (verificationState && verificationState.verdict !== "no_worktree") {
+        appendTaskLog(
+          id,
+          "system",
+          `Final branch verification: warning (verdict=${verificationState.verdict}, commits=${verificationState.commitCount}, uncommitted=${verificationState.uncommittedFiles.length})`,
+        );
+      }
+
+      const autoCommit = autoCommitWorktreePendingChanges(id, wtInfo, appendTaskLog);
+      if (autoCommit.error) {
+        const message = `Pre-merge auto-commit failed: ${autoCommit.error}`;
+        appendTaskLog(id, "system", `Manual merge failed: ${message}`);
+        return res.json({ ok: false, message });
+      }
+    }
+
+    const result = mergeIntoCheckout(source.projectPath, id, source.branchName);
     if (result.success) {
-      cleanupWorktree(wtInfo.projectPath, id);
+      if (wtInfo) cleanupWorktree(wtInfo.projectPath, id);
       appendTaskLog(id, "system", `Manual merge completed: ${result.message}`);
       notifyCeo(
         pickL(

@@ -268,6 +268,8 @@ export interface SubTask {
   cli_tool_use_id: string | null;
   target_department_id?: string | null;
   delegated_task_id?: string | null;
+  /** Prerequisite subtask IDs; the API returns the stored JSON text. */
+  depends_on?: string | string[] | null;
   created_at: number;
   completed_at: number | null;
 }

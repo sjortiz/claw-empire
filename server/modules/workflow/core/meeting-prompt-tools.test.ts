@@ -61,6 +61,27 @@ describe("buildDirectReplyPrompt", () => {
 });
 
 describe("buildMeetingPrompt", () => {
+  it("keeps complete department drafts in consolidation instead of applying speech limits", () => {
+    const tools = createTools();
+    const draft = "department implementation details\n".repeat(200) + "item: late_api; depends_on: late_schema";
+    const prompt = tools.buildMeetingPrompt(createAgent(), {
+      meetingType: "planned",
+      planningPhase: "consolidation",
+      round: 1,
+      taskTitle: "Directive",
+      taskDescription: "Implement workflow",
+      transcript: [
+        { speaker_agent_id: "dev", speaker: "Dev", department: "Development", role: "Leader", content: draft },
+      ],
+      turnObjective: "Consolidate department plans",
+      lang: "en",
+    });
+    expect(prompt).toContain(draft);
+    expect(prompt).toContain("JSON plan_items block");
+    expect(prompt).not.toContain("1-3 sentences");
+    expect(prompt).not.toContain("no JSON");
+  });
+
   it("passes workflow pack key into department name lookup", () => {
     const getDeptName = vi.fn(() => "씬 엔진팀");
     const tools = createMeetingPromptTools({

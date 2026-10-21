@@ -121,6 +121,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   const launchHttpAgent = __ctx.launchHttpAgent;
   const launchApiProviderAgent = __ctx.launchApiProviderAgent;
   const mergeWorktree = __ctx.mergeWorktree;
+  const mergeIntoCheckout = __ctx.mergeIntoCheckout;
   const normalizeOAuthProvider = __ctx.normalizeOAuthProvider;
   const randomDelay = __ctx.randomDelay;
   const recordTaskCreationAudit = __ctx.recordTaskCreationAudit;
@@ -387,8 +388,8 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
       assigned_agent_id: string | null;
     },
     note: string,
-  ): void {
-    reportWorkflowTools.completeTaskWithoutReview(task, note);
+  ): boolean {
+    return reportWorkflowTools.completeTaskWithoutReview(task, note);
   }
 
   function startReportDesignCheckpoint(task: {
@@ -576,6 +577,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
 
   const reportWorkflowTools = createReportWorkflowTools({
     db,
+    finishReview,
     broadcast,
     appendTaskLog,
     nowMs,
@@ -676,7 +678,10 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     notifyCeo,
     taskWorktrees,
     mergeWorktree,
+    mergeIntoCheckout,
     cleanupWorktree,
+    startTaskExecutionForAgent,
+    getDeptName,
     findTeamLeader,
     getAgentDisplayName,
     setTaskCreationAuditCompletion,
@@ -703,7 +708,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   function finishReview(
     taskId: string,
     taskTitle: string,
-    options?: { bypassProjectDecisionGate?: boolean; trigger?: string },
+    options?: { bypassProjectDecisionGate?: boolean; skipConsensus?: boolean; trigger?: string },
   ): void {
     reviewFinalizeTools.finishReview(taskId, taskTitle, options);
   }

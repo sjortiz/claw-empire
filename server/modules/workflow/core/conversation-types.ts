@@ -41,6 +41,7 @@ export interface OneShotRunResult {
 
 export interface MeetingPromptOptions {
   meetingType: "planned" | "review";
+  planningPhase?: "draft" | "consolidation";
   round: number;
   taskTitle: string;
   taskDescription: string | null;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parsePlanningGraph } from "./planning-graph.ts";
 import type { Lang } from "../../../types/lang.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
 import { buildVideoFinalRenderDescription, buildVideoFinalRenderTitle } from "../packs/video-final-render.ts";
@@ -121,6 +122,63 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
       workflow_pack_key: task.workflow_pack_key,
       department_id: baseDeptId,
     });
+
+    const graph = planningNotes.map(parsePlanningGraph).find((items) => items !== null);
+    if (graph) {
+      if (
+        task.workflow_pack_key === "video_preprod" &&
+        !graph.some((item) => item.title.includes("[VIDEO_FINAL_RENDER]"))
+      ) {
+        let key = "video_final_render";
+        while (graph.some((item) => item.key === key)) key += "_final";
+        graph.push({
+          key,
+          title:
+            "[VIDEO_FINAL_RENDER] " +
+            pickL(l(["최종 영상 렌더링"], ["Render final video"], ["最終動画レンダリング"], ["渲染最终视频"]), lang),
+          description: "Render the final video with Remotion after all department deliverables are integrated.",
+          department_id: "dev",
+          depends_on: graph.map((item) => item.key),
+        });
+      }
+      const ids = new Map(graph.map((item) => [item.key, randomUUID()]));
+      for (const item of graph) {
+        if (!db.prepare("SELECT id FROM departments WHERE id = ?").get(item.department_id)) {
+          throw new Error(`Unknown planning department: ${item.department_id}`);
+        }
+      }
+      db.exec("SAVEPOINT seed_planning_graph");
+      try {
+        for (const item of graph) {
+          const leader = findTeamLeader(item.department_id, constrainedAgentIds);
+          db.prepare(
+            `INSERT INTO subtasks
+            (id, task_id, title, description, status, assigned_agent_id, target_department_id, depends_on, created_at)
+            VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+          ).run(
+            ids.get(item.key),
+            taskId,
+            item.title,
+            item.description ?? null,
+            leader?.id ?? null,
+            item.department_id,
+            JSON.stringify(item.depends_on.map((key) => ids.get(key))),
+            nowMs(),
+          );
+        }
+        db.exec("RELEASE SAVEPOINT seed_planning_graph");
+      } catch (error) {
+        db.exec("ROLLBACK TO SAVEPOINT seed_planning_graph");
+        db.exec("RELEASE SAVEPOINT seed_planning_graph");
+        throw error;
+      }
+      for (const id of ids.values())
+        broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id));
+      appendTaskLog(taskId, "system", `Planned graph seeded ${graph.length} subtasks with explicit dependencies`);
+      // Even origin-department items run as children: prerequisites must be
+      // integrated before dependents start, while the root only consolidates.
+      return;
+    }
 
     const now = nowMs();
     const baseAssignee = task.assigned_agent_id;

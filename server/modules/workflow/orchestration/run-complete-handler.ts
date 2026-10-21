@@ -436,7 +436,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
 
       if (isReportDesignCheckpointTask(task)) {
         const parentTaskId = extractReportDesignParentTaskId(task);
-        completeTaskWithoutReview(
+        const completed = completeTaskWithoutReview(
           {
             id: taskId,
             title: task.title,
@@ -447,7 +447,7 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           },
           "Status → done (report design checkpoint completed; review meeting skipped)",
         );
-        if (parentTaskId) {
+        if (completed && parentTaskId) {
           resumeReportAfterDesignCheckpoint(parentTaskId, taskId);
         }
         return;
@@ -517,50 +517,8 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       broadcast("task_update", updatedTask);
       if (task) notifyTaskStatus(taskId, task.title, "review", resolveLang(task.description ?? task.title));
 
-      // Collaboration child tasks should wait in review until parent consolidation meeting.
-      // Queue continuation is still triggered so sequential delegation does not stall.
-      if (task?.source_task_id) {
-        reconcileDelegatedSubtasksAfterRun(taskId, 0);
-        const sourceLang = resolveLang(task.description ?? task.title);
-        appendTaskLog(
-          taskId,
-          "system",
-          "Status → review (delegated collaboration task waiting for parent consolidation)",
-        );
-        notifyCeo(
-          pickL(
-            l(
-              [
-                `'${task.title}' 협업 하위 태스크가 Review 대기 상태로 전환되었습니다. 상위 업무의 전체 취합 회의에서 일괄 검토/머지합니다.`,
-              ],
-              [
-                `'${task.title}' collaboration child task is now waiting in Review. It will be consolidated in the parent task's single review/merge meeting.`,
-              ],
-              [
-                `'${task.title}' の協業子タスクはReview待機に入りました。上位タスクの一括レビュー/マージ会議で統合処理します。`,
-              ],
-              [`'${task.title}' 协作子任务已进入 Review 等待。将在上级任务的一次性评审/合并会议中统一处理。`],
-            ),
-            sourceLang,
-          ),
-          taskId,
-        );
-
-        const nextDelay = 800 + Math.random() * 600;
-        const nextCallback = crossDeptNextCallbacks.get(taskId);
-        if (nextCallback) {
-          crossDeptNextCallbacks.delete(taskId);
-          setTimeout(nextCallback, nextDelay);
-        } else {
-          recoverCrossDeptQueueAfterMissingCallback(taskId);
-        }
-        const subtaskNext = subtaskDelegationCallbacks.get(taskId);
-        if (subtaskNext) {
-          subtaskDelegationCallbacks.delete(taskId);
-          setTimeout(subtaskNext, nextDelay);
-        }
-        return;
-      }
+      // Delegated work follows the same approval path. Linked subtasks and
+      // dependency callbacks are released only after directive integration.
 
       // Notify: task entering review
       if (task) {

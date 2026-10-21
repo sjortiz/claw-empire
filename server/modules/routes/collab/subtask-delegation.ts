@@ -1,3 +1,4 @@
+import { hasUnfinishedDependencies } from "./subtask-dependencies.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { Lang } from "../../../types/lang.ts";
 import type { AgentRow } from "./direct-chat.ts";
@@ -150,13 +151,14 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     startTaskExecutionForAgent,
     activeProcesses,
   } = deps;
+  const scheduledSubtaskIds = new Set<string>();
   const pendingDelegationOptionsByTask = new Map<string, { includeRender?: boolean }>();
   const autoResumeRetryTimers = new Map<string, NodeJS.Timeout>();
   const autoResumeRetryAttempts = new Map<string, number>();
 
   // ---------------------------------------------------------------------------
-  // Subtask cross-department delegation: sequential by department,
-  // one batched request per department.
+  // Independent departments start together; only explicit prerequisites defer.
+  // Reserve scheduled IDs until completion so repeated dispatch is idempotent.
   // ---------------------------------------------------------------------------
   const { formatTaskSubtaskProgressSummary, groupSubtasksByTargetDepartment, orderSubtaskQueuesByDepartment } =
     initializeSubtaskSummary({ db, l, pickL });
@@ -260,9 +262,28 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       .all(taskId) as unknown as SubtaskRow[];
 
     // VIDEO_FINAL_RENDER must wait for other subtasks — exclude from initial batch
-    const eligible = opts?.includeRender
-      ? foreignSubtasks
-      : foreignSubtasks.filter((s) => !String(s.title ?? "").includes("[VIDEO_FINAL_RENDER]"));
+    for (const subtask of foreignSubtasks) {
+      if (scheduledSubtaskIds.has(subtask.id) || !hasUnfinishedDependencies(db, subtask)) continue;
+      const reason = pickL(
+        l(
+          ["선행 작업의 승인 및 통합을 기다리는 중"],
+          ["Waiting for prerequisite approval and integration"],
+          ["前提作業の承認と統合待ち"],
+          ["等待前置任务批准并集成"],
+        ),
+        resolveLang(subtask.description ?? subtask.title),
+      );
+      if (subtask.blocked_reason !== reason || subtask.status !== "blocked") {
+        db.prepare("UPDATE subtasks SET status = 'blocked', blocked_reason = ? WHERE id = ?").run(reason, subtask.id);
+        broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(subtask.id));
+      }
+    }
+    const eligible = foreignSubtasks.filter(
+      (subtask) =>
+        !scheduledSubtaskIds.has(subtask.id) &&
+        !hasUnfinishedDependencies(db, subtask) &&
+        (opts?.includeRender || !String(subtask.title ?? "").includes("[VIDEO_FINAL_RENDER]")),
+    );
 
     if (eligible.length === 0) return;
 
@@ -277,25 +298,10 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           department_id: string | null;
         }
       | undefined;
-    if (!parentTask) return;
+    if (!parentTask || !["planned", "pending", "collaborating", "in_progress", "review"].includes(parentTask.status))
+      return;
     const lang = resolveLang(parentTask.description ?? parentTask.title);
 
-    // Origin team first: defer foreign delegation until origin team reaches review (work complete)
-    if (!["review", "done"].includes(parentTask.status)) {
-      const ownDeptPending = db
-        .prepare(
-          "SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ? AND (target_department_id IS NULL OR target_department_id = ?) AND status NOT IN ('done', 'cancelled')",
-        )
-        .get(taskId, parentTask.department_id ?? "") as { cnt: number };
-      if (ownDeptPending.cnt > 0) {
-        appendTaskLog(
-          taskId,
-          "system",
-          `Subtask delegation deferred: origin team has ${ownDeptPending.cnt} unfinished subtask(s) (task status=${parentTask.status}). Foreign delegation will start after origin team reaches review.`,
-        );
-        return;
-      }
-    }
     const queues = orderSubtaskQueuesByDepartment(groupSubtasksByTargetDepartment(eligible));
     const deptCount = queues.length;
     subtaskDelegationDispatchInFlight.add(taskId);
@@ -304,12 +310,12 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     notifyCeo(
       pickL(
         l(
-          [`'${parentTask.title}' 의 외부 부서 서브태스크 ${eligible.length}건을 부서별 배치로 순차 위임합니다.`],
+          [`'${parentTask.title}' 의 독립적인 외부 부서 서브태스크 ${eligible.length}건을 부서별로 병렬 위임합니다.`],
           [
-            `Delegating ${eligible.length} external-department subtasks for '${parentTask.title}' sequentially by department, one batched request at a time.`,
+            `Delegating ${eligible.length} independent external-department subtasks for '${parentTask.title}' in parallel department batches.`,
           ],
-          [`'${parentTask.title}' の他部門サブタスク${eligible.length}件を、部門ごとにバッチ化して順次委任します。`],
-          [`将把'${parentTask.title}'的${eligible.length}个外部门 SubTask 按部门批量后顺序委派。`],
+          [`'${parentTask.title}' の独立した他部門サブタスク${eligible.length}件を部門ごとに並列委任します。`],
+          [`将把'${parentTask.title}'的${eligible.length}个独立外部门 SubTask 按部门并行委派。`],
         ),
         lang,
       ),
@@ -318,39 +324,32 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     appendTaskLog(
       taskId,
       "system",
-      `Subtask delegation mode: sequential_by_department_batched (queues=${deptCount}, items=${eligible.length})`,
+      `Subtask delegation mode: parallel_by_department_batched (queues=${deptCount}, items=${eligible.length})`,
     );
-    const runQueue = (index: number) => {
-      if (index >= queues.length) {
-        const pending = pendingDelegationOptionsByTask.get(taskId);
-        if (pending) {
-          appendTaskLog(
-            taskId,
-            "system",
-            `Subtask delegation draining deferred request (includeRender=${pending.includeRender === true})`,
-          );
-          setTimeout(() => {
-            const nextPending = pendingDelegationOptionsByTask.get(taskId) ?? pending;
-            pendingDelegationOptionsByTask.delete(taskId);
-            subtaskDelegationDispatchInFlight.delete(taskId);
-            processSubtaskDelegations(taskId, nextPending);
-            maybeNotifyAllSubtasksComplete(parentTask.id);
-          }, 150);
+    // Reserve every batch before dispatch because a missing leader can finish
+    // synchronously and re-enter the dispatcher from its completion callback.
+    for (const subtask of eligible) scheduledSubtaskIds.add(subtask.id);
+    queues.forEach((queue, index) => {
+      delegateSubtaskBatch(queue, index, deptCount, parentTask, () => {
+        for (const subtask of queue) scheduledSubtaskIds.delete(subtask.id);
+        if (subtaskDelegationDispatchInFlight.has(taskId)) {
+          pendingDelegationOptionsByTask.set(taskId, opts ?? {});
           return;
         }
-        subtaskDelegationDispatchInFlight.delete(taskId);
+        processSubtaskDelegations(taskId, opts);
         maybeNotifyAllSubtasksComplete(parentTask.id);
-        return;
-      }
-      delegateSubtaskBatch(queues[index], index, queues.length, parentTask, () => {
-        const nextDelay = 900 + Math.random() * 700;
-        setTimeout(() => runQueue(index + 1), nextDelay);
       });
-    };
-    runQueue(0);
+    });
+    subtaskDelegationDispatchInFlight.delete(taskId);
+    const pending = pendingDelegationOptionsByTask.get(taskId);
+    if (pending) {
+      pendingDelegationOptionsByTask.delete(taskId);
+      processSubtaskDelegations(taskId, pending);
+    }
   }
 
   function maybeNotifyAllSubtasksComplete(parentTaskId: string): void {
+    processSubtaskDelegations(parentTaskId);
     const remaining = db
       .prepare("SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled')")
       .get(parentTaskId) as { cnt: number };
@@ -420,6 +419,50 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
         }
       | undefined;
     if (!parentTask) return;
+
+    if (remaining.cnt === 0 && parentTask.status === "collaborating" && parentTask.assigned_agent_id) {
+      const graphMarker = db
+        .prepare(
+          `SELECT 1 FROM task_logs
+        WHERE task_id = ? AND kind = 'system' AND message LIKE 'Planned graph seeded %' LIMIT 1`,
+        )
+        .get(parentTaskId);
+      if (graphMarker) {
+        const unintegrated = db
+          .prepare(
+            `SELECT 1 FROM subtasks s
+          LEFT JOIN tasks child ON child.id = s.delegated_task_id
+          WHERE s.task_id = ? AND s.status = 'done' AND (child.status IS NULL OR child.status != 'done') LIMIT 1`,
+          )
+          .get(parentTaskId);
+        if (unintegrated) return;
+        const planner = db.prepare("SELECT * FROM agents WHERE id = ?").get(parentTask.assigned_agent_id) as
+          | AgentRow
+          | undefined;
+        if (!planner || activeProcesses.has(parentTaskId)) return;
+        if (
+          !["idle", "break"].includes(planner.status) ||
+          (planner.current_task_id && planner.current_task_id !== parentTaskId)
+        ) {
+          scheduleAutoResumeRetry(parentTaskId, "planning_graph_consolidation_agent_busy");
+          return;
+        }
+        const claimed = db
+          .prepare("UPDATE tasks SET status = 'planned', updated_at = ? WHERE id = ? AND status = 'collaborating'")
+          .run(nowMs(), parentTaskId);
+        if (claimed.changes === 0) return;
+        clearAutoResumeRetry(parentTaskId);
+        appendTaskLog(parentTaskId, "system", "All planning graph children integrated; starting root consolidation");
+        const deptId = planner.department_id ?? parentTask.department_id ?? null;
+        startTaskExecutionForAgent(
+          parentTaskId,
+          planner,
+          deptId,
+          deptId ? getDeptName(deptId, parentTask.workflow_pack_key) : "Unassigned",
+        );
+        return;
+      }
+    }
 
     // Auto-resume retry should continue even after completion notice was already sent.
     if (remaining.cnt === 0) {
@@ -547,6 +590,10 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       | { status: string }
       | undefined;
     if (afterRun?.status === "in_progress" || afterRun?.status === "pending") return;
+    if (exitCode === 0) {
+      appendTaskLog(delegatedTaskId, "system", "Delegated work awaits approval and directive integration");
+      return;
+    }
     delegatedTaskToSubtask.delete(delegatedTaskId);
 
     const lang = getPreferredLanguage();
@@ -554,32 +601,12 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       l(["위임 작업 실패"], ["Delegated task failed"], ["委任タスク失敗"], ["委派任务失败"]),
       lang,
     );
-    const doneAt = nowMs();
-    const touchedParentTaskIds = new Set<string>();
-
     for (const subtaskId of subtaskIds) {
-      const sub = db.prepare("SELECT task_id FROM subtasks WHERE id = ?").get(subtaskId) as
-        | { task_id: string }
-        | undefined;
-      if (sub?.task_id) touchedParentTaskIds.add(sub.task_id);
-      if (exitCode === 0) {
-        db.prepare("UPDATE subtasks SET status = 'done', completed_at = ?, blocked_reason = NULL WHERE id = ?").run(
-          doneAt,
-          subtaskId,
-        );
-      } else {
-        db.prepare("UPDATE subtasks SET status = 'blocked', blocked_reason = ? WHERE id = ?").run(
-          blockedReason,
-          subtaskId,
-        );
-      }
+      db.prepare("UPDATE subtasks SET status = 'blocked', blocked_reason = ? WHERE id = ?").run(
+        blockedReason,
+        subtaskId,
+      );
       broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(subtaskId));
-    }
-
-    if (exitCode === 0) {
-      for (const parentTaskId of touchedParentTaskIds) {
-        maybeNotifyAllSubtasksComplete(parentTaskId);
-      }
     }
   }
 

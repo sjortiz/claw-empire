@@ -175,7 +175,8 @@ describe("run complete handler - agent notes", () => {
 
     expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
     expect(db.prepare("SELECT status FROM tasks WHERE id = 'source'").get()).toEqual({ status: "review" });
-    expect(deps.reconcileDelegatedSubtasksAfterRun).toHaveBeenCalledExactlyOnceWith("source", 0);
+    // Delegated items are released after directive integration, not on entering review.
+    expect(deps.reconcileDelegatedSubtasksAfterRun).not.toHaveBeenCalled();
     expect(deps.cleanupWorktree).not.toHaveBeenCalled();
   });
 

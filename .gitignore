@@ -57,6 +57,7 @@ coverage/
 .npmrc
 
 # Local AI assistant artifacts
+.serena/
 .agents/
 .claude/
 .serena/

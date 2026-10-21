@@ -679,6 +679,7 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
 
   const collabCoordination = initializeCollabCoordination({
     ...__ctx,
+    processSubtaskDelegations,
     resolveLang,
     l,
     pickL,

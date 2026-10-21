@@ -183,6 +183,7 @@ export interface WorkflowCoreExports {
   broadcast(type: string, payload: unknown): void;
   createWorktree: (...args: any[]) => any;
   mergeWorktree: (...args: any[]) => any;
+  mergeIntoCheckout: (...args: any[]) => any;
   cleanupWorktree: (...args: any[]) => any;
   rollbackTaskWorktree: (...args: any[]) => any;
   getWorktreeDiffSummary: (...args: any[]) => any;

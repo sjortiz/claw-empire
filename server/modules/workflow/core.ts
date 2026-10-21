@@ -199,11 +199,12 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
   const taskWorktrees = new Map<string, WorktreeInfo>();
 
   const { isGitRepo, createWorktree, cleanupWorktree } = createWorktreeLifecycleTools({
+    db: db as any,
     appendTaskLog,
     taskWorktrees,
   });
 
-  const { mergeWorktree, rollbackTaskWorktree, getWorktreeDiffSummary, hasVisibleDiffSummary } =
+  const { mergeWorktree, mergeIntoCheckout, rollbackTaskWorktree, getWorktreeDiffSummary, hasVisibleDiffSummary } =
     createWorktreeMergeTools({
       db: db as any,
       taskWorktrees,
@@ -326,6 +327,7 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
     taskWorktrees,
     createWorktree,
     mergeWorktree,
+    mergeIntoCheckout,
     cleanupWorktree,
     rollbackTaskWorktree,
     getWorktreeDiffSummary,

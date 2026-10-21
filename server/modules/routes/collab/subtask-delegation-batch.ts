@@ -188,7 +188,8 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
 
     const agents = db
       .prepare(
-        `SELECT * FROM agents WHERE id IN (${idPlaceholders}) ${deptClause} ${excludeClause} ORDER BY
+        `SELECT * FROM agents WHERE id IN (${idPlaceholders}) ${deptClause} ${excludeClause}
+         AND status IN ('idle', 'break') AND (current_task_id IS NULL OR current_task_id = '') ORDER BY
          CASE status WHEN 'idle' THEN 0 WHEN 'break' THEN 1 WHEN 'working' THEN 2 ELSE 3 END,
          CASE role WHEN 'senior' THEN 0 WHEN 'junior' THEN 1 WHEN 'intern' THEN 2 WHEN 'team_leader' THEN 3 ELSE 4 END`,
       )
@@ -219,16 +220,34 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
 
     const crossLeader = findTeamLeader(targetDeptId, projectCandidateAgentIds);
     if (!crossLeader) {
-      const doneAt = nowMs();
+      const currentParent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(parentTask.id) as
+        | { status: string }
+        | undefined;
+      if (
+        !currentParent ||
+        !["planned", "pending", "collaborating", "in_progress", "review"].includes(currentParent.status)
+      ) {
+        onBatchDone?.();
+        return;
+      }
+      const reason = pickL(
+        l(
+          ["부서 책임자 배정을 기다리는 중"],
+          ["Waiting for an eligible department leader"],
+          ["部門責任者の割り当て待ち"],
+          ["等待符合条件的部门负责人"],
+        ),
+        lang,
+      );
       for (const sid of subtaskIds) {
-        db.prepare("UPDATE subtasks SET status = 'done', completed_at = ?, blocked_reason = NULL WHERE id = ?").run(
-          doneAt,
-          sid,
-        );
+        db.prepare("UPDATE subtasks SET status = 'blocked', blocked_reason = ? WHERE id = ?").run(reason, sid);
         broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
       }
-      maybeNotifyAllSubtasksComplete(parentTask.id);
-      onBatchDone?.();
+      const retry = setTimeout(
+        () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
+        15_000,
+      );
+      retry.unref?.();
       return;
     }
 
@@ -296,7 +315,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         | { status?: string }
         | undefined;
       const parentStatus = String(latestParent?.status ?? "").trim();
-      if (!latestParent || !["planned", "pending", "in_progress", "review"].includes(parentStatus)) {
+      if (!latestParent || !["planned", "pending", "collaborating", "in_progress", "review"].includes(parentStatus)) {
         appendTaskLog(
           parentTask.id,
           "system",
@@ -316,11 +335,26 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
             pickManualPoolAgent(projectCandidateAgentIds, targetDeptId) ||
             pickManualPoolAgent(projectCandidateAgentIds, null)
           : null;
+      // Re-read candidates at launch: another department/directive may have
+      // reserved the same agent during the acknowledgement delay.
+      const availableAgent = (candidate: AgentRow | null): AgentRow | null => {
+        if (!candidate) return null;
+        const fresh = db.prepare("SELECT * FROM agents WHERE id = ?").get(candidate.id) as AgentRow | undefined;
+        return fresh && ["idle", "break"].includes(fresh.status) && !fresh.current_task_id ? fresh : null;
+      };
       const execAgent =
-        crossSubAtRun ??
-        (crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
-        crossCoordinator ??
-        crossLeader;
+        availableAgent(crossSubAtRun) ??
+        availableAgent(crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
+        availableAgent(crossCoordinator);
+      if (!execAgent) {
+        appendTaskLog(parentTask.id, "system", `Department batch waiting for an available agent (${targetDeptId})`);
+        const retry = setTimeout(
+          () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
+          5_000,
+        );
+        retry.unref?.();
+        return;
+      }
       const execName = getAgentDisplayName(execAgent, lang);
 
       sendAgentMessage(
@@ -428,7 +462,10 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
       }
       delegatedTaskToSubtask.set(delegatedTaskId, subtaskIds[0]);
       if (onBatchDone) {
-        subtaskDelegationCallbacks.set(delegatedTaskId, onBatchDone);
+        subtaskDelegationCallbacks.set(delegatedTaskId, () => {
+          delegatedTaskToSubtask.delete(delegatedTaskId);
+          onBatchDone();
+        });
       }
       const failDelegatedLaunch = (error: unknown, stage: string) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -536,7 +573,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
                 if (originalCallback) originalCallback();
                 return;
               }
-              const succeeded = finishedTask?.status === "done" || finishedTask?.status === "review";
+              const succeeded = finishedTask.status === "done";
               const doneAt = nowMs();
               for (const sid of subtaskIds) {
                 if (succeeded) {

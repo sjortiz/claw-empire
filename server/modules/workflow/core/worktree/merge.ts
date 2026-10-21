@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { ensureDirectiveBranch } from "./directive-branch.ts";
+import { integrateTaskBranch } from "./integrate.ts";
 import type { WorktreeInfo } from "./lifecycle.ts";
 import {
   autoCommitWorktreePendingChanges,
@@ -80,6 +82,67 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         };
       }
 
+      const directive = ensureDirectiveBranch(projectPath, taskId, db);
+      const integrationBranch = info.integrationBranch ?? directive.integrationBranch;
+      info.integrationBranch = integrationBranch;
+      info.rootTaskId = directive.rootTaskId;
+      const result = integrateTaskBranch(projectPath, integrationBranch, info.branchName);
+      if (!result.success) {
+        return {
+          success: false,
+          conflicts: result.conflicts,
+          message: pickL(
+            l(
+              [`통합 실패 (${integrationBranch}): ${result.conflicts?.join(", ") || result.error}`],
+              [`Integration failed (${integrationBranch}): ${result.conflicts?.join(", ") || result.error}`],
+              [`統合失敗 (${integrationBranch}): ${result.conflicts?.join(", ") || result.error}`],
+              [`集成失败 (${integrationBranch}): ${result.conflicts?.join(", ") || result.error}`],
+            ),
+            lang,
+          ),
+        };
+      }
+      appendTaskLog(
+        taskId,
+        "system",
+        `Integrated ${info.branchName} into ${integrationBranch}; retained for CEO review`,
+      );
+      return {
+        success: true,
+        message: pickL(
+          l(
+            [`통합 완료: ${integrationBranch}. CEO의 브랜치 검토를 기다립니다.`],
+            [`Integrated into ${integrationBranch}. Branch retained for CEO review.`],
+            [`${integrationBranch} に統合しました。CEO のブランチレビューを待ちます。`],
+            [`已集成到 ${integrationBranch}。分支保留供 CEO 审核。`],
+          ),
+          lang,
+        ),
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        message: pickL(
+          l([`통합 실패: ${msg}`], [`Integration failed: ${msg}`], [`統合失敗: ${msg}`], [`集成失败: ${msg}`]),
+          lang,
+        ),
+      };
+    }
+  }
+
+  // Explicit local merge into the project's checked-out branch (auto merge policy
+  // or "Merge now"). Never pushes; conflicts abort and leave the checkout as it was.
+  function mergeIntoCheckout(
+    projectPath: string,
+    taskId: string,
+    sourceBranch: string,
+  ): { success: boolean; message: string; conflicts?: string[] } {
+    const taskRow = db.prepare("SELECT title, description FROM tasks WHERE id = ?").get(taskId) as
+      | { title: string; description: string | null }
+      | undefined;
+    const lang = resolveLang(taskRow?.description ?? taskRow?.title ?? "");
+    try {
       const currentBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd: projectPath,
         stdio: "pipe",
@@ -88,52 +151,48 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         .toString()
         .trim();
 
-      try {
-        const diffCheck = execFileSync("git", ["diff", `${currentBranch}...${info.branchName}`, "--stat"], {
-          cwd: projectPath,
-          stdio: "pipe",
-          timeout: 10000,
-        })
-          .toString()
-          .trim();
-        if (!diffCheck) {
-          return {
-            success: true,
-            message: pickL(
-              l(
-                ["변경사항이 없어 병합이 필요하지 않습니다."],
-                ["No changes to merge."],
-                ["マージする変更がありません。"],
-                ["没有可合并的更改。"],
-              ),
-              lang,
+      const diffCheck = execFileSync("git", ["diff", `${currentBranch}...${sourceBranch}`, "--stat"], {
+        cwd: projectPath,
+        stdio: "pipe",
+        timeout: 10000,
+      })
+        .toString()
+        .trim();
+      if (!diffCheck) {
+        return {
+          success: true,
+          message: pickL(
+            l(
+              ["변경사항이 없어 병합이 필요하지 않습니다."],
+              ["No changes to merge."],
+              ["マージする変更がありません。"],
+              ["没有可合并的更改。"],
             ),
-          };
-        }
-      } catch {
-        /* proceed */
+            lang,
+          ),
+        };
       }
 
-      const mergeMsg = `Merge climpire task ${taskId.slice(0, 8)} (branch ${info.branchName})`;
-      execFileSync("git", ["merge", info.branchName, "--no-ff", "-m", mergeMsg], {
+      const mergeMsg = `Merge climpire task ${taskId.slice(0, 8)} (branch ${sourceBranch})`;
+      execFileSync("git", ["merge", sourceBranch, "--no-ff", "-m", mergeMsg], {
         cwd: projectPath,
         stdio: "pipe",
         timeout: 30000,
       });
-
       return {
         success: true,
         message: pickL(
           l(
-            [`병합 완료: ${info.branchName} → ${currentBranch}`],
-            [`Merge completed: ${info.branchName} -> ${currentBranch}`],
-            [`マージ完了: ${info.branchName} -> ${currentBranch}`],
-            [`合并完成: ${info.branchName} -> ${currentBranch}`],
+            [`병합 완료: ${sourceBranch} → ${currentBranch}`],
+            [`Merge completed: ${sourceBranch} -> ${currentBranch}`],
+            [`マージ完了: ${sourceBranch} -> ${currentBranch}`],
+            [`合并完成: ${sourceBranch} -> ${currentBranch}`],
           ),
           lang,
         ),
       };
     } catch (err: unknown) {
+      let conflicts: string[] = [];
       try {
         const unmerged = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
           cwd: projectPath,
@@ -142,39 +201,30 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
         })
           .toString()
           .trim();
-        const conflicts = unmerged ? unmerged.split("\n").filter(Boolean) : [];
-
-        if (conflicts.length > 0) {
-          try {
-            execFileSync("git", ["merge", "--abort"], { cwd: projectPath, stdio: "pipe", timeout: 5000 });
-          } catch {
-            /* ignore */
-          }
-
-          return {
-            success: false,
-            message: pickL(
-              l(
-                [`병합 충돌 발생: ${conflicts.length}개 파일에서 충돌이 있습니다. 수동 해결이 필요합니다.`],
-                [`Merge conflict: ${conflicts.length} file(s) have conflicts and need manual resolution.`],
-                [`マージ競合: ${conflicts.length}件のファイルで競合が発生し、手動解決が必要です。`],
-                [`合并冲突：${conflicts.length} 个文件存在冲突，需要手动解决。`],
-              ),
-              lang,
-            ),
-            conflicts,
-          };
-        }
+        conflicts = unmerged ? unmerged.split("\n").filter(Boolean) : [];
       } catch {
         /* ignore */
       }
-
       try {
         execFileSync("git", ["merge", "--abort"], { cwd: projectPath, stdio: "pipe", timeout: 5000 });
       } catch {
-        /* ignore */
+        /* no merge in progress */
       }
-
+      if (conflicts.length > 0) {
+        return {
+          success: false,
+          message: pickL(
+            l(
+              [`병합 충돌 발생: ${conflicts.length}개 파일에서 충돌이 있습니다. 수동 해결이 필요합니다.`],
+              [`Merge conflict: ${conflicts.length} file(s) have conflicts and need manual resolution.`],
+              [`マージ競合: ${conflicts.length}件のファイルで競合が発生し、手動解決が必要です。`],
+              [`合并冲突：${conflicts.length} 个文件存在冲突，需要手动解决。`],
+            ),
+            lang,
+          ),
+          conflicts,
+        };
+      }
       const msg = err instanceof Error ? err.message : String(err);
       return {
         success: false,
@@ -191,13 +241,15 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
     if (!info) return "";
 
     try {
-      const currentBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-        cwd: projectPath,
-        stdio: "pipe",
-        timeout: 5000,
-      })
-        .toString()
-        .trim();
+      const currentBranch =
+        info.integrationBranch ??
+        execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: projectPath,
+          stdio: "pipe",
+          timeout: 5000,
+        })
+          .toString()
+          .trim();
 
       const stat = execFileSync("git", ["diff", `${currentBranch}...${info.branchName}`, "--stat"], {
         cwd: projectPath,
@@ -233,6 +285,7 @@ export function createWorktreeMergeTools(deps: CreateWorktreeMergeToolsDeps) {
 
   return {
     mergeWorktree,
+    mergeIntoCheckout,
     rollbackTaskWorktree,
     getWorktreeDiffSummary,
     hasVisibleDiffSummary,

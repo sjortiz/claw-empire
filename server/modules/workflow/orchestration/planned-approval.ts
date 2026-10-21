@@ -1,3 +1,6 @@
+import { parsePlanningGraph } from "../agents/planning-graph.ts";
+import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
+
 type CreatePlannedApprovalToolsDeps = {
   reviewInFlight: Set<string>;
   reviewRoundState: Map<string, number>;
@@ -59,8 +62,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     buildMeetingPrompt,
     runAgentOneShot,
     chooseSafeReply,
-    sleepMs,
-    randomDelay,
     collectPlannedActionItems,
     appendTaskProjectMemo,
     appendTaskLog,
@@ -91,16 +92,28 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const round = (reviewRoundState.get(lockKey) ?? 0) + 1;
         reviewRoundState.set(lockKey, round);
 
-        const planningLeader = leaders.find((l: any) => l.department_id === "planning") ?? leaders[0];
-        const otherLeaders = leaders.filter((l: any) => l.id !== planningLeader.id);
         let hasSupplementSignals = false;
         const seatIndexByAgent = new Map(leaders.slice(0, 6).map((leader: any, idx: number) => [leader.id, idx]));
 
         const taskCtx = db
-          .prepare("SELECT description, project_path, workflow_pack_key FROM tasks WHERE id = ?")
+          .prepare("SELECT description, project_path, workflow_pack_key, assigned_agent_id FROM tasks WHERE id = ?")
           .get(taskId) as
-          | { description: string | null; project_path: string | null; workflow_pack_key: string | null }
+          | {
+              description: string | null;
+              project_path: string | null;
+              workflow_pack_key: string | null;
+              assigned_agent_id: string | null;
+            }
           | undefined;
+        const assignedPlanner = taskCtx?.assigned_agent_id
+          ? db.prepare("SELECT * FROM agents WHERE id = ?").get(taskCtx.assigned_agent_id)
+          : null;
+        const planningLeader =
+          assignedPlanner && isPlanningAgent(assignedPlanner)
+            ? assignedPlanner
+            : (leaders.find((leader: any) => leader.department_id === "planning") ?? leaders[0]);
+        if (!leaders.some((leader: any) => leader.id === planningLeader.id)) leaders.unshift(planningLeader);
+        const otherLeaders = leaders.filter((leader: any) => leader.id !== planningLeader.id);
         const taskDescription = taskCtx?.description ?? null;
         const taskWorkflowPackKey = taskCtx?.workflow_pack_key ?? null;
         const projectPath = resolveProjectPath({
@@ -135,15 +148,16 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           prompt: string,
           phase: "opening" | "feedback" | "summary" | "approval",
         ): Promise<any> => {
-          const first = await runAgentOneShot(agent, prompt, oneShotOptions);
+          const options =
+            phase === "summary" || phase === "feedback" ? { ...oneShotOptions, rawOutput: true } : oneShotOptions;
+          const first = await runAgentOneShot(agent, prompt, options);
           if (!isTimeoutRun(first)) return first;
-          appendTaskLog(
-            taskId,
-            "system",
-            `Planned meeting ${phase} timed out (${oneShotTimeoutMs}ms); retrying once with compact prompt`,
-          );
-          const retryPrompt = compactPromptForRetry(prompt);
-          const second = await runAgentOneShot(agent, retryPrompt, oneShotOptions);
+          appendTaskLog(taskId, "system", `Planned meeting ${phase} timed out (${oneShotTimeoutMs}ms); retrying once`);
+          const retryPrompt =
+            phase === "summary"
+              ? `${prompt}\n\n[retry] Previous attempt timed out. Return a concise complete plan, preserving all item and prerequisite keys from every department draft.`
+              : compactPromptForRetry(prompt);
+          const second = await runAgentOneShot(agent, retryPrompt, options);
           if (isTimeoutRun(second)) {
             appendTaskLog(taskId, "system", `Planned meeting ${phase} retry timed out (${oneShotTimeoutMs}ms)`);
           }
@@ -178,12 +192,13 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           receiverType: string,
           receiverId: string | null,
           content: string,
+          planningContent = content,
         ) => {
           if (isTaskWorkflowInterrupted(taskId)) return;
           sendAgentMessage(leader, content, messageType, receiverType, receiverId, taskId);
           const seatIndex = seatIndexByAgent.get(leader.id) ?? 0;
           emitMeetingSpeech(leader.id, seatIndex, "kickoff", taskId, content, lang);
-          pushTranscript(leader, content);
+          pushTranscript(leader, planningContent);
           if (meetingId) {
             appendMeetingMinuteEntry(meetingId, minuteSeq++, leader, lang, messageType, content, taskWorkflowPackKey);
           }
@@ -210,116 +225,98 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           taskId,
         );
 
-        const openingPrompt = buildMeetingPrompt(planningLeader, {
-          meetingType: "planned",
-          round,
-          taskTitle,
-          taskDescription,
-          workflowPackKey: taskWorkflowPackKey,
-          transcript,
-          turnObjective:
-            "Open the planned kickoff meeting and ask each leader for concrete supplement points and planning actions.",
-          stanceHint: "At Planned stage, do not block kickoff; convert concerns into executable planning items.",
-          lang,
-        });
-        const openingRun = await runMeetingOneShotWithRetry(planningLeader, openingPrompt, "opening");
+        // Department leaders receive the same initial context and draft together.
+        // The planning lead consumes their complete drafts only in consolidation.
+        const draftLeaders = otherLeaders.length > 0 ? otherLeaders : [planningLeader];
+        const draftTranscript = [...transcript];
+        const drafts = await Promise.allSettled(
+          draftLeaders.map(async (leader: any) => {
+            const draftPrompt = buildMeetingPrompt(leader, {
+              meetingType: "planned",
+              planningPhase: "draft",
+              round,
+              taskTitle,
+              taskDescription,
+              workflowPackKey: taskWorkflowPackKey,
+              transcript: draftTranscript,
+              turnObjective:
+                "Draft your department's executable plan: concrete work items, owner, evidence/checks, and stable local item keys with explicit prerequisite keys only where work truly depends on another item. Independent items must start in parallel.",
+              stanceHint:
+                "Own your department's plan. Do not wait for the origin department or invent dependencies based on department order. Return actionable items for the planning lead to consolidate.",
+              lang,
+            });
+            const run = await runMeetingOneShotWithRetry(leader, draftPrompt, "feedback");
+            if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
+              throw new Error(run?.error || "Department planning draft did not complete");
+            }
+            return {
+              leader,
+              text: String(run.text).trim(),
+              displayText: chooseSafeReply(run, lang, "feedback", leader),
+            };
+          }),
+        );
         if (abortIfInactive()) return;
-        const openingText = chooseSafeReply(openingRun, lang, "opening", planningLeader);
-        speak(planningLeader, "chat", "all", null, openingText);
-        await sleepMs(randomDelay(700, 1260));
-        if (abortIfInactive()) return;
-
-        for (const leader of otherLeaders) {
-          if (abortIfInactive()) return;
-          const feedbackPrompt = buildMeetingPrompt(leader, {
-            meetingType: "planned",
-            round,
-            taskTitle,
-            taskDescription,
-            workflowPackKey: taskWorkflowPackKey,
-            transcript,
-            turnObjective: "Share concise readiness feedback plus concrete supplement items to be planned as subtasks.",
-            stanceHint: "Do not hold approval here; provide actionable plan additions with evidence/check item.",
-            lang,
-          });
-          const feedbackRun = await runMeetingOneShotWithRetry(leader, feedbackPrompt, "feedback");
-          if (abortIfInactive()) return;
-          const feedbackText = chooseSafeReply(feedbackRun, lang, "feedback", leader);
-          speak(leader, "chat", "agent", planningLeader.id, feedbackText);
-          if (wantsRevision(feedbackText)) {
-            hasSupplementSignals = true;
-          }
-          await sleepMs(randomDelay(620, 1080));
-          if (abortIfInactive()) return;
+        for (const draft of drafts) {
+          if (draft.status === "rejected") throw draft.reason;
+          speak(
+            draft.value.leader,
+            "status_update",
+            "agent",
+            planningLeader.id,
+            draft.value.displayText,
+            draft.value.text,
+          );
+          if (wantsRevision(draft.value.text)) hasSupplementSignals = true;
         }
 
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
           meetingType: "planned",
+          planningPhase: "consolidation",
           round,
           taskTitle,
           taskDescription,
           workflowPackKey: taskWorkflowPackKey,
           transcript,
-          turnObjective:
-            "Summarize supplement points and announce that they will be converted to subtasks before execution.",
+          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. End with a JSON fenced block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
           stanceHint: "Keep kickoff moving and show concrete planned next steps instead of blocking.",
           lang,
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
         if (abortIfInactive()) return;
+        if (summaryRun?.error || isTimeoutRun(summaryRun)) {
+          throw new Error(summaryRun?.error || "Planning consolidation did not complete");
+        }
+        const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
         const summaryText = chooseSafeReply(summaryRun, lang, "summary", planningLeader);
         speak(planningLeader, "report", "all", null, summaryText);
-        await sleepMs(randomDelay(640, 1120));
-        if (abortIfInactive()) return;
-
-        for (const leader of leaders) {
-          if (abortIfInactive()) return;
-          const actionPrompt = buildMeetingPrompt(leader, {
-            meetingType: "planned",
-            round,
-            taskTitle,
-            taskDescription,
-            workflowPackKey: taskWorkflowPackKey,
-            transcript,
-            turnObjective: "Propose one immediate planning action item for your team in subtask style.",
-            stanceHint:
-              "State what to do next, what evidence to collect, and who owns it. Do not block kickoff at this stage.",
-            lang,
-          });
-          const actionRun = await runMeetingOneShotWithRetry(leader, actionPrompt, "approval");
-          if (abortIfInactive()) return;
-          const actionText = chooseSafeReply(actionRun, lang, "approval", leader);
-          speak(leader, "status_update", "all", null, actionText);
-          if (wantsRevision(actionText)) {
-            hasSupplementSignals = true;
-          }
-          await sleepMs(randomDelay(420, 840));
-          if (abortIfInactive()) return;
-        }
-
-        await sleepMs(randomDelay(520, 900));
-        if (abortIfInactive()) return;
-        const planItems = collectPlannedActionItems(transcript, 10);
-        appendTaskProjectMemo(taskId, "planned", round, planItems, lang);
+        const planItems = graph ? [JSON.stringify({ plan_items: graph })] : collectPlannedActionItems(transcript, 10);
+        const memoItems = graph
+          ? graph.map(
+              (item) =>
+                `${item.department_id}: ${item.title}${item.depends_on.length ? ` (depends on: ${item.depends_on.join(", ")})` : ""}`,
+            )
+          : planItems;
+        appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
         appendTaskLog(
           taskId,
           "system",
-          `Planned meeting round ${round}: action items collected (${planItems.length}, supplement-signals=${hasSupplementSignals ? "yes" : "no"})`,
+          `Planned meeting round ${round}: action items collected (${memoItems.length}, supplement-signals=${hasSupplementSignals ? "yes" : "no"})`,
         );
         notifyCeo(
           pickL(
             l(
               [
-                `[CEO OFFICE] '${taskTitle}' Planned 회의 종료. 보완점 ${planItems.length}건을 계획 항목으로 기록하고 In Progress로 진행합니다.`,
+                `[CEO OFFICE] '${taskTitle}' Planned 회의 종료. 보완점 ${memoItems.length}건을 계획 항목으로 기록하고 In Progress로 진행합니다.`,
               ],
               [
-                `[CEO OFFICE] Planned meeting for '${taskTitle}' is complete. Recorded ${planItems.length} improvement items and moving to In Progress.`,
+                `[CEO OFFICE] Planned meeting for '${taskTitle}' is complete. Recorded ${memoItems.length} improvement items and moving to In Progress.`,
               ],
               [
-                `[CEO OFFICE] '${taskTitle}' のPlanned会議が完了。補完項目${planItems.length}件を計画化し、In Progressへ進みます。`,
+                `[CEO OFFICE] '${taskTitle}' のPlanned会議が完了。補完項目${memoItems.length}件を計画化し、In Progressへ進みます。`,
               ],
               [
-                `[CEO OFFICE] '${taskTitle}' 的 Planned 会议已结束，已记录 ${planItems.length} 个改进项并转入 In Progress。`,
+                `[CEO OFFICE] '${taskTitle}' 的 Planned 会议已结束，已记录 ${memoItems.length} 个改进项并转入 In Progress。`,
               ],
             ),
             lang,

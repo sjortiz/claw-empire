@@ -292,7 +292,7 @@ function combineAgentScopes(primary: string[] | null, secondary: string[] | null
   return null;
 }
 
-function loadActiveOAuthAccountIdsByProvider(db: DbLike): Map<string, Set<string>> | null {
+export function loadActiveOAuthAccountIdsByProvider(db: DbLike): Map<string, Set<string>> | null {
   try {
     const rows = db.prepare("SELECT id, provider FROM oauth_accounts WHERE status = 'active'").all() as Array<{
       id?: unknown;
@@ -314,11 +314,12 @@ function loadActiveOAuthAccountIdsByProvider(db: DbLike): Map<string, Set<string
   }
 }
 
-function isOAuthBackedProviderReady(
-  agent: AutoAssignableAgent,
+export function isOAuthBackedProviderReady(
+  agent: Pick<AutoAssignableAgent, "cli_provider" | "oauth_account_id">,
   activeOAuthByProvider: Map<string, Set<string>> | null,
 ): boolean {
   const provider = normalizeText(agent.cli_provider).toLowerCase();
+  if (!VALID_CLI_PROVIDERS.has(provider)) return false;
   const requiredOAuthProvider =
     provider === "copilot" ? "github" : provider === "antigravity" ? "google_antigravity" : null;
   if (!requiredOAuthProvider) return true;

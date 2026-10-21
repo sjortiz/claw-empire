@@ -8,8 +8,31 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { createReviewFinalizeTools } from "./review-finalize-tools.ts";
 
+const git = (cwd: string, args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString();
+
+// A real repository whose path needs shell quoting, with an existing directive branch.
+function createProjectRepo(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-merge-policy-"));
+  const repo = path.join(root, "project's checkout");
+  fs.mkdirSync(repo);
+  git(repo, ["init", "-b", "dev"]);
+  git(repo, ["config", "user.name", "Claw-Empire Test"]);
+  git(repo, ["config", "user.email", "test@example.local"]);
+  fs.writeFileSync(path.join(repo, "server.ts"), "export const reviewed = true;\n");
+  git(repo, ["add", "server.ts"]);
+  git(repo, ["commit", "-m", "seed"]);
+  return repo;
+}
+
 function createHarness(
-  options: { global?: string; project?: string | null; github?: boolean; conflict?: boolean } = {},
+  options: {
+    global?: string;
+    project?: string | null;
+    github?: boolean;
+    conflict?: boolean;
+    child?: boolean;
+    repo?: string;
+  } = {},
 ) {
   const db = new DatabaseSync(":memory:");
   db.exec(`
@@ -26,14 +49,19 @@ function createHarness(
     );
     INSERT INTO tasks (id, title, status, project_id) VALUES ('task-1', 'Implement policy', 'review', 'project-1');
   `);
+  if (options.child) db.prepare("UPDATE tasks SET source_task_id = 'root-1'").run();
   db.prepare("INSERT INTO projects VALUES ('project-1', ?, ?)").run(
     options.project ?? null,
     options.github ? "owner/repo" : null,
   );
   if (options.global) db.prepare("INSERT INTO settings VALUES ('mergePolicy', ?)").run(options.global);
-  const info = { projectPath: "/project's checkout", worktreePath: "/isolated/task-1", branchName: "climpire/task-1" };
+  const repo = options.repo ?? createProjectRepo();
+  const directiveBranch = options.child ? "climpire/d-root-1" : "climpire/d-task-1";
+  if (!options.repo) git(repo, ["branch", directiveBranch]);
+  const info = { projectPath: repo, worktreePath: "/isolated/task-1", branchName: "climpire/task-1" };
   const taskWorktrees = new Map([["task-1", info]]);
-  const mergeWorktree = vi.fn(() =>
+  const mergeWorktree = vi.fn(() => ({ success: true, message: "Integrated" }));
+  const mergeIntoCheckout = vi.fn(() =>
     options.conflict
       ? { success: false, message: "Conflict", conflicts: ["server.ts"] }
       : { success: true, message: "Merged locally" },
@@ -55,6 +83,7 @@ function createHarness(
     notifyCeo,
     taskWorktrees,
     mergeWorktree,
+    mergeIntoCheckout,
     mergeToDevAndCreatePR: remoteMerge,
     cleanupWorktree,
     findTeamLeader: () => null,
@@ -75,20 +104,39 @@ function createHarness(
     startReviewConsensusMeeting: (_id: string, _title: string, _department: unknown, approve: () => void) => approve(),
   };
   const tools = createReviewFinalizeTools(deps);
-  return { db, ...tools, taskWorktrees, mergeWorktree, cleanupWorktree, appendTaskLog, notifyCeo, remoteMerge, deps };
+  const close = () => {
+    db.close();
+    if (!options.repo) fs.rmSync(path.dirname(repo), { recursive: true, force: true });
+  };
+  return {
+    db,
+    ...tools,
+    repo,
+    close,
+    taskWorktrees,
+    mergeWorktree,
+    mergeIntoCheckout,
+    cleanupWorktree,
+    appendTaskLog,
+    notifyCeo,
+    remoteMerge,
+    deps,
+  };
 }
 
 describe("approved task merge policy", () => {
-  it.each([false, true])("keeps default auto merging local (GitHub project=%s)", (github) => {
+  it.each([false, true])("merges the completed directive locally by default (GitHub project=%s)", (github) => {
     const h = createHarness({ github });
     try {
       h.finishReview("task-1", "Implement policy", { bypassProjectDecisionGate: true });
-      expect(h.mergeWorktree).toHaveBeenCalledWith("/project's checkout", "task-1");
-      expect(h.remoteMerge).not.toHaveBeenCalled();
+      // Approval integrates into the directive branch; the policy then applies to that branch.
+      expect(h.mergeWorktree).toHaveBeenCalledWith(h.repo, "task-1");
       expect(h.cleanupWorktree).toHaveBeenCalledOnce();
+      expect(h.mergeIntoCheckout).toHaveBeenCalledExactlyOnceWith(h.repo, "task-1", "climpire/d-task-1");
+      expect(h.remoteMerge).not.toHaveBeenCalled();
       expect(h.db.prepare("SELECT status FROM tasks").get()).toMatchObject({ status: "done" });
     } finally {
-      h.db.close();
+      h.close();
     }
   });
 
@@ -96,7 +144,7 @@ describe("approved task merge policy", () => {
     { global: "manual", github: false, source: "global" },
     { global: "manual", github: true, source: "global" },
     { global: "auto", project: "manual", github: true, source: "project" },
-  ])("retains approved branches without merging: %j", (options) => {
+  ])("keeps the directive branch without merging the checkout: %j", (options) => {
     const h = createHarness(options);
     try {
       h.finishReview("task-1", "Implement policy", { bypassProjectDecisionGate: true });
@@ -104,17 +152,16 @@ describe("approved task merge policy", () => {
         status: "done",
         completed_at: 1000,
       });
-      expect(h.mergeWorktree).not.toHaveBeenCalled();
+      expect(h.mergeWorktree).toHaveBeenCalledOnce();
+      expect(h.mergeIntoCheckout).not.toHaveBeenCalled();
       expect(h.remoteMerge).not.toHaveBeenCalled();
-      expect(h.cleanupWorktree).not.toHaveBeenCalled();
-      expect(h.taskWorktrees.has("task-1")).toBe(true);
       const logs = h.appendTaskLog.mock.calls.map((call) => call[2]).join("\n");
       expect(logs).toContain(`Merge policy: manual (${options.source})`);
-      expect(logs).toContain("branch retained: climpire/task-1");
-      expect(logs).toContain("git -C '/project'\\''s checkout' merge -- 'climpire/task-1'");
+      expect(logs).toContain("Directive branch not merged into the checkout: climpire/d-task-1");
+      expect(logs).toContain(`git -C '${h.repo.replaceAll("'", "'\\''")}' merge -- 'climpire/d-task-1'`);
       expect(logs).toContain("Merge now in task details");
     } finally {
-      h.db.close();
+      h.close();
     }
   });
 
@@ -122,43 +169,47 @@ describe("approved task merge policy", () => {
     const h = createHarness({ global: "manual", project: "auto", github: true });
     try {
       h.finishReview("task-1", "Implement policy", { bypassProjectDecisionGate: true });
-      expect(h.mergeWorktree).toHaveBeenCalledOnce();
+      expect(h.mergeIntoCheckout).toHaveBeenCalledOnce();
       expect(h.remoteMerge).not.toHaveBeenCalled();
     } finally {
-      h.db.close();
+      h.close();
     }
   });
 
-  it("keeps a conflicted branch available for manual resolution", () => {
+  it("only integrates child tasks; the checkout is merged when the root completes", () => {
+    const h = createHarness({ child: true });
+    try {
+      h.finishReview("task-1", "Implement policy", { bypassProjectDecisionGate: true });
+      expect(h.mergeWorktree).toHaveBeenCalledOnce();
+      expect(h.mergeIntoCheckout).not.toHaveBeenCalled();
+      expect(h.db.prepare("SELECT status FROM tasks").get()).toMatchObject({ status: "done" });
+    } finally {
+      h.close();
+    }
+  });
+
+  it("keeps the directive branch when merging it into the checkout conflicts", () => {
     const h = createHarness({ conflict: true });
     try {
       h.finishReview("task-1", "Implement policy", { bypassProjectDecisionGate: true });
-      expect(h.cleanupWorktree).not.toHaveBeenCalled();
-      expect(h.taskWorktrees.has("task-1")).toBe(true);
       expect(h.notifyCeo).toHaveBeenCalledWith(expect.stringContaining("server.ts"), "task-1");
+      expect(git(h.repo, ["branch", "--list", "climpire/d-task-1"])).toContain("climpire/d-task-1");
       expect(h.db.prepare("SELECT status FROM tasks").get()).toMatchObject({ status: "done" });
     } finally {
-      h.db.close();
+      h.close();
     }
   });
 });
 
 describe("manual approval checkout isolation", () => {
   it.each([false, true])(
-    "preserves real checkout, index, origin and pending work across approval and restart (GitHub=%s)",
+    "integrates into the directive branch and leaves the real checkout, index and origin untouched (GitHub=%s)",
     (github) => {
-      const repo = fs.mkdtempSync(path.join(os.tmpdir(), "climpire-manual-approval-"));
-      const git = (cwd: string, args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString();
-      const h = createHarness({ global: "manual", github });
+      const repo = createProjectRepo();
+      git(repo, ["remote", "add", "origin", "https://example.invalid/owner/repo.git"]);
+      const h = createHarness({ global: "manual", github, repo });
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       try {
-        git(repo, ["init", "-b", "dev"]);
-        git(repo, ["config", "user.name", "Claw-Empire Test"]);
-        git(repo, ["config", "user.email", "test@example.local"]);
-        fs.writeFileSync(path.join(repo, "server.ts"), "export const reviewed = true;\n");
-        git(repo, ["add", "server.ts"]);
-        git(repo, ["commit", "-m", "seed"]);
-        git(repo, ["remote", "add", "origin", "https://example.invalid/owner/repo.git"]);
         h.taskWorktrees.clear();
         const lifecycle = createWorktreeLifecycleTools({
           appendTaskLog: h.appendTaskLog,
@@ -173,43 +224,39 @@ describe("manual approval checkout isolation", () => {
         const checkoutState = () => ({
           head: git(repo, ["rev-parse", "HEAD"]),
           branch: git(repo, ["branch", "--show-current"]),
-          status: git(repo, ["status", "--porcelain"]),
+          // The task worktree directory is removed after integration.
+          status: git(repo, ["status", "--porcelain"]).replace("?? .climpire-worktrees/\n", ""),
           index: git(repo, ["write-tree"]),
           origin: git(repo, ["remote", "get-url", "origin"]),
           server: fs.readFileSync(path.join(repo, "server.ts"), "utf8"),
         });
         const before = checkoutState();
-        const worktreeStatus = git(worktree, ["status", "--porcelain"]);
-        const localMerge = vi.fn(
-          createWorktreeMergeTools({
-            ...h.deps,
-            cleanupWorktree: lifecycle.cleanupWorktree,
-          }).mergeWorktree,
-        );
-        // Simulate process restart: approval must recover the retained task's real worktree.
+        const mergeTools = createWorktreeMergeTools({ ...h.deps, cleanupWorktree: lifecycle.cleanupWorktree });
+        const mergeIntoCheckout = vi.fn(mergeTools.mergeIntoCheckout);
+        // Simulate process restart: approval must recover the task's real worktree.
         h.taskWorktrees.clear();
         const tools = createReviewFinalizeTools({
           ...h.deps,
-          mergeWorktree: localMerge,
+          mergeWorktree: mergeTools.mergeWorktree,
+          mergeIntoCheckout,
           cleanupWorktree: lifecycle.cleanupWorktree,
         });
         tools.finishReview("task-1", "Implement policy", { bypassProjectDecisionGate: true });
         expect(checkoutState()).toEqual(before);
-        expect(git(worktree, ["status", "--porcelain"])).toBe(worktreeStatus);
-        expect(fs.readFileSync(path.join(worktree, "pending.ts"), "utf8")).toContain("pending = true");
-        expect(h.taskWorktrees.get("task-1")?.branchName).toBe("climpire/task-1");
+        expect(git(repo, ["show", "climpire/d-task-1:server.ts"])).toContain("reviewed = false");
+        expect(git(repo, ["show", "climpire/d-task-1:pending.ts"])).toContain("pending = true");
         expect(h.db.prepare("SELECT status FROM tasks").get()).toMatchObject({ status: "done" });
-        expect(localMerge).not.toHaveBeenCalled();
+        expect(mergeIntoCheckout).not.toHaveBeenCalled();
         expect(fetchSpy).not.toHaveBeenCalled();
         expect(h.appendTaskLog).toHaveBeenCalledWith(
           "task-1",
           "system",
-          expect.stringContaining("branch retained: climpire/task-1"),
+          expect.stringContaining("Directive branch not merged into the checkout: climpire/d-task-1"),
         );
       } finally {
         fetchSpy.mockRestore();
-        h.db.close();
-        fs.rmSync(repo, { recursive: true, force: true });
+        h.close();
+        fs.rmSync(path.dirname(repo), { recursive: true, force: true });
       }
     },
   );

@@ -34,6 +34,20 @@ other projects. Neither policy nor **Merge now** pushes or creates a PR. Publish
 requires a separate explicit user action using Git or the user's existing tooling.
 No new automatic publishing opt-in is introduced.
 
+## With directive integration branches
+
+With the directive workflow (`docs/directive-workflow.md`), approving a task
+integrates it into its directive branch (`climpire/d-<root task id>`) and never
+changes the checkout. The merge policy applies once per directive, to that branch,
+when the root task completes. In automatic mode the directive branch is merged
+locally into the checked-out branch. In manual mode it is kept and the root task
+log gives the merge command. Child and revision tasks only integrate.
+
+**Merge now** on a completed root task with no retained worktree merges the
+directive branch, with the same `expectedTargetBranch` check. Calling
+`/api/tasks/:id/merge` without `expectedTargetBranch` on a task that isn't done
+is directive approval: it only integrates into the directive branch.
+
 ## Alternatives considered
 
 - A global switch alone cannot protect one sensitive checkout while allowing

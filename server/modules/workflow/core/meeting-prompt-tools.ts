@@ -36,6 +36,7 @@ export function createMeetingPromptTools(deps: CreateMeetingPromptToolsDeps) {
     const recentCtx = getRecentConversationContext(agent.id, 8);
     const meetingLabel = opts.meetingType === "planned" ? "Planned Approval" : "Review Consensus";
     const compactTaskContext = compactTaskDescriptionForMeeting(opts.taskDescription);
+    const isPlanningWork = opts.meetingType === "planned" && !!opts.planningPhase;
     const videoPlanningInvariant =
       opts.workflowPackKey === "video_preprod"
         ? lang === "ko"
@@ -76,15 +77,25 @@ export function createMeetingPromptTools(deps: CreateMeetingPromptToolsDeps) {
       localeInstruction(lang),
       videoPlanningInvariant,
       "Output rules:",
-      "- Return one natural chat message only (no JSON, no markdown).",
-      "- Keep it concise: 1-3 sentences.",
+      ...(isPlanningWork
+        ? [
+            "- Return a complete executable plan with item keys, owners, prerequisites, and evidence.",
+            opts.planningPhase === "consolidation"
+              ? "- Include the requested JSON plan_items block. Preserve all department items and prerequisite keys."
+              : "- Include every department work item and its prerequisite keys. Do not shorten the plan into meeting speech.",
+          ]
+        : ["- Return one natural chat message only (no JSON, no markdown).", "- Keep it concise: 1-3 sentences."]),
       "- Make your stance explicit and actionable.",
       "- Do not call tools, run commands, or inspect files. Respond from the provided context only.",
       opts.stanceHint ? `Required stance: ${opts.stanceHint}` : "",
       `Current turn objective: ${opts.turnObjective}`,
       "",
       "[Meeting transcript so far]",
-      formatMeetingTranscript(opts.transcript, lang),
+      opts.planningPhase === "consolidation"
+        ? opts.transcript
+            .map((turn) => `${turn.speaker} (${turn.department} ${turn.role}):\n${turn.content}`)
+            .join("\n\n") || "(none)"
+        : formatMeetingTranscript(opts.transcript, lang),
       recentCtx,
     ]
       .filter(Boolean)

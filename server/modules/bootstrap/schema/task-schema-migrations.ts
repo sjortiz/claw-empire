@@ -16,6 +16,12 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* already exists */
   }
 
+  try {
+    db.exec("ALTER TABLE subtasks ADD COLUMN depends_on TEXT NOT NULL DEFAULT '[]'");
+  } catch {
+    /* already exists */
+  }
+
   // Cross-department collaboration: link collaboration task back to original task
   try {
     db.exec("ALTER TABLE tasks ADD COLUMN source_task_id TEXT");
@@ -564,23 +570,26 @@ function repairLegacyTaskForeignKeys(db: DbLike): void {
           created_at INTEGER DEFAULT (unixepoch()*1000),
           completed_at INTEGER,
           target_department_id TEXT,
-          delegated_task_id TEXT
+          delegated_task_id TEXT,
+          depends_on TEXT NOT NULL DEFAULT '[]'
         );
       `);
       const subtasksCols = db.prepare(`PRAGMA table_info(${subtasksOld})`).all() as Array<{ name: string }>;
       const hasTargetDept = subtasksCols.some((c) => c.name === "target_department_id");
       const hasDelegatedTask = subtasksCols.some((c) => c.name === "delegated_task_id");
+      const hasDependencies = subtasksCols.some((c) => c.name === "depends_on");
       db.exec(`
         INSERT INTO subtasks (
           id, task_id, title, description, status, assigned_agent_id,
           blocked_reason, cli_tool_use_id, created_at, completed_at,
-          target_department_id, delegated_task_id
+          target_department_id, delegated_task_id, depends_on
         )
         SELECT
           id, task_id, title, description, status, assigned_agent_id,
           blocked_reason, cli_tool_use_id, created_at, completed_at,
           ${hasTargetDept ? "target_department_id" : "NULL"},
-          ${hasDelegatedTask ? "delegated_task_id" : "NULL"}
+          ${hasDelegatedTask ? "delegated_task_id" : "NULL"},
+          ${hasDependencies ? "depends_on" : "'[]'"}
         FROM ${subtasksOld};
       `);
 

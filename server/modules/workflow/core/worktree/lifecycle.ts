@@ -1,14 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { ensureDirectiveBranch, resolveDirectiveRoot, type DirectiveTaskDatabase } from "./directive-branch.ts";
+import { reuseWorktreeDependencies } from "./reuse-dependencies.ts";
+import { refreshTaskWorktree } from "./refresh.ts";
 
 export type WorktreeInfo = {
   worktreePath: string;
   branchName: string;
   projectPath: string;
+  integrationBranch?: string;
+  rootTaskId?: string;
 };
 
 type CreateWorktreeLifecycleToolsDeps = {
+  db?: DirectiveTaskDatabase;
   appendTaskLog: (taskId: string, kind: string, message: string) => void;
   taskWorktrees: Map<string, WorktreeInfo>;
 };
@@ -56,8 +62,84 @@ export function discoverTaskWorktree(projectPath: string, taskId: string): Workt
   return discoverTaskWorktrees(projectPath, [taskId]).get(taskId);
 }
 
+function listRegisteredWorktrees(projectPath: string) {
+  return execFileSync("git", ["worktree", "list", "--porcelain", "-z"], {
+    cwd: projectPath,
+    stdio: "pipe",
+    timeout: 5000,
+  })
+    .toString()
+    .split("\0\0")
+    .map((record) => {
+      const fields = record.split("\0");
+      return {
+        worktreePath: fields.find((field) => field.startsWith("worktree "))?.slice(9),
+        branchName: fields.find((field) => field.startsWith("branch refs/heads/"))?.slice(18),
+      };
+    });
+}
+
+function samePath(left: string | undefined, right: string) {
+  if (!left) return false;
+  try {
+    return fs.realpathSync(left) === fs.realpathSync(right);
+  } catch {
+    return false;
+  }
+}
+
+export function findTaskBranch(projectPath: string, taskId: string): string | null {
+  const shortId = taskId.slice(0, 8);
+  for (let index = 0; index < 4; index += 1) {
+    const branch = `climpire/${shortId}${index === 0 ? "" : `-${index}`}`;
+    try {
+      execFileSync("git", ["show-ref", "--verify", `refs/heads/${branch}`], {
+        cwd: projectPath,
+        stdio: "pipe",
+        timeout: 5000,
+      });
+      return branch;
+    } catch {
+      // Legacy collision suffixes remain valid task branches.
+    }
+  }
+  return null;
+}
+
+/** Recover review/revision ownership after a restart without altering refs or worktree files. */
+export function recoverTaskWorktree(
+  projectPath: string,
+  taskId: string,
+  db?: DirectiveTaskDatabase,
+): WorktreeInfo | null {
+  try {
+    const shortId = taskId.slice(0, 8);
+    const registered = listRegisteredWorktrees(projectPath);
+    for (let index = 0; index < 4; index += 1) {
+      const suffix = index === 0 ? "" : `-${index}`;
+      const branchName = `climpire/${shortId}${suffix}`;
+      const registeredPath = registered.find(
+        (entry) =>
+          entry.branchName === branchName &&
+          entry.worktreePath &&
+          !samePath(entry.worktreePath, projectPath) &&
+          fs.existsSync(entry.worktreePath),
+      )?.worktreePath;
+      if (registeredPath) {
+        const conventionalPath = path.join(projectPath, ".climpire-worktrees", `${shortId}${suffix}`);
+        const worktreePath = samePath(registeredPath, conventionalPath) ? conventionalPath : registeredPath;
+        const { rootTaskId } = resolveDirectiveRoot(taskId, db);
+        return { projectPath, worktreePath, branchName, rootTaskId, integrationBranch: `climpire/d-${rootTaskId}` };
+      }
+    }
+  } catch {
+    // Missing repositories and pruned worktrees have nothing to recover.
+  }
+  return null;
+}
+
 export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsDeps) {
-  const { appendTaskLog, taskWorktrees } = deps;
+  const { appendTaskLog, taskWorktrees, db } = deps;
 
   function isGitRepo(dir: string): boolean {
     try {
@@ -169,12 +251,6 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
     if (!ensureWorktreeBootstrapRepo(projectPath, taskId)) return null;
     if (!isGitRepo(projectPath)) return null;
 
-    const existing = discoverTaskWorktree(projectPath, taskId);
-    if (existing) {
-      taskWorktrees.set(taskId, existing);
-      return existing.worktreePath;
-    }
-
     const shortId = taskId.slice(0, 8);
     const branchName = `climpire/${shortId}`;
     const worktreeBase = path.join(projectPath, ".climpire-worktrees");
@@ -184,40 +260,75 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
       fs.mkdirSync(worktreeBase, { recursive: true });
       execFileSync("git", ["worktree", "prune"], { cwd: projectPath, stdio: "pipe", timeout: 5000 });
 
-      // Get current branch/HEAD as base
-      let base: string;
-      if (baseBranch) {
-        try {
-          base = execFileSync("git", ["rev-parse", baseBranch], { cwd: projectPath, stdio: "pipe", timeout: 5000 })
-            .toString()
-            .trim();
-        } catch {
-          base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectPath, stdio: "pipe", timeout: 5000 })
-            .toString()
-            .trim();
-        }
-      } else {
-        base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: projectPath, stdio: "pipe", timeout: 5000 })
-          .toString()
-          .trim();
+      const directive = ensureDirectiveBranch(projectPath, taskId, db, baseBranch);
+      const base = directive.integrationBranch;
+      const registered = listRegisteredWorktrees(projectPath);
+      const branchCandidates = [branchName, `${branchName}-1`, `${branchName}-2`, `${branchName}-3`];
+      if (
+        registered.some(
+          (entry) =>
+            samePath(entry.worktreePath, projectPath) &&
+            !!entry.branchName &&
+            branchCandidates.includes(entry.branchName),
+        )
+      ) {
+        throw new Error("Task branch is checked out in the project checkout; isolated execution is required");
+      }
+      const remember = (selectedWorktreePath: string, selectedBranch: string) => {
+        const info = {
+          worktreePath: selectedWorktreePath,
+          branchName: selectedBranch,
+          projectPath,
+          ...directive,
+        };
+        taskWorktrees.set(taskId, info);
+        const refreshed = refreshTaskWorktree(info);
+        appendTaskLog(
+          taskId,
+          "system",
+          refreshed.success
+            ? `Task worktree includes directive branch: ${base}`
+            : `Task worktree retained; revision must reconcile ${base}: ${refreshed.conflicts?.join(", ") || refreshed.error}`,
+        );
+        return selectedWorktreePath;
+      };
+      const previous = taskWorktrees.get(taskId);
+      if (
+        previous &&
+        samePath(previous.projectPath, projectPath) &&
+        registered.some(
+          (entry) => samePath(entry.worktreePath, previous.worktreePath) && entry.branchName === previous.branchName,
+        ) &&
+        fs.existsSync(previous.worktreePath)
+      ) {
+        return remember(previous.worktreePath, previous.branchName);
       }
 
-      const branchCandidates = [branchName, `${branchName}-1`, `${branchName}-2`, `${branchName}-3`];
+      const recovered = recoverTaskWorktree(projectPath, taskId, db);
+      if (recovered) return remember(recovered.worktreePath, recovered.branchName);
+      const retainedBranch = findTaskBranch(projectPath, taskId);
+
       let created = false;
       let selectedBranch = branchName;
       let selectedWorktreePath = worktreePath;
       let lastError: unknown = null;
 
       for (let idx = 0; idx < branchCandidates.length; idx += 1) {
-        const candidateBranch = branchCandidates[idx]!;
+        // A blocked directory may require a different path, never a fresh
+        // branch that would omit commits from the retained task branch.
+        const candidateBranch = retainedBranch || branchCandidates[idx]!;
         const candidatePath = idx === 0 ? worktreePath : path.join(worktreeBase, `${shortId}-${idx}`);
-        try {
-          if (fs.existsSync(candidatePath)) {
-            fs.rmSync(candidatePath, { recursive: true, force: true });
-          }
-        } catch {
-          // best effort cleanup
+        if (
+          fs.existsSync(candidatePath) &&
+          registered.some(
+            (entry) => samePath(entry.worktreePath, candidatePath) && entry.branchName === candidateBranch,
+          )
+        ) {
+          appendTaskLog(taskId, "system", `Reusing task worktree: ${candidatePath} (${candidateBranch})`);
+          return remember(candidatePath, candidateBranch);
         }
+        // Never remove an existing directory: it may contain an unfinished revision.
+        if (fs.existsSync(candidatePath)) continue;
 
         const branchExists = (() => {
           try {
@@ -268,7 +379,13 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
         // best effort — skill propagation failure should not block execution
       }
 
-      taskWorktrees.set(taskId, { worktreePath: selectedWorktreePath, branchName: selectedBranch, projectPath });
+      reuseWorktreeDependencies(
+        projectPath,
+        selectedWorktreePath,
+        registered.flatMap((entry) => (entry.worktreePath ? [entry.worktreePath] : [])),
+      );
+      remember(selectedWorktreePath, selectedBranch);
+      appendTaskLog(taskId, "system", `Directive integration branch: ${directive.integrationBranch}`);
       console.log(
         `[Claw-Empire] Created worktree for task ${shortId}: ${selectedWorktreePath} (branch: ${selectedBranch}, agent: ${agentName})`,
       );

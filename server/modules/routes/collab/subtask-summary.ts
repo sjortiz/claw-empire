@@ -15,6 +15,7 @@ export interface SubtaskRow {
   target_department_id: string | null;
   delegated_task_id: string | null;
   blocked_reason: string | null;
+  depends_on?: string | null;
 }
 
 interface TaskSubtaskProgressSummary {

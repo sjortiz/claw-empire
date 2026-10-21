@@ -77,6 +77,7 @@ export function initializeWorkflow(
     meetingSeatIndexByAgent: runtime.meetingSeatIndexByAgent,
     meetingTaskIdByAgent: runtime.meetingTaskIdByAgent,
     mergeWorktree: runtime.mergeWorktree,
+    mergeIntoCheckout: runtime.mergeIntoCheckout,
     normalizeOAuthProvider: runtime.normalizeOAuthProvider,
     notifyCeo: runtime.notifyCeo,
     archivePlanningConsolidatedReport: runtime.archivePlanningConsolidatedReport,

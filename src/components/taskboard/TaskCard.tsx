@@ -6,6 +6,8 @@ import AgentSelect from "../AgentSelect";
 import DelegatedScopeView from "./DelegatedScopeView";
 import DiffModal from "./DiffModal";
 import RelatedWorkPanel from "./RelatedWorkPanel";
+import DirectiveProgress, { DirectiveBranchChip, directivePartStateLabel } from "./DirectiveProgress";
+import type { TaskDirectiveContext } from "./directive-progress";
 import {
   getTaskTypeBadge,
   isHideableStatus,
@@ -23,6 +25,7 @@ interface TaskCardProps {
   departments: Department[];
   taskSubtasks: SubTask[];
   relatedTasks?: Task[];
+  directive?: TaskDirectiveContext;
   isHiddenTask?: boolean;
   onUpdateTask: (id: string, data: Partial<Task>) => void;
   onDeleteTask: (id: string) => void;
@@ -52,6 +55,7 @@ export default function TaskCard({
   departments,
   taskSubtasks,
   relatedTasks = [],
+  directive,
   isHiddenTask,
   onUpdateTask,
   onDeleteTask,
@@ -209,64 +213,105 @@ export default function TaskCard({
 
       <RelatedWorkPanel relatedTasks={relatedTasks} agents={agents} departments={departments} />
 
-      {(task.subtask_total ?? 0) > 0 && (
-        <div className="mb-3">
-          <button
-            onClick={() => setShowSubtasks((v) => !v)}
-            className="mb-1.5 flex w-full items-center gap-2 text-left"
-          >
-            <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all"
-                style={{ width: `${Math.round(((task.subtask_done ?? 0) / (task.subtask_total ?? 1)) * 100)}%` }}
-              />
-            </div>
-            <span className="text-xs text-slate-400 whitespace-nowrap">
-              {task.subtask_done ?? 0}/{task.subtask_total ?? 0}
-            </span>
-            <span className="text-xs text-slate-500">{showSubtasks ? "▲" : "▼"}</span>
-          </button>
-          {showSubtasks && taskSubtasks.length > 0 && (
-            <div className="space-y-1 pl-1">
-              {taskSubtasks.map((subtask) => {
-                const targetDepartment = subtask.target_department_id
-                  ? departments.find((departmentItem) => departmentItem.id === subtask.target_department_id)
-                  : null;
-                return (
-                  <div key={subtask.id} className="flex items-center gap-1.5 text-xs">
-                    <span>{SUBTASK_STATUS_ICON[subtask.status] || "\u23F3"}</span>
-                    <span
-                      className={`flex-1 truncate ${subtask.status === "done" ? "line-through text-slate-500" : "text-slate-300"}`}
-                    >
-                      {subtask.title}
-                    </span>
-                    {targetDepartment && (
-                      <span
-                        className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
-                        style={{ backgroundColor: targetDepartment.color + "30", color: targetDepartment.color }}
-                      >
-                        {targetDepartment.icon} {locale === "ko" ? targetDepartment.name_ko : targetDepartment.name}
-                      </span>
-                    )}
-                    {subtask.delegated_task_id && subtask.status !== "done" && (
-                      <span
-                        className="text-blue-400 shrink-0"
-                        title={t({ ko: "위임됨", en: "Delegated", ja: "委任済み", zh: "已委派" })}
-                      >
-                        🔗
-                      </span>
-                    )}
-                    {subtask.status === "blocked" && subtask.blocked_reason && (
-                      <span className="text-red-400 text-[10px] truncate max-w-[80px]" title={subtask.blocked_reason}>
-                        {subtask.blocked_reason}
-                      </span>
-                    )}
-                  </div>
-                );
+      {directive && !directive.isRoot && (
+        <div className="mb-3 space-y-1 rounded-lg border border-slate-700 bg-slate-900/40 p-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <DirectiveBranchChip branch={directive.branch} />
+            {directive.part && (
+              <span className="text-slate-300">{directivePartStateLabel(directive.part.state, t)}</span>
+            )}
+          </div>
+          {directive.summary && (
+            <p className="text-slate-400">
+              {t({
+                ko: `디렉티브 전체: ${directive.summary.parts.length}개 중 ${directive.summary.counts.integrated}개 통합됨`,
+                en: `Whole directive: ${directive.summary.counts.integrated} of ${directive.summary.parts.length} parts integrated`,
+                ja: `ディレクティブ全体: ${directive.summary.parts.length} 件中 ${directive.summary.counts.integrated} 件統合済み`,
+                zh: `整个指令：${directive.summary.parts.length} 项中已集成 ${directive.summary.counts.integrated} 项`,
               })}
-            </div>
+            </p>
+          )}
+          {task.status === "review" && (
+            <p className="text-sky-300">
+              {t({
+                ko: "이 작업은 디렉티브의 단일 CEO 승인에서 함께 통합됩니다.",
+                en: "This part integrates with the directive's single CEO approval.",
+                ja: "この作業はディレクティブの一括 CEO 承認で統合されます。",
+                zh: "此部分将随指令的一次性 CEO 审批一并集成。",
+              })}
+            </p>
           )}
         </div>
+      )}
+
+      {directive?.isRoot && directive.summary ? (
+        <DirectiveProgress
+          task={task}
+          summary={directive.summary}
+          agents={agents}
+          departments={departments}
+          onRetryPart={onRunTask}
+        />
+      ) : (
+        (task.subtask_total ?? 0) > 0 && (
+          <div className="mb-3">
+            <button
+              onClick={() => setShowSubtasks((v) => !v)}
+              className="mb-1.5 flex w-full items-center gap-2 text-left"
+            >
+              <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all"
+                  style={{ width: `${Math.round(((task.subtask_done ?? 0) / (task.subtask_total ?? 1)) * 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-400 whitespace-nowrap">
+                {task.subtask_done ?? 0}/{task.subtask_total ?? 0}
+              </span>
+              <span className="text-xs text-slate-500">{showSubtasks ? "▲" : "▼"}</span>
+            </button>
+            {showSubtasks && taskSubtasks.length > 0 && (
+              <div className="space-y-1 pl-1">
+                {taskSubtasks.map((subtask) => {
+                  const targetDepartment = subtask.target_department_id
+                    ? departments.find((departmentItem) => departmentItem.id === subtask.target_department_id)
+                    : null;
+                  return (
+                    <div key={subtask.id} className="flex items-center gap-1.5 text-xs">
+                      <span>{SUBTASK_STATUS_ICON[subtask.status] || "\u23F3"}</span>
+                      <span
+                        className={`flex-1 truncate ${subtask.status === "done" ? "line-through text-slate-500" : "text-slate-300"}`}
+                      >
+                        {subtask.title}
+                      </span>
+                      {targetDepartment && (
+                        <span
+                          className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
+                          style={{ backgroundColor: targetDepartment.color + "30", color: targetDepartment.color }}
+                        >
+                          {targetDepartment.icon} {locale === "ko" ? targetDepartment.name_ko : targetDepartment.name}
+                        </span>
+                      )}
+                      {subtask.delegated_task_id && subtask.status !== "done" && (
+                        <span
+                          className="text-blue-400 shrink-0"
+                          title={t({ ko: "위임됨", en: "Delegated", ja: "委任済み", zh: "已委派" })}
+                        >
+                          🔗
+                        </span>
+                      )}
+                      {subtask.status === "blocked" && subtask.blocked_reason && (
+                        <span className="text-red-400 text-[10px] truncate max-w-[80px]" title={subtask.blocked_reason}>
+                          {subtask.blocked_reason}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )
       )}
 
       <div className="flex flex-wrap items-center gap-1.5">
@@ -424,7 +469,15 @@ export default function TaskCard({
         )}
       </div>
 
-      {showDiff && <DiffModal taskId={task.id} onClose={() => setShowDiff(false)} />}
+      {showDiff && (
+        <DiffModal
+          taskId={task.id}
+          directive={directive}
+          ownerName={assignedLabel}
+          taskStatus={task.status}
+          onClose={() => setShowDiff(false)}
+        />
+      )}
     </div>
   );
 }

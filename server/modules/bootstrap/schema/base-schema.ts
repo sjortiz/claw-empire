@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
     CHECK(status IN ('pending','in_progress','done','blocked')),
   assigned_agent_id TEXT REFERENCES agents(id),
   blocked_reason TEXT,
+  depends_on TEXT NOT NULL DEFAULT '[]',
   cli_tool_use_id TEXT,
   created_at INTEGER DEFAULT (unixepoch()*1000),
   completed_at INTEGER

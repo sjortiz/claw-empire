@@ -297,6 +297,8 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
     l,
     pickL,
     startTaskExecutionForAgent,
+    processSubtaskDelegations: __ctx.processSubtaskDelegations,
+    maybeNotifyAllSubtasksComplete: __ctx.maybeNotifyAllSubtasksComplete,
     linkCrossDeptTaskToParentSubtask,
     detectProjectPath,
     resolveProjectPath,

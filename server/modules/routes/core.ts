@@ -395,6 +395,8 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
     sendAgentMessage,
     pickL,
     l,
+    processSubtaskDelegations,
+    maybeNotifyAllSubtasksComplete,
   });
 
   registerTaskExecutionRoutes({

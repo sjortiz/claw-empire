@@ -90,6 +90,19 @@ const AUTO_COMMIT_BLOCKED_DIR_SEGMENTS = new Set([
   "tmp",
   "temp",
 ]);
+// Generated agent state and caches are not task deliverables. Git-ignored
+// paths are already excluded by ls-files --exclude-standard below.
+const AUTO_COMMIT_IGNORED_DIR_SEGMENTS = new Set([
+  ...AUTO_COMMIT_BLOCKED_DIR_SEGMENTS,
+  ".serena",
+  ".claude",
+  ".codex",
+  ".agents",
+  ".cache",
+  ".pytest_cache",
+  ".venv",
+  "__pycache__",
+]);
 const AUTO_COMMIT_ALLOWED_DOT_DIR_SEGMENTS = new Set([".github", ".storybook", ".changeset", ".husky", ".vscode"]);
 const AUTO_COMMIT_BLOCKED_FILE_PATTERN =
   /(^|\/)(\.env($|[./])|id_rsa|id_ed25519|known_hosts|authorized_keys|.*\.(pem|key|p12|pfx|crt|cer|der|kdbx|sqlite|db|log|zip|tar|gz|tgz|rar|7z))$/i;
@@ -171,6 +184,13 @@ function stageWorktreeChangesForAutoCommit(
     for (const rawPath of untracked) {
       const relPath = normalizeRepoRelativePath(rawPath);
       if (!relPath) continue;
+      if (
+        relPath
+          .toLowerCase()
+          .split("/")
+          .some((segment) => AUTO_COMMIT_IGNORED_DIR_SEGMENTS.has(segment))
+      )
+        continue;
       if (!isSafeUntrackedPathForAutoCommit(relPath)) {
         blockedUntrackedPaths.push(relPath);
         continue;

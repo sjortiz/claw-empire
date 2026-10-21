@@ -101,6 +101,26 @@ function createDeps(db: DatabaseSync, logsDir = "/tmp") {
 }
 
 describe("run complete handler - video preprod review transition", () => {
+  it.each([false, true])("resumes a report parent only after its checkpoint integration succeeds (%s)", (completed) => {
+    const db = createDb();
+    try {
+      db.exec(
+        "INSERT INTO tasks (id, title, status, source_task_id) VALUES ('checkpoint', 'Design checkpoint', 'in_progress', 'report-parent')",
+      );
+      const deps = createDeps(db);
+      deps.activeProcesses.set("checkpoint", { pid: 100 });
+      deps.isReportDesignCheckpointTask.mockReturnValue(true);
+      deps.extractReportDesignParentTaskId.mockReturnValue("report-parent");
+      deps.completeTaskWithoutReview.mockReturnValue(completed);
+      createRunCompleteHandler(deps).handleTaskRunComplete("checkpoint", 0);
+      expect(deps.completeTaskWithoutReview).toHaveBeenCalledOnce();
+      if (completed) expect(deps.resumeReportAfterDesignCheckpoint).toHaveBeenCalledWith("report-parent", "checkpoint");
+      else expect(deps.resumeReportAfterDesignCheckpoint).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
   it("루트 video_preprod는 서브태스크가 남아도 성공 시 review로 진입한다", () => {
     const db = createDb();
     try {
@@ -175,7 +195,7 @@ describe("run complete handler - video preprod review transition", () => {
 
       const updated = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
       expect(updated.status).toBe("review");
-      expect(deps.reconcileDelegatedSubtasksAfterRun).toHaveBeenCalledWith(taskId, 0);
+      expect(deps.reconcileDelegatedSubtasksAfterRun).not.toHaveBeenCalled();
 
       const loggedMessages = deps.appendTaskLog.mock.calls.map((call: any[]) => String(call[2] ?? ""));
       expect(loggedMessages.some((message: string) => message.includes("Video artifact"))).toBe(false);

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseSubtaskDependencies, validateSubtaskDependencies } from "../../collab/subtask-dependencies.ts";
 import type { SQLInputValue } from "node:sqlite";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
@@ -19,7 +20,10 @@ export type TaskSubtaskRouteDeps = Pick<
   | "sendAgentMessage"
   | "pickL"
   | "l"
->;
+> & {
+  processSubtaskDelegations?: (taskId: string) => void;
+  maybeNotifyAllSubtasksComplete?: (taskId: string) => void;
+};
 
 export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
   const {
@@ -70,10 +74,14 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
     }
 
     const id = randomUUID();
+    const dependencies = parseSubtaskDependencies((body as any).depends_on);
+    if (!dependencies || !validateSubtaskDependencies(db, taskId, id, dependencies)) {
+      return res.status(400).json({ error: "invalid_subtask_dependencies" });
+    }
     db.prepare(
       `
-    INSERT INTO subtasks (id, task_id, title, description, status, assigned_agent_id, created_at)
-    VALUES (?, ?, ?, ?, 'pending', ?, ?)
+    INSERT INTO subtasks (id, task_id, title, description, status, assigned_agent_id, depends_on, created_at)
+    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
   `,
     ).run(
       id,
@@ -81,6 +89,7 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
       (body as any).title,
       (body as any).description ?? null,
       (body as any).assigned_agent_id ?? null,
+      JSON.stringify(dependencies),
       nowMs(),
     );
 
@@ -106,6 +115,7 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
 
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id);
     broadcast("subtask_update", subtask);
+    deps.processSubtaskDelegations?.(taskId);
     res.json(subtask);
   });
 
@@ -127,6 +137,15 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
     const updates: string[] = [];
     const params: unknown[] = [];
 
+    if ("depends_on" in body) {
+      const dependencies = parseSubtaskDependencies(body.depends_on);
+      if (!dependencies || !validateSubtaskDependencies(db, String(existing.task_id), id, dependencies)) {
+        return res.status(400).json({ error: "invalid_subtask_dependencies" });
+      }
+      updates.push("depends_on = ?");
+      params.push(JSON.stringify(dependencies));
+    }
+
     for (const field of allowedFields) {
       if (field in (body as any)) {
         updates.push(`${field} = ?`);
@@ -146,6 +165,8 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
 
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id);
     broadcast("subtask_update", subtask);
+    if (body.status === "done") deps.maybeNotifyAllSubtasksComplete?.(String(existing.task_id));
+    else deps.processSubtaskDelegations?.(String(existing.task_id));
     res.json(subtask);
   });
 
