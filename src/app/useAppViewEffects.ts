@@ -32,7 +32,8 @@ export function useAppViewEffects({
       const clean = new URL(window.location.href);
       clean.searchParams.delete("oauth");
       clean.searchParams.delete("oauth_error");
-      window.history.replaceState({}, "", clean.pathname + clean.search);
+      clean.searchParams.set("view", "settings");
+      window.history.replaceState(window.history.state, "", clean);
       setView("settings");
     }
   }, [setOauthResult, setView]);

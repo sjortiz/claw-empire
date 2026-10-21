@@ -39,6 +39,7 @@ import { useAppActions } from "./app/useAppActions";
 import { useActiveMeetingTaskId } from "./app/useActiveMeetingTaskId";
 import { useUpdateStatusPolling } from "./app/useUpdateStatusPolling";
 import { useAppViewEffects } from "./app/useAppViewEffects";
+import { useAppView } from "./app/useAppView";
 import { useAppBootstrapData } from "./app/useAppBootstrapData";
 import { useLiveSyncScheduler } from "./app/useLiveSyncScheduler";
 import { resolvePackAgentViews, resolvePackDepartmentsForDisplay } from "./app/office-pack-display";
@@ -57,7 +58,7 @@ export default function App() {
   const initialRoomThemes = useMemo(() => readStoredRoomThemes(), []);
   const hasLocalRoomThemesRef = useRef<boolean>(initialRoomThemes.hasStored);
 
-  const [view, setView] = useState<View>("office");
+  const [view, setView] = useAppView();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -108,7 +109,7 @@ export default function App() {
     content: string;
   } | null>(null);
 
-  const viewRef = useRef<View>("office");
+  const viewRef = useRef<View>(view);
   viewRef.current = view;
   const agentsRef = useRef<Agent[]>(agents);
   agentsRef.current = agents;
