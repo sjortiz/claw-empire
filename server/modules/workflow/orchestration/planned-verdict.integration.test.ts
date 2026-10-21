@@ -17,7 +17,13 @@ let db: DatabaseSync;
 afterEach(() => db?.close());
 const approve: MeetingVerdict = { verdict: "approve", blocking_items: [], non_blocking_notes: ["Monitor risk later"] };
 
-async function runPlanning(draft: string, summary: string, retry = "invalid verdict", solo = false) {
+async function runPlanning(
+  draft: string,
+  summary: string,
+  retry = "invalid verdict",
+  solo = false,
+  runResult?: (prompt: string, text: string, call: number) => { text: string; error?: string; timedOut?: boolean },
+) {
   db = new DatabaseSync(":memory:");
   applyBaseSchema(db);
   applyTaskSchemaMigrations(db);
@@ -41,9 +47,11 @@ async function runPlanning(draft: string, summary: string, retry = "invalid verd
     REVIEW_MAX_MEMO_ITEMS_PER_DEPT: 4,
   };
   const minutes = createMeetingMinutesTools(deps);
-  const runAgentOneShot = vi.fn(async (_agent: any, prompt: string) => ({
-    text: prompt === "draft" ? draft : prompt === "consolidation" ? summary : retry,
-  }));
+  let runCount = 0;
+  const runAgentOneShot = vi.fn(async (_agent: any, prompt: string) => {
+    const text = prompt === "draft" ? draft : prompt === "consolidation" ? summary : retry;
+    return runResult?.(prompt, text, ++runCount) ?? { text };
+  });
   const { seedApprovedPlanSubtasks } = createSubtaskSeedingTools({
     ...deps,
     analyzeSubtaskDepartment: (text) => (text.startsWith("dev ") ? "dev" : null),
@@ -104,6 +112,24 @@ async function runPlanning(draft: string, summary: string, retry = "invalid verd
 }
 
 describe("planned meeting verdicts", () => {
+  it("accepts successful timeout discussion without retrying the model", async () => {
+    const text = `Repair timeout after requests timed out and aborted jobs.\n${formatMeetingVerdict(approve)}`;
+    const result = await runPlanning(text, text);
+    expect(result.status).toBe("completed");
+    expect(result.onApproved).toHaveBeenCalledTimes(1);
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(2);
+    expect(result.appendTaskLog.mock.calls.some((call) => String(call[2]).includes("timed out"))).toBe(false);
+  });
+  it("still retries a genuine execution timeout once", async () => {
+    const text = `Implement API\n${formatMeetingVerdict(approve)}`;
+    const result = await runPlanning(text, text, text, false, (_prompt, output, call) =>
+      call === 1 ? { text: "", error: "timeout after 65000ms" } : { text: output },
+    );
+    expect(result.status).toBe("completed");
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
+    expect(result.appendTaskLog).toHaveBeenCalledWith("task", "system", expect.stringContaining("retrying once"));
+  });
+
   it("shares verdict handling, preserves executable drafts without plan_items, and excludes notes from fallback work", async () => {
     const result = await runPlanning(
       `Implement API\nMonitor risk later\n${formatMeetingVerdict(approve)}`,

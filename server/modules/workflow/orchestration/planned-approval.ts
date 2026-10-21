@@ -1,3 +1,4 @@
+import { isMeetingRunTimeout } from "../core/meeting-run-timeout.ts";
 import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
 import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 import type { MeetingReviewDecision } from "../core/conversation-types.ts";
@@ -133,10 +134,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const workTranscript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };
-        const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
-          const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
-          return /timeout after|timed out|request timed out|aborted/i.test(source);
-        };
         const compactPromptForRetry = (prompt: string): string => {
           const raw = String(prompt ?? "");
           const maxHead = 2600;
@@ -155,14 +152,14 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           const options =
             phase === "summary" || phase === "feedback" ? { ...oneShotOptions, rawOutput: true } : oneShotOptions;
           const first = await runAgentOneShot(agent, prompt, options);
-          if (!isTimeoutRun(first)) return first;
+          if (!isMeetingRunTimeout(first)) return first;
           appendTaskLog(taskId, "system", `Planned meeting ${phase} timed out (${oneShotTimeoutMs}ms); retrying once`);
           const retryPrompt =
             phase === "summary"
               ? `${prompt}\n\n[retry] Previous attempt timed out. Return a concise complete plan, preserving all item and prerequisite keys from every department draft.`
               : compactPromptForRetry(prompt);
           const second = await runAgentOneShot(agent, retryPrompt, options);
-          if (isTimeoutRun(second)) {
+          if (isMeetingRunTimeout(second)) {
             appendTaskLog(taskId, "system", `Planned meeting ${phase} retry timed out (${oneShotTimeoutMs}ms)`);
           }
           return second;
@@ -251,7 +248,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               lang,
             });
             const run = await runMeetingOneShotWithRetry(leader, draftPrompt, "feedback");
-            if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
+            if (run?.error || isMeetingRunTimeout(run) || !String(run?.text ?? "").trim()) {
               throw new Error(run?.error || "Department planning draft did not complete");
             }
             const resolved = await resolveMeetingVerdict({
@@ -315,7 +312,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
         if (abortIfInactive()) return;
-        if (summaryRun?.error || isTimeoutRun(summaryRun)) {
+        if (summaryRun?.error || isMeetingRunTimeout(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
         const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));

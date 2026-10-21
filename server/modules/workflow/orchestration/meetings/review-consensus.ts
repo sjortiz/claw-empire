@@ -1,3 +1,4 @@
+import { isMeetingRunTimeout } from "../../core/meeting-run-timeout.ts";
 import { resolveMeetingVerdict } from "../../meeting-verdict.ts";
 import {
   formatMeetingVerdict,
@@ -183,10 +184,6 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           );
           return `${prose}\n\n${formatMeetingVerdict(resolved.verdict)}`;
         };
-        const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
-          const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
-          return /timeout after|timed out|request timed out|aborted/i.test(source);
-        };
         const compactPromptForRetry = (prompt: string): string => {
           const raw = String(prompt ?? "");
           const maxHead = 2600;
@@ -203,7 +200,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           phase: "opening" | "feedback" | "summary" | "approval",
         ): Promise<any> => {
           const first = await runAgentOneShot(agent, prompt, oneShotOptions);
-          if (!isTimeoutRun(first)) return first;
+          if (!isMeetingRunTimeout(first)) return first;
           appendTaskLog(
             taskId,
             "system",
@@ -211,7 +208,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           );
           const retryPrompt = compactPromptForRetry(prompt);
           const second = await runAgentOneShot(agent, retryPrompt, oneShotOptions);
-          if (isTimeoutRun(second)) {
+          if (isMeetingRunTimeout(second)) {
             appendTaskLog(taskId, "system", `Review meeting ${phase} retry timed out (${oneShotTimeoutMs}ms)`);
           }
           return second;

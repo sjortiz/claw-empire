@@ -19,7 +19,12 @@ const approval: MeetingVerdict = {
   non_blocking_notes: ["risk in downstream work remains informational"],
 };
 
-async function runReview(finalVerdict: MeetingVerdict | null, feedbackVerdict = finalVerdict, round = 1) {
+async function runReview(
+  finalVerdict: MeetingVerdict | null,
+  feedbackVerdict = finalVerdict,
+  round = 1,
+  runResult?: (text: string, call: number) => { text: string; error?: string; timedOut?: boolean },
+) {
   db = new DatabaseSync(":memory:");
   applyBaseSchema(db);
   applyTaskSchemaMigrations(db);
@@ -54,11 +59,11 @@ async function runReview(finalVerdict: MeetingVerdict | null, feedbackVerdict = 
     REVIEW_MAX_MEMO_ITEMS_PER_DEPT: 4,
   };
   const minutes = createMeetingMinutesTools(memoDeps);
+  let runCount = 0;
   const runAgentOneShot = vi.fn(async (_agent: any, prompt: string) => {
     const verdict = prompt === "feedback" ? feedbackVerdict : finalVerdict;
-    return {
-      text: `#47 blocks downstream work. Approved with risk documented.${verdict ? "\n" + formatMeetingVerdict(verdict) : ""}`,
-    };
+    const text = `#47 blocks downstream work. Approved with risk documented.${verdict ? "\n" + formatMeetingVerdict(verdict) : ""}`;
+    return runResult?.(text, ++runCount) ?? { text };
   });
   const onApproved = vi.fn();
   const tools = createReviewConsensusTools({
@@ -118,6 +123,23 @@ async function runReview(finalVerdict: MeetingVerdict | null, feedbackVerdict = 
 }
 
 describe("review verdict orchestration", () => {
+  it("accepts successful timeout discussion without execution retries", async () => {
+    const result = await runReview(approval, approval, 1, (text) => ({
+      text: `Discuss timeout after requests timed out; aborted jobs recover.\n${text}`,
+    }));
+    expect(result.onApproved).toHaveBeenCalledTimes(1);
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(4);
+    expect(result.appendTaskLog.mock.calls.some((call) => String(call[2]).includes("timed out"))).toBe(false);
+  });
+  it("retries genuine execution timeout metadata once", async () => {
+    const result = await runReview(approval, approval, 1, (text, call) =>
+      call === 1 ? { text: "", error: "timeout after 65000ms" } : { text },
+    );
+    expect(result.onApproved).toHaveBeenCalledTimes(1);
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(5);
+    expect(result.appendTaskLog).toHaveBeenCalledWith("task", "system", expect.stringContaining("retrying once"));
+  });
+
   it("approves risk/block prose and persists informational notes in memo and report minutes", async () => {
     const result = await runReview(approval);
     expect(result.onApproved).toHaveBeenCalledTimes(1);
