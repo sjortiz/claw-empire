@@ -28,6 +28,7 @@ function fixture() {
     startTaskExecutionForAgent: vi.fn((id: string) =>
       db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(id),
     ),
+    notifyCeo: vi.fn(),
     finishReview: vi.fn(),
     startPlannedApprovalMeeting: vi.fn(),
     seedApprovedPlanSubtasks: vi.fn(),
@@ -78,6 +79,29 @@ describe("persistent root recovery", () => {
     const deps = fixture();
     db.exec("UPDATE agents SET status = 'working', current_task_id = 'other';");
     expect(resumeTaskExecution(deps, "root", "test")).toBe(false);
+  });
+  it("bounds a recovered owner wait using its persisted deadline and notifies once", () => {
+    vi.useFakeTimers();
+    try {
+      const deps = fixture();
+      let now = 100_000;
+      deps.nowMs = () => now;
+      db.exec("UPDATE tasks SET status = 'planned'; UPDATE agents SET status = 'working', current_task_id = 'other'");
+      sweepReadyRoots(deps);
+      const logs = db.prepare("SELECT message FROM task_logs").all() as Array<{ message: string }>;
+      expect(logs.filter((log) => log.message.includes("Root waiting for assigned agent owner"))).toHaveLength(1);
+      vi.clearAllTimers();
+      now += 16 * 60_000;
+      sweepReadyRoots({ ...deps, activeProcesses: new Map(), reviewInFlight: new Set() });
+      expect(deps.notifyCeo).toHaveBeenCalledOnce();
+      expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "pending" });
+      sweepReadyRoots(deps);
+      expect(deps.notifyCeo).toHaveBeenCalledOnce();
+      expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
   it("restarts a planned meeting through planning rather than executing early", () => {
     const deps = fixture();

@@ -1,3 +1,4 @@
+import { resetPersistentWaits } from "../../../workflow/core/persistent-wait.ts";
 import { resumeTaskExecution } from "../../../workflow/core/task-resume.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
@@ -501,6 +502,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       return res.status(400).json({ error: "invalid_status", message: `Cannot resume from '${task.status}'` });
     }
 
+    resetPersistentWaits(db, id, nowMs());
     stopRequestedTasks.delete(id);
     stopRequestModeByTask.delete(id);
     const wasPaused = task.status === "pending";

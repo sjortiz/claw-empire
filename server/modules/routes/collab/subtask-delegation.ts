@@ -1,4 +1,5 @@
-import { recoverReadyRoot } from "../../workflow/core/task-resume.ts";
+import { createPersistentWait } from "../../workflow/core/persistent-wait.ts";
+import { isTaskAutoRecoveryHeld, recoverReadyRoot, resumeTaskExecution } from "../../workflow/core/task-resume.ts";
 import { hasUnfinishedDependencies } from "./subtask-dependencies.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { Lang } from "../../../types/lang.ts";
@@ -149,13 +150,11 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     launchApiProviderAgent,
     launchHttpAgent,
     startProgressTimer,
-    startTaskExecutionForAgent,
     activeProcesses,
   } = deps;
   const scheduledSubtaskIds = new Set<string>();
   const pendingDelegationOptionsByTask = new Map<string, { includeRender?: boolean }>();
-  const autoResumeRetryTimers = new Map<string, NodeJS.Timeout>();
-  const autoResumeRetryAttempts = new Map<string, number>();
+  const persistentWait = createPersistentWait(deps);
 
   // ---------------------------------------------------------------------------
   // Independent departments start together; only explicit prerequisites defer.
@@ -177,30 +176,17 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   });
 
   function clearAutoResumeRetry(taskId: string): void {
-    const timer = autoResumeRetryTimers.get(taskId);
-    if (timer) {
-      clearTimeout(timer);
-      autoResumeRetryTimers.delete(taskId);
-    }
-    autoResumeRetryAttempts.delete(taskId);
+    persistentWait.clear(taskId, "root-consolidation");
   }
 
   function scheduleAutoResumeRetry(taskId: string, reason: string): void {
-    if (autoResumeRetryTimers.has(taskId)) return;
-    const nextAttempt = (autoResumeRetryAttempts.get(taskId) ?? 0) + 1;
-    autoResumeRetryAttempts.set(taskId, nextAttempt);
-    const delayMs = Math.min(15_000 * nextAttempt, 120_000);
-    appendTaskLog(
+    persistentWait.wait(
       taskId,
-      "system",
-      `Auto-resume retry scheduled in ${Math.round(delayMs / 1000)}s (attempt ${nextAttempt}; reason=${reason})`,
+      "root-consolidation",
+      `Root consolidation waiting: ${reason}`,
+      () => maybeNotifyAllSubtasksComplete(taskId),
+      { delayMs: 15_000 },
     );
-    const timer = setTimeout(() => {
-      autoResumeRetryTimers.delete(taskId);
-      maybeNotifyAllSubtasksComplete(taskId);
-    }, delayMs);
-    timer.unref?.();
-    autoResumeRetryTimers.set(taskId, timer);
   }
 
   function hasOpenForeignSubtasks(taskId: string, targetDeptIds: string[] = []): boolean {
@@ -241,6 +227,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   }
 
   function processSubtaskDelegations(taskId: string, opts?: { includeRender?: boolean }): void {
+    if (isTaskAutoRecoveryHeld(deps, taskId)) return;
     if (subtaskDelegationDispatchInFlight.has(taskId)) {
       const previous = pendingDelegationOptionsByTask.get(taskId);
       pendingDelegationOptionsByTask.set(taskId, {
@@ -350,6 +337,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   }
 
   function maybeNotifyAllSubtasksComplete(parentTaskId: string): void {
+    if (isTaskAutoRecoveryHeld(deps, parentTaskId)) return;
     processSubtaskDelegations(parentTaskId);
     const remaining = db
       .prepare("SELECT COUNT(*) as cnt FROM subtasks WHERE task_id = ? AND status NOT IN ('done', 'cancelled')")
@@ -455,19 +443,8 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
           scheduleAutoResumeRetry(parentTaskId, "planning_graph_consolidation_agent_busy");
           return;
         }
-        const claimed = db
-          .prepare("UPDATE tasks SET status = 'planned', updated_at = ? WHERE id = ? AND status = 'collaborating'")
-          .run(nowMs(), parentTaskId);
-        if (claimed.changes === 0) return;
         clearAutoResumeRetry(parentTaskId);
-        appendTaskLog(parentTaskId, "system", "All planning graph children integrated; starting root consolidation");
-        const deptId = planner.department_id ?? parentTask.department_id ?? null;
-        startTaskExecutionForAgent(
-          parentTaskId,
-          planner,
-          deptId,
-          deptId ? getDeptName(deptId, parentTask.workflow_pack_key) : "Unassigned",
-        );
+        resumeTaskExecution(deps, parentTaskId, "all planning graph children integrated; starting root consolidation");
         return;
       }
     }
@@ -526,14 +503,12 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
             );
             scheduleAutoResumeRetry(parentTaskId, `agent_busy:${assignedAgent.current_task_id}`);
           } else {
-            const deptId = assignedAgent.department_id ?? parentTask.department_id ?? null;
-            const deptName = deptId ? getDeptName(deptId, parentTask.workflow_pack_key ?? null) : "Unassigned";
             appendTaskLog(
               parentTaskId,
               "system",
               "Video render hold cleared: all subtasks completed. Auto-resuming final render run.",
             );
-            startTaskExecutionForAgent(parentTaskId, assignedAgent, deptId, deptName);
+            resumeTaskExecution(deps, parentTaskId, "video render hold cleared: all subtasks completed");
             clearAutoResumeRetry(parentTaskId);
           }
         }

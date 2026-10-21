@@ -1,3 +1,4 @@
+import { createPersistentWait } from "../../workflow/core/persistent-wait.ts";
 import { randomUUID } from "node:crypto";
 import { isPlanningAgent, selectPlanningAgent } from "./planner-selection.ts";
 import { parsePlanningGraph } from "../../workflow/agents/planning-graph.ts";
@@ -124,6 +125,8 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
     registerTaskMessengerRoute,
     startTaskExecutionForAgent,
   } = deps;
+  const persistentWait = createPersistentWait({ db, nowMs, appendTaskLog, notifyCeo, broadcast });
+
   function handleTaskDelegation(
     teamLeader: AgentRow,
     ceoMessage: string,
@@ -419,10 +422,16 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
             )
             .get(taskId) as { count: number };
           if (pending.count > 0) {
-            const retry = setTimeout(waitForIntegration, 1_000);
-            retry.unref?.();
+            persistentWait.wait(
+              taskId,
+              "planning-integration",
+              `Planning graph waiting for ${pending.count} child integration(s)`,
+              waitForIntegration,
+              { delayMs: 1_000, maxWaitMs: 60 * 60_000 },
+            );
             return;
           }
+          persistentWait.clear(taskId, "planning-integration");
           db.prepare("UPDATE tasks SET status = 'planned', updated_at = ? WHERE id = ?").run(nowMs(), taskId);
           afterPlan();
         };
@@ -438,10 +447,15 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
             !["idle", "break"].includes(fresh.status) ||
             (fresh.current_task_id && fresh.current_task_id !== taskId)
           ) {
-            const retry = setTimeout(() => runPlanningPhase(afterPlan), 5_000);
-            retry.unref?.();
+            persistentWait.wait(
+              taskId,
+              "planning-agent",
+              `Planning phase waiting for planner ${teamLeader.id} (current_task=${fresh?.current_task_id ?? "none"})`,
+              () => runPlanningPhase(afterPlan),
+            );
             return;
           }
+          persistentWait.clear(taskId, "planning-agent");
           db.prepare("UPDATE agents SET current_task_id = ? WHERE id = ?").run(taskId, teamLeader.id);
         }
         if (skipPlannedMeeting) {
@@ -535,10 +549,15 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
             !["idle", "break"].includes(fresh.status) ||
             (fresh.current_task_id && fresh.current_task_id !== taskId)
           ) {
-            const retry = setTimeout(startWhenAvailable, 5_000);
-            retry.unref?.();
+            persistentWait.wait(
+              taskId,
+              "root-execution-agent",
+              `Task execution waiting for agent ${teamLeader.id} (current_task=${fresh?.current_task_id ?? "none"})`,
+              startWhenAvailable,
+            );
             return;
           }
+          persistentWait.clear(taskId, "root-execution-agent");
           db.prepare("UPDATE agents SET current_task_id = ? WHERE id = ?").run(taskId, fresh.id);
           startTaskExecutionForAgent(taskId, fresh, leaderDeptId, leaderDeptName);
           runCrossDeptAfterMainIfNeeded();
