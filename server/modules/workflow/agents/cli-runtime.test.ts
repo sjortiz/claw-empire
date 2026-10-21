@@ -50,7 +50,7 @@ describe("CLI run header", () => {
       completeSubtaskFromCli: vi.fn(),
     });
     const logPath = path.join(logsDir, "test.log");
-    runtime.spawnCliAgent("test", provider, "prompt", logsDir, logPath, "model-name", level);
+    await runtime.spawnCliAgent("test", provider, "prompt", logsDir, logPath, "model-name", level);
     child.emit("close", 0);
 
     await vi.waitFor(() => {
@@ -65,7 +65,7 @@ describe("CLI run header", () => {
     });
     expect(spawn).toHaveBeenCalledWith(
       provider,
-      cliTools.buildAgentArgs(provider, "model-name", level).slice(1),
+      expect.arrayContaining(cliTools.buildAgentArgs(provider, "model-name", level).slice(1)),
       expect.objectContaining({ cwd: logsDir }),
     );
   });

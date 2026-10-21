@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,7 +47,7 @@ describe("cooperation late-note launch contract (AC-QA-001)", () => {
     });
     const agent = db.prepare("SELECT * FROM agents WHERE id='beta'").get() as unknown as AgentRow;
     const session = { sessionId: "collaboration-session", agentId: "beta" };
-    const launch = vi.fn((..._args: any[]) => ({ on: vi.fn() }));
+    const launch = vi.fn(async (..._args: any[]) => ({ on: vi.fn() }) as unknown as ChildProcess);
     const apiLaunch = vi.fn();
     const httpLaunch = vi.fn();
     const ensureClaudeMd = vi.fn();
@@ -152,7 +153,7 @@ describe("cooperation late-note launch contract (AC-QA-001)", () => {
     );
 
     const createWorktree = vi.fn();
-    const continuationSpawn = vi.fn((..._args: any[]) => ({ on: vi.fn() }));
+    const continuationSpawn = vi.fn(async (..._args: any[]) => ({ on: vi.fn() }) as unknown as ChildProcess);
     const continuationApi = vi.fn();
     const continuationHttp = vi.fn();
     const starter = createExecutionStartTaskTools({

@@ -68,17 +68,7 @@ interface SubtaskDelegationDeps {
   };
   ensureClaudeMd: (projectPath: string, worktreePath: string) => void;
   getProviderModelConfig: () => Record<string, { model?: string; reasoningLevel?: string }>;
-  spawnCliAgent: (
-    taskId: string,
-    provider: string,
-    prompt: string,
-    cwd: string,
-    logFilePath: string,
-    model?: string,
-    reasoningLevel?: string,
-  ) => {
-    on: (event: "close", listener: (code: number | null) => void) => void;
-  };
+  spawnCliAgent: RuntimeContext["spawnCliAgent"];
   getNextHttpAgentPid: () => number;
   launchApiProviderAgent: (
     taskId: string,

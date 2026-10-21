@@ -12,6 +12,7 @@ type ProviderCase = {
   expectedEffort?: string;
   initiallyBusy?: boolean;
   worktreeFails?: boolean;
+  cancelled?: boolean;
 };
 
 type SeededAgents = {
@@ -118,11 +119,21 @@ describe("createCrossDeptCooperationTools", () => {
     { provider: "antigravity", launchKind: "http" },
     { provider: "api", launchKind: "api", effort: "none" },
     { provider: "claude", launchKind: "cli" },
+    { provider: "claude", launchKind: "cli", cancelled: true },
     { provider: "claude", launchKind: "cli", defaultEffort: "high", expectedEffort: "high" },
     { provider: "claude", launchKind: "cli", effort: "low", defaultEffort: "high", expectedEffort: "low" },
   ])(
     "routes $provider collaboration tasks through the $launchKind launcher",
-    ({ provider, launchKind, effort, defaultEffort, expectedEffort, initiallyBusy, worktreeFails }) => {
+    async ({
+      provider,
+      launchKind,
+      effort,
+      defaultEffort,
+      expectedEffort,
+      initiallyBusy,
+      worktreeFails,
+      cancelled,
+    }) => {
       db = new DatabaseSync(":memory:");
       applyBaseSchema(db);
       applyTaskSchemaMigrations(db);
@@ -132,7 +143,14 @@ describe("createCrossDeptCooperationTools", () => {
       db.prepare("UPDATE agents SET cli_reasoning_level = ? WHERE id = ?").run(effort ?? null, execAgent.id);
       const launchApiProviderAgent = vi.fn();
       const launchHttpAgent = vi.fn();
-      const spawnCliAgent = vi.fn((..._args: unknown[]) => ({ on: vi.fn() }));
+      const spawnCliAgent = vi.fn(async (...args: unknown[]) => {
+        if (cancelled) {
+          await Promise.resolve();
+          db!.prepare("UPDATE tasks SET status = 'cancelled' WHERE id = ?").run(String(args[0]));
+          throw Object.assign(new Error("cli_launch_cancelled"), { code: "CLI_LAUNCH_CANCELLED" });
+        }
+        return { on: vi.fn() };
+      });
       const handleTaskRunComplete = vi.fn();
 
       const { startCrossDeptCooperation } = createCrossDeptCooperationTools({
@@ -212,7 +230,7 @@ describe("createCrossDeptCooperationTools", () => {
         db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = 'dev-worker'").run();
       }
 
-      vi.runAllTimers();
+      await vi.runAllTimersAsync();
 
       const crossTask = db
         .prepare("SELECT status, assigned_agent_id, source_task_id FROM tasks WHERE source_task_id = ?")
@@ -224,6 +242,11 @@ describe("createCrossDeptCooperationTools", () => {
           }
         | undefined;
 
+      if (cancelled) {
+        expect(crossTask).toMatchObject({ status: "cancelled" });
+        expect(handleTaskRunComplete).not.toHaveBeenCalled();
+        return;
+      }
       expect(crossTask).toMatchObject({
         status: "in_progress",
         assigned_agent_id: "dev-worker",

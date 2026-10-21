@@ -1,10 +1,13 @@
 import fs from "node:fs";
+import { prepareHeadroomCli } from "../../headroom.ts";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { resolveCliReasoningLevel } from "./reasoning-effort.ts";
 import type { AgentRow, OneShotRunOptions, OneShotRunResult } from "./conversation-types.ts";
 
 type CreateOneShotRunnerDeps = {
+  db: any;
+  appendTaskLog?: (taskId: string | null, kind: string, message: string) => void;
   logsDir: string;
   broadcast: (event: string, payload: unknown) => void;
   getProviderModelConfig: () => Record<string, { model?: string; reasoningLevel?: string }>;
@@ -23,6 +26,8 @@ type CreateOneShotRunnerDeps = {
 
 export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
   const {
+    db,
+    appendTaskLog,
     logsDir,
     broadcast,
     getProviderModelConfig,
@@ -201,14 +206,23 @@ export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
           agent.cli_reasoning_level,
           modelConfig[provider]?.reasoningLevel,
         );
-        const args = buildAgentArgs(provider, model, reasoningLevel, { noTools });
+        const route = await prepareHeadroomCli(db, provider, process.env);
+        // Routing diagnostics belong to operation/task logs, never model reply text.
+        if (route.warning) {
+          safeWrite(`${route.warning}\n`);
+          if (streamTaskId) {
+            appendTaskLog?.(streamTaskId, "system", route.warning);
+            broadcast("cli_output", { task_id: streamTaskId, stream: "stderr", data: `${route.warning}\n` });
+          }
+        }
+        const args = [...buildAgentArgs(provider, model, reasoningLevel, { noTools }), ...route.args];
         if ((provider === "claude" || provider === "codex") && reasoningLevel)
           safeWrite(
             `===== one-shot run start | provider=${provider}${model ? ` | model=${model}` : ""}${reasoningLevel ? ` | effort=${reasoningLevel}` : ""} =====\n`,
           );
 
         await new Promise<void>((resolve, reject) => {
-          const cleanEnv = { ...process.env };
+          const cleanEnv = route.env;
           delete cleanEnv.CLAUDECODE;
           delete cleanEnv.CLAUDE_CODE;
           cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? process.env.PATH ?? ""));
