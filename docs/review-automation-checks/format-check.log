@@ -1,0 +1,6 @@
+
+> climpire@2.0.4 format:check /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/35b4a4e9
+> prettier --check "**/*.{ts,tsx,js,mjs,cjs,json,yml,yaml,css,scss,html}"
+
+Checking formatting...
+All matched files use Prettier code style!

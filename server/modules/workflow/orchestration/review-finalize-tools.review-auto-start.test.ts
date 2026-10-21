@@ -1,7 +1,13 @@
 import { DatabaseSync } from "node:sqlite";
+import express from "express";
+import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
+import { registerOpsSettingsStatsRoutes } from "../../routes/ops/settings-stats.ts";
+import { createProjectAndTimeoutDecisionItems } from "../../routes/ops/messages/decision-inbox/project-timeout-items.ts";
+import { createReviewAutoStartNoticeItems } from "../../routes/ops/messages/decision-inbox/review-automation.ts";
+import { createDecisionStateHelpers } from "../../routes/ops/messages/decision-inbox/state-helpers.ts";
 import { REVIEW_AUTO_START_LOG } from "../core/review-automation.ts";
 import { createReviewFinalizeTools } from "./review-finalize-tools.ts";
 
@@ -24,6 +30,10 @@ function createHarness(options: { global?: boolean; project?: "on" | "off" | nul
   const reviewInFlight = new Set<string>();
   const startReviewConsensusMeeting = vi.fn((taskId: string) => {
     reviewInFlight.add(taskId);
+    // Model the consensus runner's synchronous meeting creation, before its first await.
+    db.prepare(
+      "INSERT INTO meeting_minutes (id, task_id, meeting_type, round, title, status, started_at) VALUES (?, ?, 'review', 1, 'Review', 'in_progress', 100000)",
+    ).run(`meeting:${taskId}`, taskId);
   });
   const appendTaskLog = vi.fn();
   const notifyCeo = vi.fn();
@@ -66,6 +76,60 @@ function createHarness(options: { global?: boolean; project?: "on" | "off" | nul
 }
 
 describe("project review gate with review auto-start", () => {
+  it("keeps an already-waiting gate manual on settings save, then replaces its decision with a notice on the next gate pass", async () => {
+    const h = createHarness();
+    try {
+      const nowMs = () => 100_000;
+      const localized = {
+        getPreferredLanguage: () => "en",
+        l: (_ko: string[], en: string[]) => en[0],
+        pickL: (value: unknown) => String(value),
+      };
+      const { buildProjectReviewDecisionItems } = createProjectAndTimeoutDecisionItems({
+        db: h.db,
+        nowMs,
+        ...localized,
+        ...createDecisionStateHelpers({ db: h.db, nowMs }),
+        resolvePlanningLeadMeta: () => ({
+          agent_id: null,
+          agent_name: "Planning lead",
+          agent_name_ko: "기획팀장",
+          agent_avatar: "",
+        }),
+        formatPlannerSummaryForDisplay: (value) => value,
+        queueProjectReviewPlanningConsolidation: vi.fn(),
+        PROJECT_REVIEW_TASK_SELECTED_LOG_PREFIX: "Decision inbox: project review task option selected",
+      });
+      const { buildReviewAutoStartNoticeItems } = createReviewAutoStartNoticeItems({ db: h.db, ...localized });
+      const app = express();
+      app.use(express.json());
+      registerOpsSettingsStatsRoutes({ app, db: h.db, nowMs } as Parameters<typeof registerOpsSettingsStatsRoutes>[0]);
+
+      h.finishReview("task-1", "Backend");
+      expect(buildProjectReviewDecisionItems()).toEqual([
+        expect.objectContaining({ id: "project-review-ready:project-1", kind: "project_review_ready" }),
+      ]);
+
+      const saved = await request(app).put("/api/settings").send({ reviewAutoStart: true });
+      expect(saved.status).toBe(200);
+      expect(h.startReviewConsensusMeeting).not.toHaveBeenCalled();
+      expect(h.notices()).toEqual([]);
+      expect(buildProjectReviewDecisionItems()).toHaveLength(1);
+
+      h.finishReview("task-1", "Backend");
+      expect(h.startReviewConsensusMeeting.mock.calls.map(([id]) => id)).toEqual(["task-1", "task-2"]);
+      expect(buildProjectReviewDecisionItems()).toEqual([]);
+      expect(buildReviewAutoStartNoticeItems()).toEqual([
+        expect.objectContaining({
+          kind: "review_auto_started",
+          options: [{ number: 1, action: "acknowledge_review_auto_start", label: "Acknowledge" }],
+        }),
+      ]);
+    } finally {
+      h.db.close();
+    }
+  });
+
   it.each([undefined, false])("waits for a CEO decision when the setting is off (global=%s)", (global) => {
     const h = createHarness({ global });
     try {
