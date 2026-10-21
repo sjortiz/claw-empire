@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { coordinationLocalizers, createCoordinationDb } from "../agent-coordination-fixture.ts";
@@ -52,7 +53,7 @@ describe("QA acceptance: persisted department delegation", () => {
             .get(dept === "dev" ? "alpha" : `${dept}-agent`) as unknown as AgentRow,
         ]),
       );
-      const spawn = vi.fn(() => ({ on: vi.fn() }));
+      const spawn = vi.fn(async () => ({ on: vi.fn() }) as unknown as ChildProcess);
       const finalize = vi.fn();
       const batch = createSubtaskDelegationBatch({
         db,

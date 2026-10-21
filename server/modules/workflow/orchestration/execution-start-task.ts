@@ -85,6 +85,30 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     deptName: string,
     options?: { reuseWorktree: boolean },
   ): void {
+    void startTaskExecutionForAgentAsync(taskId, execAgent, deptId, deptName, options).catch((error: unknown) => {
+      if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") return;
+      try {
+        appendTaskLog(taskId, "error", "Execution startup failed");
+        const current = db.prepare("SELECT status, assigned_agent_id FROM tasks WHERE id = ?").get(taskId) as
+          | { status: string; assigned_agent_id: string | null }
+          | undefined;
+        if (current?.status === "in_progress" && current.assigned_agent_id === execAgent.id) {
+          handleTaskRunComplete(taskId, 1);
+        }
+      } catch {
+        // The terminal handler must stay safe even if startup failed because the database is unavailable.
+        console.warn("[Claw-Empire] Execution startup recovery failed");
+      }
+    });
+  }
+
+  async function startTaskExecutionForAgentAsync(
+    taskId: string,
+    execAgent: any,
+    deptId: string | null,
+    deptName: string,
+    options?: { reuseWorktree: boolean },
+  ): Promise<void> {
     const execName = execAgent.name_ko || execAgent.name;
     const t = nowMs();
     db.prepare(
@@ -322,7 +346,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         execAgent.cli_reasoning_level,
         modelConfig[provider]?.reasoningLevel,
       );
-      const child = spawnCliAgent(
+      const child = await spawnCliAgent(
         taskId,
         provider,
         spawnPrompt,

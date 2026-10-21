@@ -1,3 +1,4 @@
+import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import { buildAgentCoordinationContext } from "../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../workflow/core/reasoning-effort.ts";
 import fs from "node:fs";
@@ -75,17 +76,7 @@ interface BatchDeps {
   };
   ensureClaudeMd: (projectPath: string, worktreePath: string) => void;
   getProviderModelConfig: () => Record<string, { model?: string; reasoningLevel?: string }>;
-  spawnCliAgent: (
-    taskId: string,
-    provider: string,
-    prompt: string,
-    cwd: string,
-    logFilePath: string,
-    model?: string,
-    reasoningLevel?: string,
-  ) => {
-    on: (event: "close", listener: (code: number | null) => void) => void;
-  };
+  spawnCliAgent: RuntimeContext["spawnCliAgent"];
   getNextHttpAgentPid: () => number;
   launchApiProviderAgent: (
     taskId: string,
@@ -310,7 +301,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     });
 
     const ackDelay = 1500 + Math.random() * 1000;
-    setTimeout(() => {
+    setTimeout(async () => {
       const latestParent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(parentTask.id) as
         | { status?: string }
         | undefined;
@@ -657,7 +648,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
               on: (event: "close", listener: (code: number | null) => void) => void;
             } | null = null;
             try {
-              child = spawnCliAgent(
+              child = await spawnCliAgent(
                 delegatedTaskId,
                 execProvider,
                 sessionPrompt,
@@ -667,6 +658,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
                 delegateReasoningLevel,
               );
             } catch (error) {
+              if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") return;
               failDelegatedLaunch(error, "cli_spawn");
               return;
             }

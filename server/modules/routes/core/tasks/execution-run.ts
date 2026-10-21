@@ -88,7 +88,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     buildAvailableSkillsPromptBlock,
   } = deps;
 
-  app.post("/api/tasks/:id/run", (req, res) => {
+  app.post("/api/tasks/:id/run", async (req, res) => {
     const id = String(req.params.id);
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
       | {
@@ -624,7 +624,15 @@ Whenever you complete a subtask, report it in this format:
       return res.json({ ok: true, pid: fakePid, logPath, cwd: agentCwd, worktree: !!worktreePath });
     }
 
-    const child = spawnCliAgent(id, provider, prompt, agentCwd, logPath, mainModel, mainReasoningLevel);
+    let child;
+    try {
+      child = await spawnCliAgent(id, provider, prompt, agentCwd, logPath, mainModel, mainReasoningLevel);
+    } catch (error) {
+      if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") {
+        return res.status(409).json({ error: "cli_launch_cancelled" });
+      }
+      throw error;
+    }
 
     child.on("close", (code: number | null) => {
       handleTaskRunComplete(id, code ?? 1);

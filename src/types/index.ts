@@ -1,3 +1,4 @@
+import { DEFAULT_HEADROOM, type HeadroomSettings } from "../lib/headroom";
 import type { UiLanguage } from "./language";
 
 export type { UiLanguage };
@@ -367,6 +368,7 @@ export interface OfficePackProfile {
 export type OfficePackProfiles = Partial<Record<WorkflowPackKey, OfficePackProfile>>;
 
 export interface CompanySettings {
+  headroom?: HeadroomSettings;
   companyName: string;
   ceoName: string;
   autoAssign: boolean;
@@ -387,6 +389,7 @@ export interface CompanySettings {
 }
 
 export const DEFAULT_SETTINGS: CompanySettings = {
+  headroom: DEFAULT_HEADROOM,
   companyName: "Claw-Empire",
   ceoName: "CEO",
   autoAssign: true,

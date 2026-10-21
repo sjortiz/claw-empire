@@ -777,6 +777,10 @@ Use only a plain executable + fixed args format (no shell/interpreter wrappers, 
 
 ## Provider Setup (CLI / OAuth / API)
 
+### Optional Headroom proxy
+
+Settings → General → Headroom proxy provides explicit opt-in routing for Claude Code’s Anthropic backend and API agents using official OpenAI/Anthropic endpoints, with live readiness and optional proxy-wide compression savings. It defaults off and overrides inherited base-URL exports for CLI children. Unavailable-at-launch connections fall back direct; active sessions can still be interrupted by a later outage. Codex opt-in and custom/Ollama upstream routing remain unavailable pending compatibility and upstream-acceptance verification. See [Headroom setup, coverage, fallback, and limitations](docs/headroom.md).
+
 ### Official API presets
 
 The **Settings > API** tab now includes four official direct-API presets:
