@@ -5,14 +5,15 @@ acceptance item `e277f358-d5d4-48b7-884e-83c63911a1cb`. Execution task:
 `632fceb9-2e7a-4bf8-a77c-8bf83bcb5b59`. Parent:
 `5b948211-0b00-47b1-91f8-9f96a4ecb8ff`.
 
-**Decision: acceptance evidence passes for the combined tested implementation;
-parent completion remains on HOLD until system integration includes the final
-Development correction and report.** Production implementation and the Nexo HTTP
-regression are present. Planning found a HIGH mixed-request detection gap;
+**Decision: Planning acceptance passes; the final Development correction and
+report are now integrated in this checkout, closing the prior integration HOLD.**
+Production implementation and the Nexo HTTP regression are present. Planning
+found a HIGH mixed-request detection gap;
 Development reproduced it, supplied a focused correction and reran all five
 CEO-required checks successfully. No unresolved executable verification failures
 remain in that tested patch. The extra delegated `check` script is unavailable,
-not passed. The final correction is still uncommitted in its owner's worktree;
+not passed. System commit `e359f32` contains the final correction, regressions and
+report; reviewed integration HEAD is `82ceced2df5386bfb892a03b19cd39128ca07193`.
 `897b9a4` alone must not be treated as the accepted final implementation.
 
 Planning reviewed source, diffs, supplied execution reports and task-scoped
@@ -22,17 +23,22 @@ new Planning test run.
 
 ## Implementation coverage and evidence baseline
 
-The reviewed branch is `climpire/632fceb9`, based on integrated revision
-`897b9a4`. Production commits are `2ad82c1` (intent, coverage, ownership and
+The initial review branch was `climpire/632fceb9`, based on integrated revision
+`897b9a4`. This continuation reviews `climpire/5b948211` at `82ceced`.
+Production commits are `2ad82c1` (intent, coverage, ownership and
 conditional prompts) and `1139826` (deterministic repair and prerequisite
 validation). `897b9a4` adds the independent HTTP regression and its evidence.
-Final acceptance also includes the two-file correction reviewed read-only in
-`climpire/732f346c`:
-base `897b9a46126ff3af99bad17c6b103c4626c43a95` plus uncommitted production/test
+Final acceptance also includes the two-file correction originally reviewed
+read-only in `climpire/732f346c`, now committed by the system as `e359f32`:
+base `897b9a46126ff3af99bad17c6b103c4626c43a95` plus production/test
 patch SHA-256 `881644babade4c807ba94027f9aa7cf0fdbc2c4e08da8aca8250ff389b00f9f2`.
-Planning independently matched that hash to the owner's two-file diff without
-applying it. Production scope including the patch is 12 TypeScript files,
-+691/-54 lines versus `5561a27`; this Planning batch changes documentation only.
+Planning independently matched that hash to the owner's two-file diff, then to
+the integrated diff from `897b9a4` to `82ceced`, without applying either patch.
+`git diff --name-status e359f32 HEAD` shows only two Planning documents changed
+after the tested correction; no production or test changes intervene. The final
+Development report is present at its linked path in this checkout. Production
+scope including the patch is 12 TypeScript files, +691/-54 lines versus
+`5561a27`; this Planning batch changes documentation only.
 
 Aria / Development is accountable for implementation. Nova / Development
 executed both production batches and defined the regression contract. Bolt /
@@ -56,8 +62,9 @@ Criteria are defined in the [Planning acceptance contract](2026-10-21-implementa
 Production and test paths below are relative to `server/modules/` unless noted.
 “Verified” means the named Development report supplies passing results at the
 reviewed implementation baseline plus the identified final patch, with the scope
-stated in that row. Source links address this checkout's baseline; the companion
-patch remains in its Development owner's worktree until system integration.
+stated in that row. Source links now address the integrated correction in this
+checkout. The Development report remains a record of its original verification
+run; this continuation establishes integration identity, not a new test run.
 
 | Criterion / requirement | Production implementation | Executable verification and observed evidence | Review state |
 | --- | --- | --- | --- |
@@ -69,7 +76,7 @@ patch remains in its Development owner's worktree until system integration.
 | AC-06: preserve draft items and prerequisite keys; parallel preparation stays independent; consumers wait for implementation | [workflow/agents/planning-graph.ts](../../server/modules/workflow/agents/planning-graph.ts) structural checks, transitive dependencies and consumer repair; [workflow/orchestration/planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts) parallel drafting/full consolidation; existing dependency scheduler | [planning-graph.test.ts](../../server/modules/workflow/agents/planning-graph.test.ts), [planned-approval.coverage.test.ts](../../server/modules/workflow/orchestration/planned-approval.coverage.test.ts), existing parallel/dependency suites: all seven support items retained, nine total rows; #84 verification follows #84, combined evidence follows both; independent preparation stays parallel. | Verified in reported full API suite. Distinct parent key families are retained below, never collapsed. |
 | AC-07: docs/meeting-only work gains no code; quoted/background requests do not force code; actual mixed requests retain code | [workflow/agents/implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts); conditional prompt and graph rules | Negative announcement/research/docs/meeting cases and `Fix API authentication and write release documentation` pass. Stored project goals do not manufacture new code intent. | Verified for negative controls, split-clause input and seven new same-clause/control regressions in the final patch. |
 | AC-08: department choice/reason, missing units, repair/block and accepted-plan/child coverage are reviewable | [routes/collab/task-delegation.ts](../../server/modules/routes/collab/task-delegation.ts) coverage/override log; [workflow/orchestration/planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts) rejection/repair log and graph memoization; seeding/routing | HTTP regression asserts `Planning pre-check related departments: operations, dev`, `override=added dev; inferred=operations`, per-unit rejection and `revalidation passed`; graph-to-child assignment evidence is reported. | Verified for persisted graph/logs. Medium summary-prose warning F-03 remains; Design delivered a specification, not a new production presentation feature. |
-| AC-09: final completion requires production diff and reported required verification, with unavailable/failed checks visible | Production commits above; Development regression and independent verification reports below | All five parent-required commands pass again on the final patch; web 178, API 582. Additional delegated `check` command is explicitly unavailable. | Verification evidence accepted for the exact final patch; parent completion awaits companion patch/report integration, not supporting-document completion. |
+| AC-09: final completion requires production diff and reported required verification, with unavailable/failed checks visible | Production commits above; Development regression and independent verification reports below | All five parent-required commands pass again on the final patch; web 178, API 582. Additional delegated `check` command is explicitly unavailable. | Verified evidence accepted; exact companion patch and report are now integrated. The prior integration HOLD is closed; CEO review/publication remains separate. |
 
 ## Nexo before/after and execution evidence
 
@@ -141,14 +148,17 @@ issued a new manual PASS; that owner's original record remains unchanged.
 ## Required command results
 
 Sources: Bolt's [independent verification](2026-10-21-development-independent-verification.md)
-and the superseding final verification handoff (note 124), read from its owner's
-`docs/plans/2026-10-21-development-final-verification.md` in worktree
-`climpire/732f346c`. The latter ran all six commands on exact HEAD
+and the superseding [final verification report](2026-10-21-development-final-verification.md)
+(note 124), originally read in its owner's worktree `climpire/732f346c` and now
+present in this checkout through `e359f32`. The latter ran all six commands on
+exact HEAD
 `897b9a46126ff3af99bad17c6b103c4626c43a95` **plus the two-file patch identified
 above**, 2026-10-21 14:42 UTC. It supersedes note 120's earlier no-production-change
 and 575-test report. Runtime: Node 24.20.0, pnpm 10.30.1. Planning did not rerun
-these commands. The final report and raw logs remain Development-owned; no
-cross-worktree copy or integration was performed by Planning.
+these commands. The final report and raw logs remain Development-owned; raw logs
+were recorded in the verifier's ignored `tasks/verification/` directory and are
+not claimed as integrated artifacts. No cross-worktree copy or integration was
+performed by Planning.
 
 | Command | Exit | Reported outcome |
 | --- | --- | --- |
@@ -169,7 +179,7 @@ F-01.
 
 ## Remaining findings and CEO disposition
 
-1. **F-01 — HIGH, resolved in the final tested companion patch.**
+1. **F-01 — HIGH, resolved and integrated in `e359f32`.**
    [implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts)
    rejected an entire execution clause containing a supporting target. Planning
    sent source-review examples to Bolt (note 118) and parent Planning (note 119).
@@ -186,14 +196,16 @@ F-01.
    read-only and matched the supplied hash. Detection remains deterministic and
    heuristic; representative supported-language cases are verified, not an
    exhaustive proof over arbitrary natural-language wording.
-2. **F-02 — verification reporting resolved; integration remains a release gate.**
+2. **F-02 — verification reporting and integration HOLD resolved.**
    Notes 120 and 124 answer note 117; note 124 supersedes the initial baseline
    report after F-01's fix. Exact patch identity, all command exits and unavailable
    `check` are recorded above. No unresolved executable failure remains. System
-   integration must include the Development-owned two-file correction and final
-   report, then this Planning report; reviewing or integrating `897b9a4` alone
-   would leave the confirmed HIGH defect present. Planning does not merge,
-   cherry-pick, commit another owner's files or mark the parent complete.
+   integration now includes the Development-owned two-file correction and final
+   report in `e359f32`, followed by this Planning report in `8a5d4f7` and
+   integration HEAD `82ceced`. The integrated two-file diff matches the tested
+   SHA-256 above; the intervening changes are documentation only. Reviewing
+   `897b9a4` alone would leave the confirmed HIGH defect present. Planning did
+   not merge, cherry-pick, commit another owner's files or change board status.
 3. **F-03 — MEDIUM, report only:** Nova and Bolt report that model summary
    prose can omit implementation items added by deterministic repair, although
    the accepted, memoized and persisted graph includes them. No presentation
@@ -206,8 +218,8 @@ F-01.
 
 The CEO can review the focused production changes, demonstrated Nexo recovery
 and fully tested mixed-request correction. The evidence supports acceptance of
-that combined implementation. Parent completion remains gated on system
-integration of the exact companion patch/report; publication stays with the CEO.
+that combined implementation, now present in the checkout. The prior integration
+HOLD is closed; final CEO review and publication remain with the CEO.
 Supporting Planning, Operations and Design documents do not substitute for those
 production artifacts.
 
@@ -226,3 +238,9 @@ production artifacts.
   local `tasks/todo.md` records this review; `/tasks/` is intentionally ignored
   by the repository. No production files or another owner's artifacts were
   modified. No Planning test execution or Git integration operation occurred.
+- Parent continuation read and reconciled inbox notes 99–126, including the
+  implementation, Operations HOLD, verification and final Planning handoffs.
+  Confirmed system integration at `82ceced`, presence of `e359f32`'s three files,
+  exact tested patch hash and documentation-only subsequent changes. This
+  continuation updates only the Planning decision; prior execution reports
+  retain their historical wording and test attribution.
