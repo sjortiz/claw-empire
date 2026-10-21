@@ -59,6 +59,13 @@ If Development adds structured fields for these, read those first and fall back 
 
 **6. Not applicable vs missing.** A directive that asks for no code change shows `Implementation coverage: not applicable — no code change requested`, along with the reason. This text is grey and neutral, and it never uses the missing wording. If the intent is unclear, show the missing state. Do not show "not applicable" by default.
 
+**7. Supporting work points at its implementation owner.** Every Supporting work line ends with `→ supports <implementation key> · <Owner>`, for example `→ supports DEV-84 · Development — Aria`. A supporting item that serves every row says `→ supports all rows` and still names the accountable Development owner.
+
+- Take the link from the supporting item's `depends_on` keys first, then from a `Supports:` line in its `description`.
+- A supporting item with no link shows `⚠ not linked to an implementation item`. It stays listed. It is never dropped and never promoted to an implementation row.
+- Test and verification work done by Development is still supporting work. It is listed here, not as a second implementation row, unless the directive asked for the test itself as the change.
+- The link only shows who the work serves. It never moves the implementation row's status.
+
 ## Annotated examples
 
 ### A. Two fixes, plan (Nexo #84 and #85, corrected)
@@ -85,7 +92,9 @@ Requested code changes: 2 · Owned by Development: 2 · Owner missing: 0        
 
 ## Supporting work
 - OPS-01 Operations — test automation setup        supporting — does not satisfy implementation
+     → supports DEV-84 · Development — Aria; DEV-85 · Development — Bolt   ← link to owner (rule 7)
 - PLN-01 Planning — acceptance criteria            supporting — does not satisfy implementation
+     → supports all rows
 ```
 
 ### B. Same directive, original failed plan
@@ -104,6 +113,7 @@ Plan status: not acceptable — 2 requested code changes have no implementation 
 - Operations — test automation setup               supporting — does not satisfy implementation
 - Operations — observability configuration         supporting — does not satisfy implementation
 - Planning — documentation …                       supporting — does not satisfy implementation
+     ⚠ not linked to an implementation item                                    ← nothing to support
 ```
 
 ### C. Mixed implementation and support work, completion report
@@ -124,8 +134,9 @@ Code implemented 2/2 · Verified 1/2 — not complete                         �
    Status: Specified ✅ · Implemented ✅ · Verified ⬜                        ← implemented ≠ verified
 
 ## Supporting work
-- OPS-01 Operations — CI test job added            Specified ✅ (supporting)
+- OPS-01 Operations — CI test job added            Specified ✅ (supporting)  → supports DEV-84 · Development — Aria
 - DSN-01 Design — coverage presentation spec       Specified ✅ (supporting; no code)  ← spec counts only as Specified
+     → supports all rows
 
 ## Team-by-team Consolidation …
 ```
@@ -149,6 +160,8 @@ Section and state labels follow the report language (`resolveLang`). Suggested l
 | Specified / Implemented / Verified | 명세 / 구현 / 검증 | 仕様 / 実装 / 検証 | 规格 / 实现 / 验证 |
 | Supporting — does not satisfy implementation | 지원 작업 — 구현으로 인정되지 않음 | 支援作業 — 実装には含まれない | 支持工作 — 不计为实现 |
 | Not applicable — no code change requested | 해당 없음 — 코드 변경 요청 없음 | 該当なし — コード変更の依頼なし | 不适用 — 未要求代码变更 |
+| supports | 지원 대상 | 支援対象 | 支持对象 |
+| Not linked to an implementation item | 연결된 구현 항목 없음 | 実装項目に未リンク | 未关联实现项 |
 
 Keep the `⚠`, `✅` and `⬜` marks the same in every locale.
 

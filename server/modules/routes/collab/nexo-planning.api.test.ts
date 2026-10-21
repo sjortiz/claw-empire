@@ -25,7 +25,10 @@ afterEach(() => {
   db?.close();
 });
 
-it("replays the Nexo directive through HTTP intake and persists executable per-issue ownership", async () => {
+it.each([
+  nexoDirective,
+  "Fix the first two open issues on Nexo, #84 and #85, add tests and documentation, one branch per issue",
+])("persists executable per-issue ownership through HTTP intake: %s", async (directive) => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.spyOn(Math, "random").mockReturnValue(0);
   db = new DatabaseSync(":memory:");
@@ -157,7 +160,7 @@ it("replays the Nexo directive through HTTP intake and persists executable per-i
     .post("/api/inbox")
     .set("x-inbox-secret", "nexo-replay-test-secret")
     .send({
-      text: `$${nexoDirective}`,
+      text: `$${directive}`,
       agent_rules_version: 2,
       project_id: "nexo",
       project_path: "/workspace/nexo",

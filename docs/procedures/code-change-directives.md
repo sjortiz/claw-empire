@@ -1,6 +1,6 @@
 # Handling code-change directives
 
-Process owner: Operations. Revision 1, 2026-10-21.
+Process owner: Operations. Revision 2, 2026-10-21.
 
 Purpose: ensure operational review flags code-change directives whose plans omit
 the people and tasks that will implement them. Use the
@@ -35,7 +35,11 @@ are recorded. Operations does not take over production code in this procedure.
    item and code/test deliverables. Development is the default even when the
    department pre-check lists only Operations or Planning. Retain other relevant
    departments and their recorded rationale. Process items must be requested or
-   support identified implementation work.
+   support identified implementation work. Complete the supporting-work handoff
+   map: support item and owner, supported implementation key/unit, named
+   Development owner and expected handoff. Independently requested non-code
+   items may use N/A with their scope rationale. Do not leave a generic
+   "implementation owner" reference unresolved.
 3. **Raise gaps before operational sign-off.** Mark HOLD for missing owners,
    units, code/test deliverables or lost constraints. Send Planning the uncovered
    units, affected plan keys and requested correction; coordinate with the coding
@@ -62,6 +66,14 @@ are recorded. Operations does not take over production code in this procedure.
    and API checks. Planning consolidates the final acceptance evidence. Follow
    the directive's publishing restrictions; this procedure grants no permission
    to push, open a PR or comment on GitHub.
+
+7. **Close review conditions explicitly.** Record each conditional-approval
+   requirement, correction owner, reviewed revision and observed evidence in the
+   checklist's sign-off record. Reconcile stale HOLD findings against newly
+   integrated changes, retaining the earlier record as historical evidence.
+   Separate planning coverage, assignment preservation and actual code delivery;
+   keep any unverified gate on HOLD. Test-fixture ownership and instructions to
+   create branches do not establish live assignments or actual branch creation.
 
 ## Review examples
 
