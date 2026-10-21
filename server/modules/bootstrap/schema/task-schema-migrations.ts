@@ -1,9 +1,11 @@
+import { ensureSubtaskCancellation } from "./subtask-cancellation.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_WORKFLOW_PACK_KEY, WORKFLOW_PACK_KEYS, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
 
 type DbLike = Pick<DatabaseSync, "exec" | "prepare">;
 
 export function applyTaskSchemaMigrations(db: DbLike): void {
+  ensureSubtaskCancellation(db);
   // Subtask cross-department delegation columns
   try {
     db.exec("ALTER TABLE subtasks ADD COLUMN target_department_id TEXT");
@@ -571,7 +573,7 @@ function repairLegacyTaskForeignKeys(db: DbLike): void {
           title TEXT NOT NULL,
           description TEXT,
           status TEXT NOT NULL DEFAULT 'pending'
-            CHECK(status IN ('pending','in_progress','done','blocked')),
+            CHECK(status IN ('pending','in_progress','done','blocked','cancelled')),
           assigned_agent_id TEXT REFERENCES agents(id),
           blocked_reason TEXT,
           cli_tool_use_id TEXT,

@@ -274,7 +274,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
   title TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('pending','in_progress','done','blocked')),
+    CHECK(status IN ('pending','in_progress','done','blocked','cancelled')),
   assigned_agent_id TEXT REFERENCES agents(id),
   blocked_reason TEXT,
   depends_on TEXT NOT NULL DEFAULT '[]',

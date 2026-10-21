@@ -1,3 +1,4 @@
+import { sweepReadyRoots } from "./workflow/core/task-resume.ts";
 import type { RuntimeContext } from "../types/runtime-context.ts";
 import type { IncomingMessage } from "node:http";
 import type { WebSocket as WsSocket } from "ws";
@@ -390,9 +391,9 @@ export function startLifecycle(ctx: RuntimeContext): void {
     SELECT DISTINCT t.id
     FROM tasks t
     JOIN subtasks s ON s.task_id = t.id
-    WHERE t.status IN ('planned', 'collaborating', 'in_progress', 'review')
+    WHERE t.status IN ('planned', 'pending', 'collaborating', 'in_progress', 'review')
       AND s.target_department_id IS NOT NULL
-      AND s.status != 'done'
+      AND s.status NOT IN ('done', 'cancelled')
       AND (s.delegated_task_id IS NULL OR s.delegated_task_id = '')
     ORDER BY t.updated_at ASC
     LIMIT 80
@@ -457,6 +458,8 @@ export function startLifecycle(ctx: RuntimeContext): void {
   setTimeout(recoverInterruptedWorkflowOnStartup, 3_000);
   setInterval(() => recoverOrphanInProgressTasks("interval"), IN_PROGRESS_ORPHAN_SWEEP_MS);
   setInterval(() => recoverOrphanWorkingAgents("interval"), IN_PROGRESS_ORPHAN_SWEEP_MS);
+  setTimeout(() => sweepReadyRoots(ctx), 4_000);
+  setInterval(() => sweepReadyRoots(ctx), SUBTASK_DELEGATION_SWEEP_MS);
   setTimeout(sweepPendingSubtaskDelegations, 4_000);
   setInterval(sweepPendingSubtaskDelegations, SUBTASK_DELEGATION_SWEEP_MS);
   setTimeout(autoAssignAgentProviders, 4_000);

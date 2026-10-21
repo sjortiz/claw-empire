@@ -11,6 +11,8 @@ export const ROUTE_RUNTIME_HELPER_KEYS = [
   "pickL",
   "prettyStreamJson",
   "processSubtaskDelegations",
+  "maybeNotifyAllSubtasksComplete",
+  "startCrossDeptCooperation",
   "recoverCrossDeptQueueAfterMissingCallback",
   "refreshCliUsageData",
   "scheduleNextReviewRound",

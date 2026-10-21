@@ -1,3 +1,4 @@
+import { recoverReadyRoot } from "../../workflow/core/task-resume.ts";
 import { hasUnfinishedDependencies } from "./subtask-dependencies.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { Lang } from "../../../types/lang.ts";
@@ -419,6 +420,13 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
         }
       | undefined;
     if (!parentTask) return;
+
+    if (
+      remaining.cnt === 0 &&
+      parentTask.status === "pending" &&
+      recoverReadyRoot(deps, parentTaskId, "last subtask completion")
+    )
+      return;
 
     if (remaining.cnt === 0 && parentTask.status === "collaborating" && parentTask.assigned_agent_id) {
       const graphMarker = db
