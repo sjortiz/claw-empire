@@ -1,3 +1,4 @@
+import { resumeTaskExecution } from "../../../workflow/orchestration/task-recovery.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
 import { createHash } from "node:crypto";
@@ -73,9 +74,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
     subtaskDelegationCompletionNoticeSent,
     taskExecutionSessions,
     ensureTaskExecutionSession,
-    getDeptName,
     isTaskWorkflowInterrupted,
-    startTaskExecutionForAgent,
     randomDelay,
   } = deps;
 
@@ -212,6 +211,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
 
     const mode = String(req.body?.mode ?? req.query.mode ?? "cancel");
     const targetStatus = mode === "pause" ? "pending" : "cancelled";
+    if (mode === "pause") appendTaskLog(id, "system", "PAUSE: explicit CEO pause");
     if (mode === "pause") {
       const { sessionId, controlToken } = readInterruptSessionProof(req as any);
       const hasAnyProof = Boolean(sessionId || controlToken);
@@ -517,13 +517,11 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as AgentRow | undefined;
       if (agent && agent.status !== "offline") {
         autoResumed = true;
-        const deptId = agent.department_id ?? null;
-        const deptName = deptId ? getDeptName(deptId) : "Unassigned";
         appendTaskLog(id, "system", `RESUME auto-run scheduled (session=${existingSession?.sessionId ?? "new"})`);
         setTimeout(
           () => {
             if (isTaskWorkflowInterrupted(id) || activeProcesses.has(id)) return;
-            startTaskExecutionForAgent(id, agent, deptId, deptName);
+            resumeTaskExecution(deps, id, "CEO resume requested");
           },
           randomDelay(450, 900),
         );

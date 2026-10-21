@@ -1,3 +1,4 @@
+import { recoverReadyRoot } from "../../workflow/orchestration/task-recovery.ts";
 import { hasUnfinishedDependencies } from "./subtask-dependencies.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { Lang } from "../../../types/lang.ts";
@@ -420,49 +421,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       | undefined;
     if (!parentTask) return;
 
-    if (remaining.cnt === 0 && parentTask.status === "collaborating" && parentTask.assigned_agent_id) {
-      const graphMarker = db
-        .prepare(
-          `SELECT 1 FROM task_logs
-        WHERE task_id = ? AND kind = 'system' AND message LIKE 'Planned graph seeded %' LIMIT 1`,
-        )
-        .get(parentTaskId);
-      if (graphMarker) {
-        const unintegrated = db
-          .prepare(
-            `SELECT 1 FROM subtasks s
-          LEFT JOIN tasks child ON child.id = s.delegated_task_id
-          WHERE s.task_id = ? AND s.status = 'done' AND (child.status IS NULL OR child.status != 'done') LIMIT 1`,
-          )
-          .get(parentTaskId);
-        if (unintegrated) return;
-        const planner = db.prepare("SELECT * FROM agents WHERE id = ?").get(parentTask.assigned_agent_id) as
-          | AgentRow
-          | undefined;
-        if (!planner || activeProcesses.has(parentTaskId)) return;
-        if (
-          !["idle", "break"].includes(planner.status) ||
-          (planner.current_task_id && planner.current_task_id !== parentTaskId)
-        ) {
-          scheduleAutoResumeRetry(parentTaskId, "planning_graph_consolidation_agent_busy");
-          return;
-        }
-        const claimed = db
-          .prepare("UPDATE tasks SET status = 'planned', updated_at = ? WHERE id = ? AND status = 'collaborating'")
-          .run(nowMs(), parentTaskId);
-        if (claimed.changes === 0) return;
-        clearAutoResumeRetry(parentTaskId);
-        appendTaskLog(parentTaskId, "system", "All planning graph children integrated; starting root consolidation");
-        const deptId = planner.department_id ?? parentTask.department_id ?? null;
-        startTaskExecutionForAgent(
-          parentTaskId,
-          planner,
-          deptId,
-          deptId ? getDeptName(deptId, parentTask.workflow_pack_key) : "Unassigned",
-        );
-        return;
-      }
-    }
+    if (recoverReadyRoot(deps, parentTaskId, "subtask completion")) return;
 
     // Auto-resume retry should continue even after completion notice was already sent.
     if (remaining.cnt === 0) {

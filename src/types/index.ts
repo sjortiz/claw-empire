@@ -264,7 +264,7 @@ export interface CompanyStats {
 }
 
 // SubTask
-export type SubTaskStatus = "pending" | "in_progress" | "done" | "blocked";
+export type SubTaskStatus = "pending" | "in_progress" | "done" | "blocked" | "cancelled";
 
 export interface SubTask {
   id: string;

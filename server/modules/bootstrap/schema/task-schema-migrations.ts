@@ -22,6 +22,8 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* already exists */
   }
 
+  migrateCancelledSubtasks(db);
+
   // Cross-department collaboration: link collaboration task back to original task
   try {
     db.exec("ALTER TABLE tasks ADD COLUMN source_task_id TEXT");
@@ -571,7 +573,7 @@ function repairLegacyTaskForeignKeys(db: DbLike): void {
           title TEXT NOT NULL,
           description TEXT,
           status TEXT NOT NULL DEFAULT 'pending'
-            CHECK(status IN ('pending','in_progress','done','blocked')),
+            CHECK(status IN ('pending','in_progress','done','blocked','cancelled')),
           assigned_agent_id TEXT REFERENCES agents(id),
           blocked_reason TEXT,
           cli_tool_use_id TEXT,
@@ -732,4 +734,40 @@ function ensureMessagesIdempotencySchema(db: DbLike): void {
     ON messages(idempotency_key)
     WHERE idempotency_key IS NOT NULL
   `);
+}
+
+// SQLite cannot alter a CHECK constraint. Preserve all columns and user indexes
+// while adding the terminal cancelled state needed by recovery readiness checks.
+function migrateCancelledSubtasks(db: DbLike): void {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'subtasks'").get() as
+    | { sql: string }
+    | undefined;
+  if (!table || table.sql.includes("'cancelled'")) return;
+  const schema = table.sql
+    .replace(/CREATE TABLE(?: IF NOT EXISTS)? subtasks/i, "CREATE TABLE subtasks_recovery_new")
+    .replace(/('blocked')\s*\)\s*\)/, "$1,'cancelled'))");
+  if (schema === table.sql || !schema.includes("'cancelled'"))
+    throw new Error("Cannot migrate subtask cancellation constraint");
+  const objects = db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE tbl_name = 'subtasks' AND type IN ('index', 'trigger') AND sql IS NOT NULL",
+    )
+    .all() as { sql: string }[];
+  const columns = (db.prepare("PRAGMA table_info(subtasks)").all() as { name: string }[])
+    .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
+    .join(", ");
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN");
+    db.exec(schema);
+    db.exec(`INSERT INTO subtasks_recovery_new (${columns}) SELECT ${columns} FROM subtasks`);
+    db.exec("DROP TABLE subtasks; ALTER TABLE subtasks_recovery_new RENAME TO subtasks");
+    for (const object of objects) db.exec(object.sql);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
 }
