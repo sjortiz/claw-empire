@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
-import { parsePlanningGraph } from "./planning-graph.ts";
+import { parsePlanningGraph, parseMergedPlanningGraph } from "./planning-graph.ts";
 import { createSubtaskSeedingTools } from "./subtask-seeding.ts";
 import { hasUnfinishedDependencies } from "../../routes/collab/subtask-dependencies.ts";
 
@@ -18,6 +18,35 @@ const graph = [
 ];
 
 describe("structured planning graph", () => {
+  it("validates plans above the 30-item target without rejecting their size", () => {
+    const items = Array.from({ length: 32 }, (_, index) => ({
+      key: `item${index}`,
+      title: `Work ${index}`,
+      department_id: "dev",
+      depends_on: index ? [`item${index - 1}`] : [],
+    }));
+    expect(parsePlanningGraph(JSON.stringify({ plan_items: items }))).toEqual(items);
+    expect(() =>
+      parsePlanningGraph(
+        JSON.stringify({
+          plan_items: items.map((item, index) => (index === 0 ? { ...item, depends_on: ["missing"] } : item)),
+        }),
+      ),
+    ).toThrow("Invalid planning graph dependency");
+  });
+  it("requires merged plans to preserve source coverage, owners and prerequisites", () => {
+    const merged = graph.map((item) => ({ ...item, source_keys: [item.key] }));
+    expect(parseMergedPlanningGraph(JSON.stringify({ plan_items: merged }), graph)).toEqual(graph);
+    for (const plan_items of [
+      merged.slice(1),
+      merged.map((item, index) => (index === 0 ? { ...item, department_id: "qa" } : item)),
+      merged.map((item, index) => (index === 1 ? { ...item, depends_on: [] } : item)),
+      merged.map((item, index) => (index === 0 ? { ...item, source_keys: ["api", "notes"] } : item)),
+    ]) {
+      expect(() => parseMergedPlanningGraph(JSON.stringify({ plan_items }), graph)).toThrow();
+    }
+  });
+
   it("resolves plan-local prerequisites to persisted IDs and delegates origin items as children", () => {
     db = new DatabaseSync(":memory:");
     applyBaseSchema(db);

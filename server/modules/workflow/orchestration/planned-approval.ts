@@ -2,7 +2,7 @@ import { isMeetingRunTimeout } from "../core/meeting-run-timeout.ts";
 import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
 import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 import type { MeetingReviewDecision } from "../core/conversation-types.ts";
-import { parsePlanningGraph } from "../agents/planning-graph.ts";
+import { parsePlanningGraph, parseMergedPlanningGraph } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
 type CreatePlannedApprovalToolsDeps = {
@@ -315,7 +315,59 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         if (summaryRun?.error || isMeetingRunTimeout(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
-        const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
+        let graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
+        if (graph && graph.length > 30) {
+          const originalGraph = graph;
+          appendTaskLog(
+            taskId,
+            "system",
+            `Planning graph has ${graph.length} items; requesting one merge pass (target <=30)`,
+          );
+          try {
+            const mergePrompt = buildMeetingPrompt(planningLeader, {
+              meetingType: "planned",
+              planningPhase: "merge",
+              round,
+              taskTitle,
+              taskDescription,
+              workflowPackKey: taskWorkflowPackKey,
+              transcript: [],
+              turnObjective: `Merge overlapping work in this validated plan into at most 30 executable items. Merge only items with the same department_id. Preserve every source item's work, evidence and checks, ownership, and all prerequisites, including cross-department dependencies. Return one JSON fenced block with plan_items. Every merged item must include key, title, description, department_id, depends_on (merged local keys), and source_keys (all original keys it covers). Each original key must appear exactly once in source_keys; remap prerequisites to their merged keys and do not introduce cycles. If safe grouping is impossible, retain the full plan with source_keys rather than losing work. Original plan: ${JSON.stringify({ plan_items: originalGraph })}`,
+              stanceHint:
+                "This is one bounded size-reduction pass. Return the complete structured graph only; no verdict is needed.",
+              lang,
+            });
+            // Exactly one merge call: a failed size reduction must not stall the meeting.
+            const mergedRun = await runAgentOneShot(planningLeader, mergePrompt, {
+              ...oneShotOptions,
+              rawOutput: true,
+            });
+            if (abortIfInactive()) return;
+            if (mergedRun?.error || isMeetingRunTimeout(mergedRun)) {
+              throw new Error(mergedRun?.error || "Planning merge did not complete");
+            }
+            graph = parseMergedPlanningGraph(String(mergedRun?.text ?? ""), originalGraph);
+            appendTaskLog(
+              taskId,
+              "system",
+              `Planning merge pass: ${originalGraph.length} -> ${graph.length} items; ownership and prerequisites validated`,
+            );
+          } catch (error) {
+            graph = originalGraph;
+            appendTaskLog(
+              taskId,
+              "system",
+              `Planning merge pass failed; retaining validated original graph: ${String(error)}`,
+            );
+          }
+          if (graph.length > 30) {
+            appendTaskLog(
+              taskId,
+              "system",
+              `Planning item cap raised for this meeting to ${graph.length} after one merge pass; retaining validated ownership and prerequisites`,
+            );
+          }
+        }
         const summaryVerdict = await resolveMeetingVerdict({
           text: String(summaryRun?.text ?? ""),
           lang,

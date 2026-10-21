@@ -29,6 +29,13 @@ Graph items execute as department-owned children, including origin-department
 items, and the root consolidates after them. Legacy prose plans and tasks remain
 supported; dependency updates are also available through the subtask API.
 
+Plans above the 30-item target receive one bounded summarizer pass that groups
+work within its owning department. Source-key coverage and mapped prerequisites
+are validated before accepting the merged graph. If merging fails, the validated
+original graph is retained. If the result still exceeds 30 items, the cap is
+raised to that graph's size for the meeting and logged; size alone never rejects
+a plan. Invalid graphs (including missing keys or cycles) still fail validation.
+
 Dependency reuse copies/reflinks compatible pnpm installations into each
 worktree instead of sharing a writable node_modules directory. Manifest, lockfile,
 configuration, local dependency, workspace and script checks reject unsafe reuse.

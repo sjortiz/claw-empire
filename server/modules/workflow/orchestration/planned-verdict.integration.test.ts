@@ -112,6 +112,74 @@ async function runPlanning(
 }
 
 describe("planned meeting verdicts", () => {
+  const oversized = Array.from({ length: 32 }, (_, index) => ({
+    key: `item${index}`,
+    title: `Work ${index}`,
+    department_id: index < 16 ? "dev" : "planning",
+    depends_on: index ? [`item${index - 1}`] : [],
+  }));
+  const oversizedSummary = `\`\`\`json\n${JSON.stringify({ plan_items: oversized })}\n\`\`\`\n${formatMeetingVerdict(approve)}`;
+  it("merges a 32-item meeting plan once while preserving owners and cross-department prerequisites", async () => {
+    const merged = Array.from({ length: 16 }, (_, index) => ({
+      key: `merged${index}`,
+      title: `Grouped work ${index}`,
+      department_id: index < 8 ? "dev" : "planning",
+      depends_on: index ? [`merged${index - 1}`] : [],
+      source_keys: [`item${index * 2}`, `item${index * 2 + 1}`],
+    }));
+    const result = await runPlanning(
+      formatMeetingVerdict(approve),
+      oversizedSummary,
+      "invalid",
+      false,
+      (prompt, text) => ({
+        text: prompt === "merge" ? JSON.stringify({ plan_items: merged }) : text,
+      }),
+    );
+    expect(result.status).toBe("completed");
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
+    expect(result.buildMeetingPrompt.mock.calls.filter((call) => call[1].planningPhase === "merge")).toHaveLength(1);
+    const approved = JSON.parse(result.onApproved.mock.calls[0][0]![0]);
+    expect(approved.plan_items).toHaveLength(16);
+    expect(approved.plan_items[8]).toMatchObject({ department_id: "planning", depends_on: ["merged7"] });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM subtasks").get()).toEqual({ count: 16 });
+    expect(result.appendTaskLog).toHaveBeenCalledWith("task", "system", expect.stringContaining("32 -> 16"));
+  });
+  it.each(["error", "oversized", "lost-dependency"])(
+    "continues a 32-item meeting using a logged raised cap after merge %s",
+    async (mode) => {
+      const result = await runPlanning(
+        formatMeetingVerdict(approve),
+        oversizedSummary,
+        "invalid",
+        false,
+        (prompt, text) => {
+          if (prompt !== "merge") return { text };
+          if (mode === "error") return { text: "", error: "timeout after 65000ms" };
+          return {
+            text: JSON.stringify({
+              plan_items: oversized.map((item) => ({
+                ...item,
+                source_keys: [item.key],
+                ...(mode === "lost-dependency" ? { depends_on: [] } : {}),
+              })),
+            }),
+          };
+        },
+      );
+      expect(result.status).toBe("completed");
+      expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
+      const approved = JSON.parse(result.onApproved.mock.calls[0][0]![0]);
+      expect(approved.plan_items).toEqual(oversized);
+      expect(db.prepare("SELECT COUNT(*) AS count FROM subtasks").get()).toEqual({ count: 32 });
+      expect(result.appendTaskLog).toHaveBeenCalledWith(
+        "task",
+        "system",
+        expect.stringContaining("cap raised for this meeting to 32"),
+      );
+    },
+  );
+
   it("accepts successful timeout discussion without retrying the model", async () => {
     const text = `Repair timeout after requests timed out and aborted jobs.\n${formatMeetingVerdict(approve)}`;
     const result = await runPlanning(text, text);
