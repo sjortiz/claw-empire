@@ -82,3 +82,9 @@ changes before confirmation, a missing confirmation and a detached HEAD.
 - Known follow-ups: light-theme colours for the retained-branch banner, showing
   the resolved policy next to "Use global setting", passing the UI language to the
   terminal banner, and consistent Chinese wording.
+
+## Review meeting automation
+
+[Review automation](review-automation.md) documents the separate default-off
+settings for starting review meetings and applying review items, including global
+values and per-project overrides. These settings do not change merge policy.

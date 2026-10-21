@@ -201,12 +201,21 @@ export default function DecisionInboxModal({
         zh: "评审轮次决策",
       });
     }
+    if (kind === "review_auto_started") {
+      return t({
+        ko: "리뷰 회의 자동 시작 (알림)",
+        en: "Review Meeting Auto-Started (Notice)",
+        ja: "レビュー会議の自動開始（通知）",
+        zh: "评审会议已自动启动（通知）",
+      });
+    }
     return t({ ko: "에이전트 요청", en: "Agent Request", ja: "エージェント要請", zh: "代理请求" });
   };
   const getKindAvatarFallback = (kind: DecisionInboxItem["kind"]) => {
     if (kind === "project_review_ready") return "🧑‍💼";
     if (kind === "task_timeout_resume") return "⏱️";
     if (kind === "review_round_pick") return "🧾";
+    if (kind === "review_auto_started") return "▶️";
     return "🤖";
   };
 
