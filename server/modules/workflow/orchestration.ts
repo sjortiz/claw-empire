@@ -718,6 +718,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     crossDeptNextCallbacks,
     subtaskDelegationCallbacks,
     subtaskDelegationDispatchInFlight,
+    reviewInFlight,
     delegatedTaskToSubtask,
     subtaskDelegationCompletionNoticeSent,
     meetingPresenceUntil,

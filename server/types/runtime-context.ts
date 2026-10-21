@@ -271,6 +271,7 @@ export interface WorkflowOrchestrationExports {
   crossDeptNextCallbacks: Map<string, () => void>;
   subtaskDelegationCallbacks: Map<string, () => void>;
   subtaskDelegationDispatchInFlight: Set<string>;
+  reviewInFlight: Set<string>;
   delegatedTaskToSubtask: Map<string, string>;
   subtaskDelegationCompletionNoticeSent: Set<string>;
   meetingPresenceUntil: Map<string, number>;
