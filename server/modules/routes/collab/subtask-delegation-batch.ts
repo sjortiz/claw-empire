@@ -244,7 +244,6 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
       );
     };
     const waitForAssignment = (reason: string, delay: number) => {
-      let changed = false;
       for (const sid of subtaskIds) {
         const result = db
           .prepare(
@@ -252,16 +251,14 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
           )
           .run(reason, sid, reason);
         if (result.changes > 0) {
-          changed = true;
           broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
         }
       }
-      if (changed) appendTaskLog(parentTask.id, "system", `Department assignment blocked (${targetDeptId}): ${reason}`);
       if (
         !persistentWait.wait(
           parentTask.id,
           waitKey,
-          `Department batch waiting (${targetDeptId}): ${reason}`,
+          `Department assignment blocked (${targetDeptId}): ${reason}`,
           () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
           { delayMs: delay },
         )

@@ -25,8 +25,9 @@ export function directiveTextFromTask(title: string, description?: string | null
   if (!description) return title;
   // Stored project goals, round-goal repeats and meeting memos are background,
   // not fresh directives (especially important for docs-only follow-up rounds).
-  const ceo = description.match(/^\[CEO\]\s*([\s\S]*?)(?=\n\[(?:PROJECT|ROUND GOAL)|$)/);
-  return ceo?.[1]?.trim() || `${title}\n${description}`;
+  const directive = description.split(/^\[(?:PROJECT(?:[^\]\n]*)?|ROUND GOAL)\]/m)[0].trim();
+  const ceo = directive.match(/^\[CEO\]\s*([\s\S]*)$/);
+  return ceo?.[1]?.trim() || `${title}\n${directive}`.trim();
 }
 
 export function implementationIntentFromTask(title: string, description?: string | null): ImplementationIntent {
@@ -41,6 +42,11 @@ export function detectImplementationIntent(directiveText: string, projectContext
     .replace(/^\s*\$\s*/, "")
     .split(/\n(?:What happened|Background|History|For example|Example|Context)\s*[:(]/i)[0];
   const clauses = directive
+    // Korean/Japanese conjunctions attach to the preceding action; Chinese
+    // conjunctions can join actions without spaces. Keep the code clause apart
+    // from a following documentation clause before checking supporting targets.
+    .replace(/(수정|구현|개발|추가)(?:하고|하며)|((?:修正|実装|開発|追加))して/g, "$1$2\n")
+    .replace(/(?:并且|并|然后)(?=修改|实现|修复|开发|新增|添加|更新)/g, "\n")
     .split(
       // A comma before a new action ("Fix #84, add tests and documentation") also starts a clause.
       /(?:[.!?;]\s+|\n|(?:\b(?:and|then|also)\b|,)(?=\s+(?:fix|implement|build|develop|patch|refactor|repair|resolve|change|modify|update|add|write|create|open|document|review|research|report|prepare|draft)\b))/i,
@@ -52,6 +58,14 @@ export function detectImplementationIntent(directiveText: string, projectContext
     .map((clause) =>
       supportingTarget.test(clause) ? clause.split(/\b(?:with|including|alongside|plus)\b/i)[0].trim() : clause,
     )
+    // A shared English action can govern both code and support objects:
+    // "Fix authentication and documentation". Preserve only the code object,
+    // while "Fix API documentation" continues to be supporting work.
+    .map((clause) => {
+      const objects = clause.split(/\band\b/i);
+      const supportingIndex = objects.findIndex((object) => supportingTarget.test(object));
+      return supportingIndex > 0 ? objects.slice(0, supportingIndex).join(" and ").trim() : clause;
+    })
     .filter(Boolean);
   const executionClauses = clauses.filter((clause) => {
     if (!action.test(clause) || nonExecution.test(clause)) return false;

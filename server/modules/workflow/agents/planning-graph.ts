@@ -61,7 +61,9 @@ export function parsePlanningGraph(text: string): PlanningItem[] | null {
     visiting.add(key);
     item.depends_on.forEach((dependency) => {
       if (!byKey.has(dependency))
-        throw new Error(`${item.key}: missing prerequisite ${dependency}; add its owning item or correct depends_on.`);
+        throw new Error(
+          `Invalid planning graph dependency: ${item.key}: missing prerequisite ${dependency}; add its owning item or correct depends_on.`,
+        );
       visit(dependency);
     });
     visiting.delete(key);
