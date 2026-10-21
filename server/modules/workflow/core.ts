@@ -203,7 +203,7 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
     taskWorktrees,
   });
 
-  const { mergeWorktree, mergeToDevAndCreatePR, rollbackTaskWorktree, getWorktreeDiffSummary, hasVisibleDiffSummary } =
+  const { mergeWorktree, rollbackTaskWorktree, getWorktreeDiffSummary, hasVisibleDiffSummary } =
     createWorktreeMergeTools({
       db: db as any,
       taskWorktrees,
@@ -325,7 +325,6 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
     taskWorktrees,
     createWorktree,
     mergeWorktree,
-    mergeToDevAndCreatePR,
     cleanupWorktree,
     rollbackTaskWorktree,
     getWorktreeDiffSummary,

@@ -1,7 +1,13 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import TaskReportPopup from "./TaskReportPopup";
+
+const apiMocks = vi.hoisted(() => ({ getWorktrees: vi.fn() }));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  getWorktrees: apiMocks.getWorktrees,
+}));
 
 const baseReport = {
   task: {
@@ -44,7 +50,11 @@ const baseReport = {
 };
 
 describe("TaskReportPopup", () => {
-  it("shows final branch verification logs in the report popup", () => {
+  beforeEach(() => {
+    apiMocks.getWorktrees.mockResolvedValue({ ok: true, worktrees: [] });
+  });
+
+  it("shows final branch verification logs in the report popup", async () => {
     render(
       <I18nProvider language="en">
         <TaskReportPopup
@@ -59,9 +69,10 @@ describe("TaskReportPopup", () => {
 
     expect(screen.getByText("Final Branch Verification")).toBeInTheDocument();
     expect(screen.getByText(/Final branch verification: passed/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Checking task branch...")).not.toBeInTheDocument());
   });
 
-  it("keeps a sprite avatar when the assigned agent is missing from the active agent list", () => {
+  it("keeps a sprite avatar when the assigned agent is missing from the active agent list", async () => {
     render(
       <I18nProvider language="en">
         <TaskReportPopup report={baseReport as any} agents={[]} departments={[]} uiLanguage="en" onClose={() => {}} />
@@ -69,5 +80,27 @@ describe("TaskReportPopup", () => {
     );
 
     expect(screen.getByAltText("Ari")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Checking task branch...")).not.toBeInTheDocument());
+  });
+
+  it("offers branch review from a completed task detail", async () => {
+    apiMocks.getWorktrees.mockResolvedValue({
+      ok: true,
+      worktrees: [
+        {
+          taskId: "task-1",
+          branchName: "climpire/task-1",
+          projectPath: "/tmp/project",
+          worktreePath: "/tmp/project/.worktrees/task-1",
+        },
+      ],
+    });
+    render(
+      <I18nProvider language="en">
+        <TaskReportPopup report={baseReport as any} agents={[]} departments={[]} uiLanguage="en" onClose={() => {}} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "Review and merge" })).toBeEnabled();
+    expect(screen.getByText("climpire/task-1")).toBeInTheDocument();
   });
 });

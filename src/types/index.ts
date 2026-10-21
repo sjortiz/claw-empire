@@ -137,6 +137,7 @@ export interface Task {
 }
 
 export type AssignmentMode = "auto" | "manual";
+export type MergePolicy = "auto" | "manual";
 
 export interface Project {
   id: string;
@@ -145,6 +146,7 @@ export interface Project {
   core_goal: string;
   default_pack_key?: WorkflowPackKey;
   assignment_mode: AssignmentMode;
+  merge_policy?: MergePolicy | null;
   assigned_agent_ids?: string[];
   last_used_at: number | null;
   created_at: number;
@@ -367,6 +369,7 @@ export interface CompanySettings {
   ceoName: string;
   autoAssign: boolean;
   yoloMode?: boolean;
+  mergePolicy?: MergePolicy;
   autoUpdateEnabled: boolean;
   autoUpdateNoticePending?: boolean;
   oauthAutoSwap?: boolean;
@@ -386,6 +389,7 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   ceoName: "CEO",
   autoAssign: true,
   yoloMode: false,
+  mergePolicy: "auto",
   autoUpdateEnabled: false,
   autoUpdateNoticePending: false,
   oauthAutoSwap: true,

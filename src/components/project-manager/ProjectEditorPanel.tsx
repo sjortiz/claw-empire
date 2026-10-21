@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { isApiRequestError, pickProjectPathNative, type ProjectDetailResponse } from "../../api";
-import type { Agent, AssignmentMode, Department, Project } from "../../types";
+import type { Agent, AssignmentMode, Department, MergePolicy, Project } from "../../types";
 import type {
   FormFeedback,
   ManualAssignmentWarning,
@@ -9,6 +9,7 @@ import type {
   ProjectManualSelectionStats,
 } from "./types";
 import ManualAssignmentSelector from "./ManualAssignmentSelector";
+import ProjectMergePolicySelector from "./ProjectMergePolicySelector";
 
 interface ProjectEditorPanelProps {
   t: ProjectI18nTranslate;
@@ -44,6 +45,8 @@ interface ProjectEditorPanelProps {
   resolvePathHelperErrorMessage: (err: unknown, fallback: { ko: string; en: string; ja: string; zh: string }) => string;
   formFeedback: FormFeedback | null;
   setFormFeedback: Dispatch<SetStateAction<FormFeedback | null>>;
+  mergePolicy: MergePolicy | null;
+  setMergePolicy: Dispatch<SetStateAction<MergePolicy | null>>;
   assignmentMode: AssignmentMode;
   setAssignmentMode: Dispatch<SetStateAction<AssignmentMode>>;
   setManualAssignmentWarning: Dispatch<SetStateAction<ManualAssignmentWarning | null>>;
@@ -95,6 +98,8 @@ export default function ProjectEditorPanel({
   resolvePathHelperErrorMessage,
   formFeedback,
   setFormFeedback,
+  mergePolicy,
+  setMergePolicy,
   assignmentMode,
   setAssignmentMode,
   setManualAssignmentWarning,
@@ -308,6 +313,16 @@ export default function ProjectEditorPanel({
           className="mt-1 w-full resize-none rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
         />
       </label>
+
+      <ProjectMergePolicySelector
+        t={t}
+        value={mergePolicy}
+        onChange={(value) => {
+          setMergePolicy(value);
+          setFormFeedback(null);
+        }}
+        disabled={!isCreating && !editingProjectId}
+      />
 
       <ManualAssignmentSelector
         t={t}

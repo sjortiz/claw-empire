@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { CliUsageEntry } from "../shared/types.ts";
+import { discoverTaskWorktree, discoverTaskWorktrees } from "../../workflow/core/worktree/lifecycle.ts";
 
 function readGitLines(cwd: string, args: string[], timeout = 8000): string[] {
   const output = execFileSync("git", args, { cwd, stdio: "pipe", timeout }).toString().trim();
@@ -55,21 +56,31 @@ function resolveCompareRef(projectPath: string, worktreePath: string): string | 
   return null;
 }
 
-function parsePorcelainPath(line: string): string | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  const pathPart = trimmed.slice(3).trim();
-  if (!pathPart) return null;
-  const renamed = pathPart.split(" -> ").pop()?.trim();
-  return renamed || pathPart;
-}
-
 function isCodeLikePath(filePath: string): boolean {
   return /\.(ts|tsx|js|jsx|mjs|cjs|json|html|css|scss|py|md|yml|yaml|sh|ps1|sql)$/i.test(filePath);
 }
 
 function isIgnoredWorktreeArtifact(filePath: string): boolean {
   return filePath === ".claude/skills" || filePath.startsWith(".claude/skills/");
+}
+
+function readUncommittedFiles(worktreePath: string): string[] {
+  const entries = execFileSync("git", ["status", "--porcelain", "-z"], {
+    cwd: worktreePath,
+    stdio: "pipe",
+    timeout: 8000,
+  })
+    .toString()
+    .split("\0");
+  const files: string[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    if (!entry) continue;
+    const filePath = entry.slice(3);
+    if (filePath && !isIgnoredWorktreeArtifact(filePath)) files.push(filePath);
+    if (/[RC]/.test(entry.slice(0, 2))) index += 1;
+  }
+  return files;
 }
 
 type VerifyCommitState = {
@@ -116,10 +127,7 @@ function inspectWorktreeVerification(wtInfo?: {
   const changedFiles = (
     compareRef ? tryReadGitLines(worktreePath, ["diff", `${compareRef}..HEAD`, "--name-only"]) : []
   ).filter((filePath) => !isIgnoredWorktreeArtifact(filePath));
-  const uncommittedFiles = tryReadGitLines(worktreePath, ["status", "--porcelain"])
-    .map(parsePorcelainPath)
-    .filter((value): value is string => Boolean(value))
-    .filter((filePath) => !isIgnoredWorktreeArtifact(filePath));
+  const uncommittedFiles = readUncommittedFiles(worktreePath);
   const hasRealCode = changedFiles.some(isCodeLikePath);
   const hasUncommittedChanges = uncommittedFiles.length > 0;
 
@@ -171,9 +179,23 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
     broadcast,
   } = ctx;
 
+  function findTaskWorktree(taskId: string) {
+    const cached = taskWorktrees.get(taskId);
+    if (cached) return cached;
+    const task = db
+      .prepare(
+        "SELECT COALESCE(NULLIF(TRIM(t.project_path), ''), p.project_path) AS project_path FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.id = ?",
+      )
+      .get(taskId) as { project_path: string | null } | undefined;
+    if (!task?.project_path) return undefined;
+    const recovered = discoverTaskWorktree(task.project_path, taskId);
+    if (recovered) taskWorktrees.set(taskId, recovered);
+    return recovered;
+  }
+
   app.get("/api/tasks/:id/diff", (req, res) => {
     const id = String(req.params.id);
-    const wtInfo = taskWorktrees.get(id);
+    const wtInfo = findTaskWorktree(id);
     if (!wtInfo) {
       return res.json({ ok: true, hasWorktree: false, diff: "", stat: "" });
     }
@@ -187,7 +209,7 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
         .toString()
         .trim();
 
-      const stat = execFileSync("git", ["diff", `${currentBranch}...${wtInfo.branchName}`, "--stat"], {
+      let stat = execFileSync("git", ["diff", `${currentBranch}...${wtInfo.branchName}`, "--stat"], {
         cwd: wtInfo.projectPath,
         stdio: "pipe",
         timeout: 10000,
@@ -195,16 +217,34 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
         .toString()
         .trim();
 
-      const diff = execFileSync("git", ["diff", `${currentBranch}...${wtInfo.branchName}`], {
+      let diff = execFileSync("git", ["diff", `${currentBranch}...${wtInfo.branchName}`], {
         cwd: wtInfo.projectPath,
         stdio: "pipe",
         timeout: 15000,
       }).toString();
 
+      const uncommittedFiles = readUncommittedFiles(wtInfo.worktreePath);
+      if (uncommittedFiles.length > 0) {
+        const pendingDiff = execFileSync("git", ["diff", "HEAD", "--"], {
+          cwd: wtInfo.worktreePath,
+          stdio: "pipe",
+          timeout: 15000,
+        }).toString();
+        if (pendingDiff) {
+          const pendingStat = readGitLines(wtInfo.worktreePath, ["diff", "HEAD", "--stat"]).join("\n");
+          stat += `\n\nUncommitted worktree changes:\n${pendingStat}`;
+          diff += `\n\n# Uncommitted worktree changes (staged and unstaged)\n${pendingDiff}`;
+        }
+      }
+
       res.json({
         ok: true,
         hasWorktree: true,
         branchName: wtInfo.branchName,
+        targetBranch: currentBranch === "HEAD" ? null : currentBranch,
+        projectPath: wtInfo.projectPath,
+        hasUncommittedChanges: uncommittedFiles.length > 0,
+        uncommittedFiles,
         stat,
         diff: diff.length > 50000 ? diff.slice(0, 50000) + "\n... (truncated)" : diff,
       });
@@ -216,9 +256,34 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
 
   app.post("/api/tasks/:id/merge", (req, res) => {
     const id = String(req.params.id);
-    const wtInfo = taskWorktrees.get(id);
+    const wtInfo = findTaskWorktree(id);
     if (!wtInfo) {
       return res.status(404).json({ error: "no_worktree", message: "No worktree found for this task" });
+    }
+
+    // Explicit merges must name the checkout the user reviewed. Validate before
+    // auto-committing pending work or invoking any checkout mutation.
+    const expectedTargetBranch = req.body?.expectedTargetBranch;
+    if (typeof expectedTargetBranch !== "string" || !expectedTargetBranch.trim()) {
+      return res.status(400).json({ ok: false, error: "expected_target_required" });
+    }
+    try {
+      const currentBranch = readGitLines(wtInfo.projectPath, ["rev-parse", "--abbrev-ref", "HEAD"])[0];
+      const targetBranch = currentBranch === "HEAD" ? null : currentBranch;
+      if (!targetBranch || targetBranch !== expectedTargetBranch) {
+        return res.status(409).json({
+          ok: false,
+          error: "target_changed",
+          code: "target_changed",
+          targetBranch: targetBranch ?? null,
+        });
+      }
+    } catch (err: unknown) {
+      return res.status(409).json({
+        ok: false,
+        error: "target_unavailable",
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
 
     let verificationState: VerifyCommitState | null = null;
@@ -273,7 +338,7 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
 
   app.post("/api/tasks/:id/discard", (req, res) => {
     const id = String(req.params.id);
-    const wtInfo = taskWorktrees.get(id);
+    const wtInfo = findTaskWorktree(id);
     if (!wtInfo) {
       return res.status(404).json({ error: "no_worktree", message: "No worktree found for this task" });
     }
@@ -299,7 +364,7 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
 
   app.get("/api/tasks/:id/verify-commit", (req, res) => {
     const id = String(req.params.id);
-    const wtInfo = taskWorktrees.get(id);
+    const wtInfo = findTaskWorktree(id);
 
     try {
       return res.json(inspectWorktreeVerification(wtInfo));
@@ -310,6 +375,23 @@ export function registerWorktreeAndUsageRoutes(ctx: RuntimeContext): {
   });
 
   app.get("/api/worktrees", (_req, res) => {
+    const tasks = db
+      .prepare(
+        "SELECT t.id, COALESCE(NULLIF(TRIM(t.project_path), ''), p.project_path) AS project_path FROM tasks t LEFT JOIN projects p ON p.id = t.project_id",
+      )
+      .all() as Array<{ id: string; project_path: string | null }>;
+    const tasksByProject = new Map<string, string[]>();
+    for (const task of tasks) {
+      if (!task.project_path || taskWorktrees.has(task.id)) continue;
+      const taskIds = tasksByProject.get(task.project_path) ?? [];
+      taskIds.push(task.id);
+      tasksByProject.set(task.project_path, taskIds);
+    }
+    for (const [projectPath, taskIds] of tasksByProject) {
+      for (const [taskId, info] of discoverTaskWorktrees(projectPath, taskIds)) {
+        taskWorktrees.set(taskId, info);
+      }
+    }
     const entries: Array<{ taskId: string; branchName: string; worktreePath: string; projectPath: string }> = [];
     for (const [taskId, info] of taskWorktrees) {
       entries.push({ taskId, ...info });

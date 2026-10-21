@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { resolveTaskMergePolicy } from "../core/worktree/merge-policy.ts";
+import { discoverTaskWorktree } from "../core/worktree/lifecycle.ts";
 import path from "node:path";
 import {
   discoverVideoArtifact,
@@ -26,7 +28,6 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     projectReviewGateNotifiedAt,
     notifyCeo,
     taskWorktrees,
-    mergeToDevAndCreatePR,
     mergeWorktree,
     cleanupWorktree,
     findTeamLeader,
@@ -523,37 +524,67 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
         | undefined;
       if (!latestTask || latestTask.status !== "review") return;
 
-      // If task has a worktree, merge the branch back before marking done
-      const wtInfo = taskWorktrees.get(taskId);
+      let wtInfo = taskWorktrees.get(taskId);
+      if (!wtInfo) {
+        const projectPath =
+          currentTask.project_path ||
+          (currentTask.project_id
+            ? (
+                db.prepare("SELECT project_path FROM projects WHERE id = ?").get(currentTask.project_id) as
+                  | { project_path?: string }
+                  | undefined
+              )?.project_path
+            : null);
+        if (projectPath) {
+          wtInfo = discoverTaskWorktree(projectPath, taskId);
+          if (wtInfo) taskWorktrees.set(taskId, wtInfo);
+        }
+      }
+      const mergePolicy = wtInfo ? resolveTaskMergePolicy(db, currentTask.project_id) : null;
       let mergeNote = "";
-      if (wtInfo) {
-        // Check if this is a GitHub project → merge to dev + PR flow
-        const projectRow = currentTask.project_id
-          ? (db.prepare("SELECT github_repo FROM projects WHERE id = ?").get(currentTask.project_id) as
-              | { github_repo: string | null }
-              | undefined)
-          : undefined;
-        const githubRepo = projectRow?.github_repo;
-
-        const mergeResult = githubRepo
-          ? mergeToDevAndCreatePR(wtInfo.projectPath, taskId, githubRepo)
-          : mergeWorktree(wtInfo.projectPath, taskId);
-
+      if (wtInfo && mergePolicy?.policy === "manual") {
+        // Approval must not mutate the project checkout or discard reviewable work.
+        const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+        const mergeCommand = `git -C ${quote(wtInfo.projectPath)} merge -- ${quote(wtInfo.branchName)}`;
+        appendTaskLog(
+          taskId,
+          "system",
+          pickL(
+            l(
+              [
+                `병합 정책: manual (${mergePolicy.source}). 자동 병합을 건너뛰었습니다. 브랜치 보존: ${wtInfo.branchName}. ${wtInfo.worktreePath}의 미커밋 변경을 검토 및 커밋한 후 프로젝트의 대상 브랜치를 체크아웃하고 ${mergeCommand} 실행 또는 태스크의 '지금 병합'을 사용하세요. 원격 푸시는 별도 작업입니다.`,
+              ],
+              [
+                `Merge policy: manual (${mergePolicy.source}). Automatic merge skipped; branch retained: ${wtInfo.branchName}. Review and commit any pending changes in ${wtInfo.worktreePath}, then check out the intended target branch in the project and run ${mergeCommand}, or use Merge now in task details. Remote pushing is a separate action.`,
+              ],
+              [
+                `マージポリシー: manual (${mergePolicy.source})。自動マージをスキップし、ブランチを保持しました: ${wtInfo.branchName}。${wtInfo.worktreePath} の未コミット変更をレビューしてコミットした後、プロジェクトで対象ブランチをチェックアウトし、${mergeCommand} を実行するかタスク詳細の「今すぐマージ」を使用してください。リモートへのプッシュは別操作です。`,
+              ],
+              [
+                `合并策略: manual (${mergePolicy.source})。已跳过自动合并，保留分支: ${wtInfo.branchName}。审查并提交 ${wtInfo.worktreePath} 中的未提交更改后，在项目中检出目标分支并运行 ${mergeCommand}，或使用任务详情中的“立即合并”。远程推送需要单独操作。`,
+              ],
+            ),
+            lang,
+          ),
+        );
+        mergeNote = pickL(
+          l(
+            [` (수동 검토를 위해 브랜치 보존: ${wtInfo.branchName})`],
+            [` (branch kept for manual review: ${wtInfo.branchName})`],
+            [` (手動レビュー用にブランチを保持: ${wtInfo.branchName})`],
+            [`（保留分支以供人工审查: ${wtInfo.branchName}）`],
+          ),
+          lang,
+        );
+      } else if (wtInfo && mergePolicy) {
+        // Repository metadata never authorizes a remote push or PR creation.
+        appendTaskLog(taskId, "system", `Merge policy: auto (${mergePolicy.source}); local merge only`);
+        const mergeResult = mergeWorktree(wtInfo.projectPath, taskId);
         if (mergeResult.success) {
           appendTaskLog(taskId, "system", `Git merge completed: ${mergeResult.message}`);
           cleanupWorktree(wtInfo.projectPath, taskId);
           appendTaskLog(taskId, "system", "Worktree cleaned up after successful merge");
-          mergeNote = githubRepo
-            ? pickL(
-                l(
-                  [" (dev 병합 + PR 생성)"],
-                  [" (merged to dev + PR)"],
-                  [" (dev マージ + PR)"],
-                  ["（合并到 dev + PR）"],
-                ),
-                lang,
-              )
-            : pickL(l([" (병합 완료)"], [" (merged)"], [" (マージ完了)"], ["（已合并）"]), lang);
+          mergeNote = pickL(l([" (병합 완료)"], [" (merged)"], [" (マージ完了)"], ["（已合并）"]), lang);
         } else {
           appendTaskLog(taskId, "system", `Git merge failed: ${mergeResult.message}`);
 

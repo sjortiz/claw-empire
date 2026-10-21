@@ -87,6 +87,15 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* already exists */
   }
 
+  // A null project policy inherits the global policy, including for existing projects.
+  try {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN merge_policy TEXT CHECK(merge_policy IS NULL OR merge_policy IN ('auto','manual'))",
+    );
+  } catch {
+    /* already exists */
+  }
+
   // 프로젝트별 직원 직접선택 기능: assignment_mode + project_agents 테이블
   try {
     db.exec("ALTER TABLE projects ADD COLUMN assignment_mode TEXT NOT NULL DEFAULT 'auto'");

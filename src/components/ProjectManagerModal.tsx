@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Agent, AssignmentMode, Department, Project } from "../types";
+import type { Agent, AssignmentMode, Department, MergePolicy, Project } from "../types";
 import {
   deleteProject,
   getProjectDetail,
@@ -57,6 +57,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
   const [reportDetail, setReportDetail] = useState<TaskReportDetail | null>(null);
 
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("auto");
+  const [mergePolicy, setMergePolicy] = useState<MergePolicy | null>(null);
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set());
   const [agentFilterDept, setAgentFilterDept] = useState<string>("all");
   const [manualAssignmentWarning, setManualAssignmentWarning] = useState<ManualAssignmentWarning | null>(null);
@@ -119,6 +120,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
           setProjectPath(res.project.project_path);
           setCoreGoal(res.project.core_goal);
           setAssignmentMode(res.project.assignment_mode || "auto");
+          setMergePolicy(res.project.merge_policy ?? null);
           setSelectedAgentIds(new Set(res.project.assigned_agent_ids || []));
         }
       })
@@ -205,6 +207,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
     setProjectPath("");
     setCoreGoal("");
     setAssignmentMode("auto");
+    setMergePolicy(null);
     setSelectedAgentIds(new Set());
     setManualAssignmentWarning(null);
     pathTools.resetPathHelperState();
@@ -218,6 +221,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
     setProjectPath(viewedProject.project_path);
     setCoreGoal(viewedProject.core_goal);
     setAssignmentMode(viewedProject.assignment_mode || "auto");
+    setMergePolicy(viewedProject.merge_policy ?? null);
     setSelectedAgentIds(new Set(viewedProject.assigned_agent_ids || []));
     setManualAssignmentWarning(null);
     pathTools.resetPathHelperState();
@@ -228,6 +232,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
     saving,
     setSaving,
     assignmentMode,
+    mergePolicy,
     getManualAssignmentWarning,
     setManualAssignmentWarning,
     projectPath,
@@ -401,6 +406,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
                   resolvePathHelperErrorMessage={pathTools.resolvePathHelperErrorMessage}
                   formFeedback={pathTools.formFeedback}
                   setFormFeedback={pathTools.setFormFeedback}
+                  mergePolicy={mergePolicy}
+                  setMergePolicy={setMergePolicy}
                   assignmentMode={assignmentMode}
                   setAssignmentMode={setAssignmentMode}
                   setManualAssignmentWarning={setManualAssignmentWarning}
@@ -423,6 +430,7 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
                       setName(viewedProject.name);
                       setProjectPath(viewedProject.project_path);
                       setCoreGoal(viewedProject.core_goal);
+                      setMergePolicy(viewedProject.merge_policy ?? null);
                     }
                   }}
                   onStartEditSelected={startEditSelected}

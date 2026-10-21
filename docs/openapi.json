@@ -14510,7 +14510,18 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "additionalProperties": true,
+                  "properties": {
+                    "targetBranch": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Current local checkout branch; null for detached HEAD. Present when a worktree is found."
+                    },
+                    "projectPath": {
+                      "type": "string",
+                      "description": "Local checkout that Merge now would change."
+                    }
+                  }
                 },
                 "example": {
                   "ok": true,
@@ -15251,6 +15262,21 @@
               }
             }
           },
+          "400": {
+            "description": "Target branch confirmation is required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                },
+                "example": {
+                  "ok": false,
+                  "error": "expected_target_required"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -15324,7 +15350,7 @@
             }
           },
           "409": {
-            "description": "Conflict",
+            "description": "Checkout target changed, is detached, or cannot be read; no merge is attempted",
             "content": {
               "application/json": {
                 "schema": {
@@ -15341,8 +15367,10 @@
                   "additionalProperties": true
                 },
                 "example": {
-                  "error": "conflict",
-                  "message": "The request conflicts with current server state."
+                  "ok": false,
+                  "error": "target_changed",
+                  "code": "target_changed",
+                  "targetBranch": "other-session"
                 }
               }
             }
@@ -15392,6 +15420,27 @@
                   "error": "internal_error",
                   "message": "Unexpected server error."
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expectedTargetBranch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Target branch shown in the task diff and explicitly confirmed by the user."
+                  }
+                },
+                "required": ["expectedTargetBranch"]
+              },
+              "example": {
+                "expectedTargetBranch": "dev"
               }
             }
           }

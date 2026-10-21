@@ -212,6 +212,10 @@ export function registerProjectRoutes({
     if (!name) return res.status(400).json({ error: "name_required" });
     if (!projectPath) return res.status(400).json({ error: "project_path_required" });
     if (!coreGoal) return res.status(400).json({ error: "core_goal_required" });
+    const mergePolicy = body.merge_policy ?? null;
+    if (mergePolicy !== null && mergePolicy !== "auto" && mergePolicy !== "manual") {
+      return res.status(400).json({ error: "invalid_merge_policy" });
+    }
     if (!isPathInsideAllowedRoots(projectPath)) {
       return res.status(403).json({
         error: "project_path_outside_allowed_roots",
@@ -268,11 +272,11 @@ export function registerProjectRoutes({
       db.prepare(
         `
       INSERT INTO projects (
-        id, name, project_path, core_goal, default_pack_key, assignment_mode, last_used_at, created_at, updated_at, github_repo
+        id, name, project_path, core_goal, default_pack_key, assignment_mode, last_used_at, created_at, updated_at, github_repo, merge_policy
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      ).run(id, name, projectPath, coreGoal, defaultPackKey, assignmentMode, t, t, t, githubRepo);
+      ).run(id, name, projectPath, coreGoal, defaultPackKey, assignmentMode, t, t, t, githubRepo, mergePolicy);
 
       if (assignmentMode === "manual" && agentIds.length > 0) {
         const insertPA = db.prepare("INSERT INTO project_agents (project_id, agent_id, created_at) VALUES (?, ?, ?)");
@@ -353,6 +357,14 @@ export function registerProjectRoutes({
     if ("github_repo" in body) {
       const value = typeof body.github_repo === "string" ? body.github_repo.trim() || null : null;
       updates.push("github_repo = ?");
+      params.push(value);
+    }
+    if ("merge_policy" in body) {
+      const value = body.merge_policy;
+      if (value !== null && value !== "auto" && value !== "manual") {
+        return res.status(400).json({ error: "invalid_merge_policy" });
+      }
+      updates.push("merge_policy = ?");
       params.push(value);
     }
     if ("assignment_mode" in body) {

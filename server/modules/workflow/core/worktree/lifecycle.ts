@@ -13,6 +13,49 @@ type CreateWorktreeLifecycleToolsDeps = {
   taskWorktrees: Map<string, WorktreeInfo>;
 };
 
+export function discoverTaskWorktrees(projectPath: string, taskIds: Iterable<string>): Map<string, WorktreeInfo> {
+  const discovered = new Map<string, WorktreeInfo>();
+  try {
+    const worktreeBase = fs.realpathSync(path.join(projectPath, ".climpire-worktrees"));
+    const output = execFileSync("git", ["worktree", "list", "--porcelain", "-z"], {
+      cwd: projectPath,
+      stdio: "pipe",
+      timeout: 5000,
+    }).toString();
+    const registered = output.split("\0\0").flatMap((record) => {
+      const fields = record.split("\0");
+      const worktreePath = fields.find((field) => field.startsWith("worktree "))?.slice("worktree ".length);
+      const branchName = fields
+        .find((field) => field.startsWith("branch refs/heads/"))
+        ?.slice("branch refs/heads/".length);
+      if (!worktreePath || !branchName || fields.some((field) => field.startsWith("prunable"))) return [];
+      if (!fs.existsSync(path.join(worktreePath, ".git"))) return [];
+      return [{ worktreePath, branchName }];
+    });
+
+    for (const taskId of taskIds) {
+      const shortId = taskId.slice(0, 8);
+      const branchPrefix = `climpire/${shortId}`;
+      for (const info of registered) {
+        if (!info.branchName.startsWith(branchPrefix)) continue;
+        const suffix = info.branchName.slice(branchPrefix.length);
+        if (suffix && !/^-[1-9]\d*$/.test(suffix)) continue;
+        const expectedPath = path.join(worktreeBase, `${shortId}${suffix}`);
+        if (fs.realpathSync(info.worktreePath) !== expectedPath) continue;
+        discovered.set(taskId, { ...info, projectPath });
+        break;
+      }
+    }
+  } catch {
+    // Missing repositories and manually removed worktrees have nothing to recover.
+  }
+  return discovered;
+}
+
+export function discoverTaskWorktree(projectPath: string, taskId: string): WorktreeInfo | undefined {
+  return discoverTaskWorktrees(projectPath, [taskId]).get(taskId);
+}
+
 export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsDeps) {
   const { appendTaskLog, taskWorktrees } = deps;
 
@@ -125,6 +168,12 @@ export function createWorktreeLifecycleTools(deps: CreateWorktreeLifecycleToolsD
   function createWorktree(projectPath: string, taskId: string, agentName: string, baseBranch?: string): string | null {
     if (!ensureWorktreeBootstrapRepo(projectPath, taskId)) return null;
     if (!isGitRepo(projectPath)) return null;
+
+    const existing = discoverTaskWorktree(projectPath, taskId);
+    if (existing) {
+      taskWorktrees.set(taskId, existing);
+      return existing.worktreePath;
+    }
 
     const shortId = taskId.slice(0, 8);
     const branchName = `climpire/${shortId}`;

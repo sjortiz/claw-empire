@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import { useI18n } from "../../i18n";
+import { useI18n, type UiLanguage } from "../../i18n";
+import { isApiRequestError } from "../../api/core";
 import {
   discardTask,
   getTaskDiff,
@@ -12,10 +13,12 @@ import {
 interface DiffModalProps {
   taskId: string;
   onClose: () => void;
+  language?: UiLanguage;
+  onWorktreeRemoved?: () => void;
 }
 
-function DiffModal({ taskId, onClose }: DiffModalProps) {
-  const { t } = useI18n();
+function DiffModal({ taskId, onClose, language, onWorktreeRemoved }: DiffModalProps) {
+  const { t } = useI18n(language);
   const [diffData, setDiffData] = useState<TaskDiffResult | null>(null);
   const [verifyData, setVerifyData] = useState<TaskVerifyCommitResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +27,7 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
   const [merging, setMerging] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [actionResult, setActionResult] = useState<string | null>(null);
+  const [worktreeRemoved, setWorktreeRemoved] = useState(false);
 
   useEffect(() => {
     Promise.allSettled([getTaskDiff(taskId), getTaskVerifyCommit(taskId)]).then(([diffResult, verifyResult]) => {
@@ -60,34 +64,61 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
   }, [onClose]);
 
   const handleMerge = useCallback(async () => {
+    if (!diffData?.hasWorktree || !diffData.targetBranch) return;
+    const { branchName, targetBranch, projectPath } = diffData;
     if (
       !confirm(
         t({
-          ko: "이 브랜치를 메인에 병합하시겠습니까?",
-          en: "Merge this branch into main?",
-          ja: "このブランチを main にマージしますか？",
-          zh: "要将此分支合并到 main 吗？",
+          ko: `${branchName}을(를) ${targetBranch}에 병합하시겠습니까? ${projectPath}의 로컬 체크아웃이 변경됩니다. 원격으로 푸시하지 않습니다.`,
+          en: `Merge ${branchName} into ${targetBranch}? This changes the local checkout at ${projectPath}. Nothing will be pushed to a remote.`,
+          ja: `${branchName} を ${targetBranch} にマージしますか？${projectPath} のローカルチェックアウトが変更されます。リモートへはプッシュしません。`,
+          zh: `要将 ${branchName} 合并到 ${targetBranch} 吗？这会更改 ${projectPath} 的本地检出，不会推送到远程。`,
         }),
       )
     )
       return;
     setMerging(true);
+    setActionResult(null);
     try {
-      const result = await mergeTask(taskId);
+      const result = await mergeTask(taskId, targetBranch);
       setActionResult(
         result.ok
           ? `${t({ ko: "병합 완료", en: "Merge completed", ja: "マージ完了", zh: "合并完成" })}: ${result.message}`
           : `${t({ ko: "병합 실패", en: "Merge failed", ja: "マージ失敗", zh: "合并失败" })}: ${result.message}`,
       );
-      if (result.ok) setTimeout(onClose, 1500);
+      if (result.ok) {
+        setWorktreeRemoved(true);
+        onWorktreeRemoved?.();
+      }
     } catch (e: unknown) {
+      if (isApiRequestError(e) && e.code === "target_changed") {
+        // Refresh the diff as well as the target. A retry always needs a new confirmation.
+        setDiffData(null);
+        try {
+          const refreshed = await getTaskDiff(taskId);
+          if (!refreshed.ok) throw new Error(refreshed.error || "Unable to refresh target");
+          setDiffData(refreshed);
+          const target = refreshed.targetBranch ?? "HEAD";
+          setActionResult(
+            t({
+              ko: `프로젝트 체크아웃이 ${target}(으)로 바뀌었습니다. 대상을 확인한 후 다시 승인하세요.`,
+              en: `The project checkout changed to ${target}. Review the target and confirm again.`,
+              ja: `プロジェクトのチェックアウトが ${target} に変わりました。対象を確認して再度承認してください。`,
+              zh: `项目检出已变更为 ${target}。请确认目标后重新确认。`,
+            }),
+          );
+        } catch (refreshError) {
+          setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+        }
+        return;
+      }
       setActionResult(
         `${t({ ko: "오류", en: "Error", ja: "エラー", zh: "错误" })}: ${e instanceof Error ? e.message : String(e)}`,
       );
     } finally {
       setMerging(false);
     }
-  }, [taskId, onClose, t]);
+  }, [taskId, onWorktreeRemoved, t, diffData]);
 
   const handleDiscard = useCallback(async () => {
     if (
@@ -114,7 +145,10 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
             })
           : `${t({ ko: "폐기 실패", en: "Discard failed", ja: "破棄失敗", zh: "丢弃失败" })}: ${result.message}`,
       );
-      if (result.ok) setTimeout(onClose, 1500);
+      if (result.ok) {
+        setWorktreeRemoved(true);
+        onWorktreeRemoved?.();
+      }
     } catch (e: unknown) {
       setActionResult(
         `${t({ ko: "오류", en: "Error", ja: "エラー", zh: "错误" })}: ${e instanceof Error ? e.message : String(e)}`,
@@ -122,7 +156,7 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
     } finally {
       setDiscarding(false);
     }
-  }, [taskId, onClose, t]);
+  }, [taskId, onWorktreeRemoved, t]);
 
   const verifyToneClass =
     verifyData?.verdict === "ok"
@@ -166,30 +200,36 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
       <div className="flex max-h-[85vh] w-full max-w-4xl flex-col rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-700 px-5 py-3">
-          <div className="flex items-center gap-2">
+          <div className="min-w-0">
             <span className="text-lg font-bold text-white">
               {t({ ko: "Git 변경사항", en: "Git Diff", ja: "Git 差分", zh: "Git 差异" })}
             </span>
             {diffData?.branchName && (
-              <span className="rounded-full bg-purple-900 px-2.5 py-0.5 text-xs text-purple-300">
-                {diffData.branchName}
-              </span>
+              <p className="mt-1 break-all font-mono text-xs text-slate-300">
+                {diffData.branchName} → {diffData.targetBranch ?? "HEAD"}
+              </p>
             )}
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handleMerge}
-              disabled={merging || discarding || !diffData?.hasWorktree}
+              disabled={
+                merging || discarding || loading || worktreeRemoved || !diffData?.hasWorktree || !diffData.targetBranch
+              }
               className="rounded-lg bg-green-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-green-600 disabled:opacity-40"
             >
-              {merging ? "..." : t({ ko: "병합", en: "Merge", ja: "マージ", zh: "合并" })}
+              {merging
+                ? t({ ko: "병합 중...", en: "Merging...", ja: "マージ中...", zh: "正在合并..." })
+                : t({ ko: "지금 병합", en: "Merge now", ja: "今すぐマージ", zh: "立即合并" })}
             </button>
             <button
               onClick={handleDiscard}
-              disabled={merging || discarding || !diffData?.hasWorktree}
+              disabled={merging || discarding || loading || worktreeRemoved || !diffData?.hasWorktree}
               className="rounded-lg bg-red-800 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700 disabled:opacity-40"
             >
-              {discarding ? "..." : t({ ko: "폐기", en: "Discard", ja: "破棄", zh: "丢弃" })}
+              {discarding
+                ? t({ ko: "폐기 중...", en: "Discarding...", ja: "破棄中...", zh: "正在丢弃..." })
+                : t({ ko: "폐기", en: "Discard", ja: "破棄", zh: "丢弃" })}
             </button>
             <button
               onClick={onClose}
@@ -203,7 +243,9 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
 
         {/* Action result */}
         {actionResult && (
-          <div className="border-b border-slate-700 bg-slate-800 px-5 py-2 text-sm text-amber-300">{actionResult}</div>
+          <div role="status" className="border-b border-slate-700 bg-slate-800 px-5 py-2 text-sm text-amber-300">
+            {actionResult}
+          </div>
         )}
 
         {/* Content */}
@@ -232,6 +274,38 @@ function DiffModal({ taskId, onClose }: DiffModalProps) {
             </div>
           ) : (
             <div className="space-y-4">
+              {!diffData.targetBranch && (
+                <div role="alert" className="rounded-lg border border-amber-500/40 p-3 text-xs text-amber-200">
+                  {t({
+                    ko: "프로젝트 체크아웃이 분리된 HEAD 상태입니다. 병합하기 전에 브랜치를 체크아웃하세요.",
+                    en: "Project checkout is detached; check out a branch before merging.",
+                    ja: "プロジェクトのチェックアウトは detached HEAD 状態です。マージ前にブランチをチェックアウトしてください。",
+                    zh: "项目检出处于分离 HEAD 状态；请先检出一个分支再合并。",
+                  })}
+                </div>
+              )}
+              {diffData.hasUncommittedChanges && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200"
+                >
+                  <p>
+                    {t({
+                      ko: "이 워크트리의 미커밋 변경사항은 병합 시 커밋되어 함께 포함됩니다. 병합 전에 브랜치에서 변경사항을 검토하세요. 추적되지 않은 파일의 내용은 아래 차이에 표시되지 않을 수 있습니다.",
+                      en: "Uncommitted worktree changes will be committed and included in this merge. Review them in the branch before merging. The diff below may omit the contents of untracked files.",
+                      ja: "ワークツリーの未コミット変更はコミットされ、このマージに含まれます。マージ前にブランチで変更を確認してください。未追跡ファイルの内容は以下の差分に表示されない場合があります。",
+                      zh: "工作树中未提交的更改将被提交并包含在此次合并中。请在合并前检查分支中的更改。下方差异可能不包含未跟踪文件的内容。",
+                    })}
+                  </p>
+                  {diffData.uncommittedFiles && diffData.uncommittedFiles.length > 0 && (
+                    <ul className="mt-2 space-y-1 break-all font-mono">
+                      {diffData.uncommittedFiles.map((file) => (
+                        <li key={file}>{file}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               {verifyData && (
                 <div className={`rounded-lg border p-3 ${verifyToneClass}`}>
                   <div className="flex flex-wrap items-center gap-2">

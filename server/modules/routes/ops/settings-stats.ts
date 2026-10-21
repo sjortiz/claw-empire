@@ -1,3 +1,4 @@
+import { isMergePolicy } from "../../workflow/core/worktree/merge-policy.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import {
   decryptMessengerChannelsForClient,
@@ -135,6 +136,9 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
 
   app.put("/api/settings", (req, res) => {
     const body = req.body ?? {};
+    if (Object.hasOwn(body, "mergePolicy") && !isMergePolicy(body.mergePolicy)) {
+      return res.status(400).json({ ok: false, error: "invalid_merge_policy" });
+    }
     const officePackProfilesInPayload = (body as Record<string, unknown>)[OFFICE_PACK_PROFILES_KEY];
     const selectedOfficePackInPayload = (body as Record<string, unknown>)["officeWorkflowPack"];
 

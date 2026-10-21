@@ -3,6 +3,7 @@ import type { Agent, Task, MeetingMinute } from "../types";
 import * as api from "../api";
 import type { TerminalProgressHint, TerminalProgressHintsPayload } from "../api";
 import AgentAvatar from "./AgentAvatar";
+import TaskBranchReview from "./taskboard/TaskBranchReview";
 import { useI18n } from "../i18n";
 import {
   INTERVENTION_PROMPT_MAX_LENGTH,
@@ -537,6 +538,12 @@ export default function TerminalPanel({
           </button>
         </div>
       </div>
+
+      {task?.status === "done" && (
+        <div className="border-b px-4 py-3" style={{ borderColor: "var(--th-border)" }}>
+          <TaskBranchReview key={taskId} taskId={taskId} />
+        </div>
+      )}
 
       {activeTab === "terminal" && isInterventionTarget && interventionOpen && (
         <div className="border-b px-4 py-3 space-y-2" style={{ borderColor: "var(--th-border)" }}>

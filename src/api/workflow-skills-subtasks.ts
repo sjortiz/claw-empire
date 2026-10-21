@@ -7,8 +7,12 @@ export interface TaskDiffResult {
   ok: boolean;
   hasWorktree?: boolean;
   branchName?: string;
+  targetBranch?: string | null;
+  projectPath?: string;
   stat?: string;
   diff?: string;
+  hasUncommittedChanges?: boolean;
+  uncommittedFiles?: string[];
   error?: string;
 }
 
@@ -58,8 +62,8 @@ export async function getTaskVerifyCommit(id: string): Promise<TaskVerifyCommitR
   return request<TaskVerifyCommitResult>(`/api/tasks/${id}/verify-commit`);
 }
 
-export async function mergeTask(id: string): Promise<MergeResult> {
-  return post(`/api/tasks/${id}/merge`) as Promise<MergeResult>;
+export async function mergeTask(id: string, expectedTargetBranch: string): Promise<MergeResult> {
+  return post(`/api/tasks/${id}/merge`, { expectedTargetBranch }) as Promise<MergeResult>;
 }
 
 export async function discardTask(id: string): Promise<{ ok: boolean; message: string }> {

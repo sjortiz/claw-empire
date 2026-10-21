@@ -354,7 +354,7 @@ export default function TaskCard({
               📝
             </button>
           )}
-        {task.status === "review" && (
+        {(task.status === "review" || task.status === "done") && (
           <button
             onClick={() => setShowDiff(true)}
             title={t({

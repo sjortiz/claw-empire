@@ -121,7 +121,6 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   const launchHttpAgent = __ctx.launchHttpAgent;
   const launchApiProviderAgent = __ctx.launchApiProviderAgent;
   const mergeWorktree = __ctx.mergeWorktree;
-  const mergeToDevAndCreatePR = __ctx.mergeToDevAndCreatePR;
   const normalizeOAuthProvider = __ctx.normalizeOAuthProvider;
   const randomDelay = __ctx.randomDelay;
   const recordTaskCreationAudit = __ctx.recordTaskCreationAudit;
@@ -672,7 +671,6 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     projectReviewGateNotifiedAt,
     notifyCeo,
     taskWorktrees,
-    mergeToDevAndCreatePR,
     mergeWorktree,
     cleanupWorktree,
     findTeamLeader,

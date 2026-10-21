@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS projects (
   project_path TEXT NOT NULL,
   core_goal TEXT NOT NULL,
   default_pack_key TEXT NOT NULL DEFAULT 'development',
+  merge_policy TEXT CHECK(merge_policy IS NULL OR merge_policy IN ('auto','manual')),
   last_used_at INTEGER,
   created_at INTEGER DEFAULT (unixepoch()*1000),
   updated_at INTEGER DEFAULT (unixepoch()*1000)

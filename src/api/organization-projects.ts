@@ -384,6 +384,7 @@ export async function createProject(input: {
   create_path_if_missing?: boolean;
   github_repo?: string;
   assignment_mode?: "auto" | "manual";
+  merge_policy?: Project["merge_policy"];
   agent_ids?: string[];
 }): Promise<Project> {
   const j = (await post("/api/projects", input)) as { ok: boolean; project: Project };
@@ -396,6 +397,7 @@ export async function updateProject(
     create_path_if_missing?: boolean;
     github_repo?: string | null;
     assignment_mode?: "auto" | "manual";
+    merge_policy?: Project["merge_policy"];
     agent_ids?: string[];
   },
 ): Promise<Project> {

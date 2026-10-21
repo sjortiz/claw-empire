@@ -424,3 +424,41 @@ describe("ops settings seed init guard", () => {
     }
   });
 });
+
+describe("merge policy settings", () => {
+  it.each(["auto", "manual"])("round-trips %s", (mergePolicy) => {
+    const db = setupDb();
+    try {
+      const { getRoutes, putRoutes } = createHarness(db);
+      const save = createFakeResponse();
+      putRoutes.get("/api/settings")?.({ body: { mergePolicy } }, save);
+      expect(save.statusCode).toBe(200);
+      const read = createFakeResponse();
+      getRoutes.get("/api/settings")?.({}, read);
+      expect(read.payload).toMatchObject({ settings: { mergePolicy } });
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([null, false, "invalid", '"manual"', {}])(
+    "rejects invalid policy %j before writing other settings",
+    (mergePolicy) => {
+      const db = setupDb();
+      try {
+        const { putRoutes } = createHarness(db);
+        db.prepare("INSERT INTO settings VALUES ('mergePolicy', 'manual')").run();
+        const res = createFakeResponse();
+        putRoutes.get("/api/settings")?.({ body: { companyName: "Changed", mergePolicy } }, res);
+        expect(res.statusCode).toBe(400);
+        expect(res.payload).toMatchObject({ error: "invalid_merge_policy" });
+        expect(db.prepare("SELECT value FROM settings WHERE key = 'mergePolicy'").get()).toMatchObject({
+          value: "manual",
+        });
+        expect(db.prepare("SELECT value FROM settings WHERE key = 'companyName'").get()).toBeUndefined();
+      } finally {
+        db.close();
+      }
+    },
+  );
+});

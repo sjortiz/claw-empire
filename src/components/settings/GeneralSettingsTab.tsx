@@ -1,4 +1,4 @@
-import type { CliProvider } from "../../types";
+import type { CliProvider, MergePolicy } from "../../types";
 import type { LocalSettings, SetLocalSettings, TFunction } from "./types";
 
 interface GeneralSettingsTabProps {
@@ -135,6 +135,58 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
               zh: "失败/额度限制时自动切换到下一个 OAuth 账号",
             })}
           />
+        </div>
+
+        <div>
+          <label htmlFor="merge-policy" className="block text-xs mb-1" style={{ color: "var(--th-text-secondary)" }}>
+            {t({
+              ko: "승인 후 병합 정책",
+              en: "Merge policy after approval",
+              ja: "承認後のマージ方針",
+              zh: "批准后的合并策略",
+            })}
+          </label>
+          <select
+            id="merge-policy"
+            aria-describedby="merge-policy-help"
+            value={form.mergePolicy ?? "auto"}
+            onChange={(e) => setForm({ ...form, mergePolicy: e.target.value as MergePolicy })}
+            className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-colors"
+            style={{
+              background: "var(--th-input-bg)",
+              borderColor: "var(--th-input-border)",
+              color: "var(--th-text-primary)",
+            }}
+          >
+            <option value="auto">
+              {t({
+                ko: "자동 병합 (기본값)",
+                en: "Auto-merge (default)",
+                ja: "自動マージ（既定）",
+                zh: "自动合并（默认）",
+              })}
+            </option>
+            <option value="manual">
+              {t({
+                ko: "수동 검토를 위해 브랜치 유지",
+                en: "Keep branch for manual review",
+                ja: "手動レビュー用にブランチを保持",
+                zh: "保留分支以供手动审查",
+              })}
+            </option>
+          </select>
+          <p
+            id="merge-policy-help"
+            className="mt-2 text-xs leading-relaxed"
+            style={{ color: "var(--th-text-secondary)" }}
+          >
+            {t({
+              ko: "자동 병합은 승인 시 프로젝트의 현재 체크아웃 브랜치에 병합합니다. 수동 검토는 작업을 완료하고 프로젝트 체크아웃을 변경하지 않은 채 브랜치를 유지합니다. 프로젝트별로 재정의할 수 있으며 원격으로 푸시하지 않습니다.",
+              en: "Auto-merge merges into the project's current checkout branch on approval. Manual review completes the task and keeps its branch without changing the project checkout. Projects can override this policy. Neither option pushes to a remote.",
+              ja: "自動マージは承認時にプロジェクトの現在のチェックアウトブランチへマージします。手動レビューはタスクを完了し、チェックアウトを変更せずブランチを保持します。プロジェクトごとに上書きできます。どちらもリモートへプッシュしません。",
+              zh: "自动合并会在批准时合并到项目当前检出的分支。手动审查会完成任务并保留分支，不改变项目检出。项目可覆盖此策略。两种选项都不会推送到远程。",
+            })}
+          </p>
         </div>
 
         <div>

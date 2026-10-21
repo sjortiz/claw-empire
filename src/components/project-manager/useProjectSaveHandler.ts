@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { checkProjectPath, createProject, isApiRequestError, updateProject } from "../../api";
-import type { AssignmentMode } from "../../types";
+import type { AssignmentMode, MergePolicy } from "../../types";
 import type { ManualAssignmentWarning, ProjectI18nTranslate } from "./types";
 import type { ProjectManagerPathTools } from "./useProjectManagerPathTools";
 
@@ -9,6 +9,7 @@ interface UseProjectSaveHandlerParams {
   saving: boolean;
   setSaving: Dispatch<SetStateAction<boolean>>;
   assignmentMode: AssignmentMode;
+  mergePolicy: MergePolicy | null;
   getManualAssignmentWarning: () => ManualAssignmentWarning["reason"] | null;
   setManualAssignmentWarning: Dispatch<SetStateAction<ManualAssignmentWarning | null>>;
   projectPath: string;
@@ -31,6 +32,7 @@ export function useProjectSaveHandler({
   saving,
   setSaving,
   assignmentMode,
+  mergePolicy,
   getManualAssignmentWarning,
   setManualAssignmentWarning,
   projectPath,
@@ -119,6 +121,7 @@ export function useProjectSaveHandler({
             core_goal: coreGoal.trim(),
             create_path_if_missing: createPathIfMissing,
             assignment_mode: assignmentMode,
+            merge_policy: mergePolicy,
             agent_ids: assignmentMode === "manual" ? Array.from(selectedAgentIds) : [],
           });
           setSelectedProjectId(updated.id);
@@ -129,6 +132,7 @@ export function useProjectSaveHandler({
             core_goal: coreGoal.trim(),
             create_path_if_missing: createPathIfMissing,
             assignment_mode: assignmentMode,
+            merge_policy: mergePolicy,
             agent_ids: assignmentMode === "manual" ? Array.from(selectedAgentIds) : [],
           });
           setSelectedProjectId(created.id);
@@ -204,6 +208,7 @@ export function useProjectSaveHandler({
       editingProjectId,
       getManualAssignmentWarning,
       loadProjects,
+      mergePolicy,
       name,
       pathTools,
       projectPath,

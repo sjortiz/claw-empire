@@ -52,8 +52,13 @@ function initRepo(basePrefix: string): string {
   return dir;
 }
 
-function createHarness(taskWorktrees: Map<string, { worktreePath: string; branchName: string; projectPath: string }>) {
+function createHarness(
+  taskWorktrees: Map<string, { worktreePath: string; branchName: string; projectPath: string }>,
+  mergeResult = { success: true, message: "merged", conflicts: [] as string[] },
+) {
   const appendLogCalls: Array<{ taskId: string | null; kind: string; message: string }> = [];
+  const mergeCalls: Array<{ projectPath: string; taskId: string }> = [];
+  const cleanupCalls: Array<{ projectPath: string; taskId: string }> = [];
   const getRoutes = new Map<string, RouteHandler>();
   const postRoutes = new Map<string, RouteHandler>();
   const app = {
@@ -68,11 +73,20 @@ function createHarness(taskWorktrees: Map<string, { worktreePath: string; branch
   };
 
   const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, project_path TEXT);
+    CREATE TABLE tasks (id TEXT PRIMARY KEY, project_path TEXT, project_id TEXT, status TEXT);
+  `);
   registerWorktreeAndUsageRoutes({
     app: app as any,
     taskWorktrees,
-    mergeWorktree: () => ({ success: true, message: "merged", conflicts: [] }),
-    cleanupWorktree: () => {},
+    mergeWorktree: (projectPath: string, taskId: string) => {
+      mergeCalls.push({ projectPath, taskId });
+      return mergeResult;
+    },
+    cleanupWorktree: (projectPath: string, taskId: string) => {
+      cleanupCalls.push({ projectPath, taskId });
+    },
     appendTaskLog: (taskId: string | null, kind: string, message: string) => {
       appendLogCalls.push({ taskId, kind, message });
     },
@@ -89,7 +103,7 @@ function createHarness(taskWorktrees: Map<string, { worktreePath: string; branch
     broadcast: () => {},
   } as any);
 
-  return { db, getRoutes, postRoutes, appendLogCalls };
+  return { db, getRoutes, postRoutes, appendLogCalls, mergeCalls, cleanupCalls };
 }
 
 const tempDirs: string[] = [];
@@ -217,13 +231,174 @@ describe("worktree verify-commit route", () => {
       expect(handler).toBeTypeOf("function");
 
       const res = createFakeResponse();
-      handler?.({ params: { id: taskId } }, res);
+      handler?.({ params: { id: taskId }, body: { expectedTargetBranch: "main" } }, res);
 
       expect(res.statusCode).toBe(200);
       expect(appendLogCalls.some((entry) => entry.message.includes("Final branch verification: passed"))).toBe(true);
     } finally {
       db.close();
       tools.cleanupWorktree(repo, taskId);
+    }
+  });
+});
+
+describe("retained worktrees after server restart", () => {
+  function createRetainedTask() {
+    const repo = initRepo("climpire-retained-route-");
+    tempDirs.push(repo);
+    const taskId = "retained-0000-0000-0000-000000000000";
+    const tools = createWorktreeLifecycleTools({ appendTaskLog: () => {}, taskWorktrees: new Map() });
+    const worktreePath = tools.createWorktree(repo, taskId, "Tester")!;
+    fs.writeFileSync(path.join(worktreePath, "retained.ts"), "export const retained = true;\n", "utf8");
+    runGit(worktreePath, ["add", "."]);
+    runGit(worktreePath, ["commit", "-m", "feat: retained task"]);
+    return { repo, taskId, worktreePath };
+  }
+
+  it.each(["task", "project"])("recovers done task diff, verification and list from the %s path", (pathSource) => {
+    const { repo, taskId, worktreePath } = createRetainedTask();
+    const taskWorktrees = new Map();
+    const { db, getRoutes } = createHarness(taskWorktrees);
+    db.prepare("INSERT INTO projects (id, project_path) VALUES (?, ?)").run("project-1", repo);
+    db.prepare("INSERT INTO tasks (id, project_path, project_id, status) VALUES (?, ?, ?, 'done')").run(
+      taskId,
+      pathSource === "task" ? repo : "",
+      "project-1",
+    );
+    const head = runGit(repo, ["rev-parse", "HEAD"]);
+
+    try {
+      const diff = createFakeResponse();
+      getRoutes.get("/api/tasks/:id/diff")?.({ params: { id: taskId } }, diff);
+      expect(diff.payload).toMatchObject({
+        ok: true,
+        hasWorktree: true,
+        branchName: "climpire/retained",
+        targetBranch: "main",
+        projectPath: repo,
+        hasUncommittedChanges: false,
+        uncommittedFiles: [],
+      });
+      expect((diff.payload as { diff: string }).diff).toContain("export const retained = true");
+
+      taskWorktrees.clear();
+      const verification = createFakeResponse();
+      getRoutes.get("/api/tasks/:id/verify-commit")?.({ params: { id: taskId } }, verification);
+      expect(verification.payload).toMatchObject({ hasWorktree: true, verdict: "ok" });
+
+      taskWorktrees.clear();
+      const list = createFakeResponse();
+      getRoutes.get("/api/worktrees")?.({}, list);
+      expect(list.payload).toEqual({
+        ok: true,
+        worktrees: [
+          { taskId, branchName: "climpire/retained", worktreePath: fs.realpathSync(worktreePath), projectPath: repo },
+        ],
+      });
+      expect(runGit(repo, ["rev-parse", "HEAD"])).toBe(head);
+      expect(fs.existsSync(path.join(repo, "retained.ts"))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("shows staged and unstaged tracked changes and warns about untracked files before manual merge", () => {
+    const { repo, taskId, worktreePath } = createRetainedTask();
+    fs.writeFileSync(path.join(worktreePath, "retained.ts"), "export const retained = 'staged';\n", "utf8");
+    runGit(worktreePath, ["add", "retained.ts"]);
+    fs.appendFileSync(path.join(worktreePath, "README.md"), "pending readme\n", "utf8");
+    fs.writeFileSync(path.join(worktreePath, "untracked.ts"), "export const pending = true;\n", "utf8");
+    const { db, getRoutes } = createHarness(new Map());
+    db.prepare("INSERT INTO tasks (id, project_path, status) VALUES (?, ?, 'done')").run(taskId, repo);
+
+    try {
+      const res = createFakeResponse();
+      getRoutes.get("/api/tasks/:id/diff")?.({ params: { id: taskId } }, res);
+
+      expect(res.payload).toMatchObject({ ok: true, hasWorktree: true, hasUncommittedChanges: true });
+      const payload = res.payload as { diff: string; uncommittedFiles: string[] };
+      expect(payload.diff).toContain("# Uncommitted worktree changes (staged and unstaged)");
+      expect(payload.diff).toContain("+export const retained = 'staged';");
+      expect(payload.diff).toContain("+pending readme");
+      expect(payload.uncommittedFiles).toEqual(["README.md", "retained.ts", "untracked.ts"]);
+      expect(fs.existsSync(path.join(repo, "retained.ts"))).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([true, false])("recovers a kept branch for manual merge and cleans up only on success=%s", (success) => {
+    const { repo, taskId, worktreePath } = createRetainedTask();
+    const taskWorktrees = new Map();
+    const { db, postRoutes, mergeCalls, cleanupCalls, appendLogCalls } = createHarness(taskWorktrees, {
+      success,
+      message: success ? "merged" : "conflict; branch preserved",
+      conflicts: success ? [] : ["retained.ts"],
+    });
+    db.prepare("INSERT INTO tasks (id, project_path, status) VALUES (?, ?, 'done')").run(taskId, repo);
+
+    try {
+      const res = createFakeResponse();
+      postRoutes.get("/api/tasks/:id/merge")?.({ params: { id: taskId }, body: { expectedTargetBranch: "main" } }, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.payload).toMatchObject({ ok: success });
+      expect(mergeCalls).toEqual([{ projectPath: repo, taskId }]);
+      expect(cleanupCalls).toEqual(success ? [{ projectPath: repo, taskId }] : []);
+      expect(
+        appendLogCalls.some((entry) =>
+          entry.message.includes(success ? "Manual merge completed" : "Manual merge failed"),
+        ),
+      ).toBe(true);
+      if (!success) {
+        expect(fs.readFileSync(path.join(worktreePath, "retained.ts"), "utf8")).toContain("retained = true");
+        expect(taskWorktrees.get(taskId)?.branchName).toBe("climpire/retained");
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each(["changed", "detached", "missing"])("refuses a %s target before any merge or cleanup", (state) => {
+    const { repo, taskId, worktreePath } = createRetainedTask();
+    fs.writeFileSync(path.join(worktreePath, "pending.ts"), "export const pending = true;\n");
+    const h = createHarness(new Map());
+    h.db.prepare("INSERT INTO tasks (id, project_path, status) VALUES (?, ?, 'done')").run(taskId, repo);
+    try {
+      const diff = createFakeResponse();
+      h.getRoutes.get("/api/tasks/:id/diff")?.({ params: { id: taskId } }, diff);
+      expect(diff.payload).toMatchObject({ targetBranch: "main" });
+      if (state === "changed") runGit(repo, ["checkout", "-b", "other-session"]);
+      if (state === "detached") runGit(repo, ["checkout", "--detach"]);
+      const before = {
+        head: runGit(repo, ["rev-parse", "HEAD"]),
+        index: runGit(repo, ["write-tree"]),
+        pending: runGit(worktreePath, ["status", "--porcelain"]),
+      };
+      const res = createFakeResponse();
+      h.postRoutes.get("/api/tasks/:id/merge")?.(
+        { params: { id: taskId }, body: state === "missing" ? {} : { expectedTargetBranch: "main" } },
+        res,
+      );
+      expect(res.statusCode).toBe(state === "missing" ? 400 : 409);
+      expect(res.payload).toMatchObject(
+        state === "missing"
+          ? { error: "expected_target_required" }
+          : { code: "target_changed", targetBranch: state === "detached" ? null : "other-session" },
+      );
+      expect(h.mergeCalls).toEqual([]);
+      expect(h.cleanupCalls).toEqual([]);
+      expect(runGit(repo, ["rev-parse", "HEAD"])).toBe(before.head);
+      expect(runGit(repo, ["write-tree"])).toBe(before.index);
+      expect(runGit(worktreePath, ["status", "--porcelain"])).toBe(before.pending);
+      const updated = createFakeResponse();
+      h.getRoutes.get("/api/tasks/:id/diff")?.({ params: { id: taskId } }, updated);
+      expect(updated.payload).toMatchObject({
+        ok: true,
+        targetBranch: state === "detached" ? null : state === "changed" ? "other-session" : "main",
+      });
+    } finally {
+      h.db.close();
     }
   });
 });

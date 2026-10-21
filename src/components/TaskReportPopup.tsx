@@ -6,6 +6,7 @@ import type { UiLanguage } from "../i18n";
 import { pickLang } from "../i18n";
 import AgentAvatar from "./AgentAvatar";
 import { resolveReportAgent } from "./task-report-agent";
+import TaskBranchReview from "./taskboard/TaskBranchReview";
 
 interface TaskReportPopupProps {
   report: TaskReportDetail;
@@ -435,6 +436,11 @@ export default function TaskReportPopup({ report, agents, departments, uiLanguag
         </div>
 
         <div className="max-h-[68vh] overflow-y-auto px-6 py-4">
+          {currentReport.task.status === "done" && (
+            <div className="mb-4">
+              <TaskBranchReview key={currentReport.task.id} taskId={currentReport.task.id} language={uiLanguage} />
+            </div>
+          )}
           {activeTab === "planning" ? (
             renderPlanningSummary()
           ) : selectedTeam ? (
