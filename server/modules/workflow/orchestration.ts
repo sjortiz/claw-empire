@@ -617,6 +617,9 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   // Run completion handler — enhanced with review flow + CEO reporting
   // ---------------------------------------------------------------------------
   const runCompleteHandler = createRunCompleteHandler({
+    get shuttingDown() {
+      return __ctx.shuttingDown;
+    },
     taskExecutionSessions,
     startTaskExecutionForAgent,
     getDeptName,
