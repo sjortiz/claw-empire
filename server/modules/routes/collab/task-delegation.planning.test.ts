@@ -30,6 +30,7 @@ describe("directive planner assignment", () => {
     });
     const subordinate = vi.fn();
     const dispatch = vi.fn();
+    const logs = vi.fn();
     const graph = JSON.stringify({
       plan_items: [{ key: "work", title: "Own department work", department_id: "planning", depends_on: [] }],
     });
@@ -39,14 +40,14 @@ describe("directive planner assignment", () => {
       resolveLang: () => "en",
       getDeptName: (id: string) => id,
       getRoleLabel: (role: string) => role,
-      detectTargetDepartments: () => [],
+      detectTargetDepartments: (message: string) => (message.includes("Nexo") ? ["operations"] : []),
       findBestSubordinate: subordinate,
       normalizeTextField: (value: unknown) => value || null,
       resolveProjectFromOptions: () => ({ id: null, name: null, projectPath: null, coreGoal: null }),
       buildRoundGoal: (_goal: unknown, message: string) => message,
       resolveDirectiveProjectPath: () => ({ projectPath: "/workspace/project", source: "explicit" }),
       recordTaskCreationAudit: vi.fn(),
-      appendTaskLog: vi.fn(),
+      appendTaskLog: logs,
       broadcast: vi.fn(),
       l: (ko: string[], en: string[]) => ({ ko, en }),
       pickL: (pool: { en: string[] }) => pool.en[0],
@@ -98,5 +99,20 @@ describe("directive planner assignment", () => {
     vi.advanceTimersByTime(1000);
     expect(start).toHaveBeenCalledTimes(4);
     expect(start.mock.calls[3][0]).toBe(root.id);
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL").run();
+    handler(leader, "Fix the first two open issues on Nexo, #84 and #85. Add tests, one branch per issue.", "");
+    vi.advanceTimersByTime(1000);
+    expect(
+      logs.mock.calls.some((call) =>
+        String(call[2]).includes("Planning pre-check related departments: operations, dev"),
+      ),
+    ).toBe(true);
+    expect(
+      logs.mock.calls.some((call) =>
+        String(call[2]).includes("Development required by code-change intent; units=issue-84, issue-85"),
+      ),
+    ).toBe(true);
+    expect(logs.mock.calls.some((call) => String(call[2]).includes("Implementation planning blocked:"))).toBe(true);
+    expect(start).toHaveBeenCalledTimes(4);
   });
 });

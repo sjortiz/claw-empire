@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { parsePlanningGraph } from "./planning-graph.ts";
+import { implementationIntentFromTask } from "./implementation-intent.ts";
+import { parsePlanningGraph, validateImplementationCoverage } from "./planning-graph.ts";
 import type { Lang } from "../../../types/lang.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
 import { buildVideoFinalRenderDescription, buildVideoFinalRenderTitle } from "../packs/video-final-render.ts";
@@ -124,6 +125,16 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
     });
 
     const graph = planningNotes.map(parsePlanningGraph).find((items) => items !== null);
+    const coverageErrors = validateImplementationCoverage(
+      graph ?? null,
+      implementationIntentFromTask(task.title, task.description),
+    );
+    if (coverageErrors.length) {
+      const message = `Implementation coverage blocked before task creation: ${coverageErrors.join(" ")}`;
+      appendTaskLog(taskId, "error", message);
+      notifyCeo(message, taskId);
+      throw new Error(message);
+    }
     if (graph) {
       if (
         task.workflow_pack_key === "video_preprod" &&

@@ -1,4 +1,5 @@
-import { parsePlanningGraph } from "../agents/planning-graph.ts";
+import { implementationIntentFromTask, implementationPlanningRules } from "../agents/implementation-intent.ts";
+import { parsePlanningGraph, validateImplementationCoverage } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
 type CreatePlannedApprovalToolsDeps = {
@@ -83,11 +84,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     void (async () => {
       let meetingId: string | null = null;
       const leaders = getTaskReviewLeaders(taskId, departmentId);
-      if (leaders.length === 0) {
-        reviewInFlight.delete(lockKey);
-        onApproved([]);
-        return;
-      }
       try {
         const round = (reviewRoundState.get(lockKey) ?? 0) + 1;
         reviewRoundState.set(lockKey, round);
@@ -105,6 +101,16 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               assigned_agent_id: string | null;
             }
           | undefined;
+        const implementationIntent = implementationIntentFromTask(taskTitle, taskCtx?.description);
+        if (leaders.length === 0) {
+          if (implementationIntent.requiresImplementation)
+            throw new Error(
+              "Implementation planning blocked: no eligible planning leaders; Development code coverage cannot be approved.",
+            );
+          reviewInFlight.delete(lockKey);
+          onApproved([]);
+          return;
+        }
         const assignedPlanner = taskCtx?.assigned_agent_id
           ? db.prepare("SELECT * FROM agents WHERE id = ?").get(taskCtx.assigned_agent_id)
           : null;
@@ -234,6 +240,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             const draftPrompt = buildMeetingPrompt(leader, {
               meetingType: "planned",
               planningPhase: "draft",
+              ...implementationIntent,
               round,
               taskTitle,
               taskDescription,
@@ -273,6 +280,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
           meetingType: "planned",
           planningPhase: "consolidation",
+          ...implementationIntent,
           round,
           taskTitle,
           taskDescription,
@@ -282,12 +290,39 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           stanceHint: "Keep kickoff moving and show concrete planned next steps instead of blocking.",
           lang,
         });
-        const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
+        let summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
         if (abortIfInactive()) return;
         if (summaryRun?.error || isTimeoutRun(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
-        const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
+        let graph: ReturnType<typeof parsePlanningGraph> = null;
+        for (let attempt = 0; attempt <= 2; attempt++) {
+          let reasons: string[];
+          try {
+            graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
+            reasons = validateImplementationCoverage(graph, implementationIntent);
+            if (graph) {
+              for (const item of graph) {
+                if (!db.prepare("SELECT id FROM departments WHERE id = ?").get(item.department_id))
+                  reasons.push(
+                    `Unknown department ${item.department_id} for ${item.key}; use an existing department ID.`,
+                  );
+              }
+            }
+          } catch (error) {
+            if (!implementationIntent.requiresImplementation) throw error;
+            reasons = [error instanceof Error ? error.message : String(error)];
+          }
+          if (reasons.length === 0) break;
+          appendTaskLog(taskId, "error", `Planning graph rejected (attempt ${attempt + 1}): ${reasons.join(" ")}`);
+          if (attempt === 2)
+            throw new Error(`Implementation coverage blocked after correction attempts: ${reasons.join(" ")}`);
+          const repairPrompt = `${summaryPrompt}\n\n[Correct rejected planning graph]\n${reasons.join("\n")}\n${implementationPlanningRules(implementationIntent)}\nPrevious rejected output:\n${String(summaryRun?.text ?? "")}\nReturn a complete corrected graph preserving valid items and real prerequisite keys.`;
+          summaryRun = await runMeetingOneShotWithRetry(planningLeader, repairPrompt, "summary");
+          if (abortIfInactive()) return;
+          if (summaryRun?.error || isTimeoutRun(summaryRun))
+            throw new Error(summaryRun?.error || "Planning correction did not complete");
+        }
         const summaryText = chooseSafeReply(summaryRun, lang, "summary", planningLeader);
         speak(planningLeader, "report", "all", null, summaryText);
         const planItems = graph ? [JSON.stringify({ plan_items: graph })] : collectPlannedActionItems(transcript, 10);
@@ -337,6 +372,9 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         }
         const msg = err?.message ? String(err.message) : String(err);
         appendTaskLog(taskId, "error", `Planned meeting error: ${msg}`);
+        db.prepare(
+          "UPDATE agents SET current_task_id = NULL WHERE current_task_id = ? AND status IN ('idle', 'break')",
+        ).run(taskId);
         const errLang = resolveLang(taskTitle);
         notifyCeo(
           pickL(

@@ -7,7 +7,11 @@ import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../types/lang.ts";
 import { resolveWorkflowPackKeyForTask } from "../../workflow/packs/task-pack-resolver.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../workflow/core/video-skill-bootstrap.ts";
-import { resolveConstrainedAgentScopeForTask } from "../core/tasks/execution-run-auto-assign.ts";
+import {
+  isOAuthBackedProviderReady,
+  loadActiveOAuthAccountIdsByProvider,
+  resolveConstrainedAgentScopeForTask,
+} from "../core/tasks/execution-run-auto-assign.ts";
 import type { AgentRow } from "./direct-chat.ts";
 import type { L10n } from "./language-policy.ts";
 import type { SubtaskRow } from "./subtask-summary.ts";
@@ -217,8 +221,66 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     const batchTitle = subtasks.length > 1 ? `${firstTitle} +${subtasks.length - 1}` : firstTitle;
     const projectCandidateAgentIds = getConstrainedAgentIds(parentTask, targetDeptId);
     const manualScoped = Array.isArray(projectCandidateAgentIds);
+    // A Development-owned graph item must reach an executable Development agent.
+    // Project pools constrain ownership; they cannot substitute another department.
+    const pickDevelopmentAgent = (): AgentRow | null => {
+      const scope = getConstrainedAgentIds(parentTask, targetDeptId);
+      if (Array.isArray(scope) && scope.length === 0) return null;
+      const agents = db
+        .prepare(
+          `SELECT * FROM agents WHERE department_id = 'dev'
+           AND status IN ('idle', 'break') AND (current_task_id IS NULL OR current_task_id = '')
+           ORDER BY CASE status WHEN 'idle' THEN 0 ELSE 1 END,
+           CASE role WHEN 'senior' THEN 0 WHEN 'junior' THEN 1 WHEN 'intern' THEN 2 ELSE 3 END,
+           created_at ASC`,
+        )
+        .all() as AgentRow[];
+      const oauthAccounts = loadActiveOAuthAccountIdsByProvider(db);
+      return (
+        agents.find(
+          (agent) => (!scope || scope.includes(agent.id)) && isOAuthBackedProviderReady(agent, oauthAccounts),
+        ) ?? null
+      );
+    };
+    const waitForAssignment = (reason: string, delay: number) => {
+      let changed = false;
+      for (const sid of subtaskIds) {
+        const result = db
+          .prepare(
+            "UPDATE subtasks SET status = 'blocked', blocked_reason = ?, assigned_agent_id = NULL WHERE id = ? AND (status != 'blocked' OR blocked_reason IS NOT ? OR assigned_agent_id IS NOT NULL)",
+          )
+          .run(reason, sid, reason);
+        if (result.changes > 0) {
+          changed = true;
+          broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
+        }
+      }
+      if (changed) appendTaskLog(parentTask.id, "system", `Department assignment blocked (${targetDeptId}): ${reason}`);
+      const retry = setTimeout(
+        () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
+        delay,
+      );
+      retry.unref?.();
+    };
+    const developmentBlockedReason = pickL(
+      l(
+        ["적격 개발 구현 에이전트를 기다리는 중; 개발 소유권과 프로젝트 에이전트 범위를 유지합니다"],
+        [
+          "Waiting for an eligible Development implementation agent; Development ownership and project agent scope are required",
+        ],
+        ["適格な開発実装エージェント待ち。開発部門の所有権とプロジェクト範囲を維持します"],
+        ["等待符合条件的开发实施代理；保留开发部门归属和项目代理范围"],
+      ),
+      lang,
+    );
 
-    const crossLeader = findTeamLeader(targetDeptId, projectCandidateAgentIds);
+    const selectedLeader = findTeamLeader(targetDeptId, projectCandidateAgentIds);
+    const crossLeader =
+      targetDeptId === "dev"
+        ? selectedLeader?.department_id === "dev"
+          ? selectedLeader
+          : pickDevelopmentAgent()
+        : selectedLeader;
     if (!crossLeader) {
       const currentParent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(parentTask.id) as
         | { status: string }
@@ -230,24 +292,19 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         onBatchDone?.();
         return;
       }
-      const reason = pickL(
-        l(
-          ["부서 책임자 배정을 기다리는 중"],
-          ["Waiting for an eligible department leader"],
-          ["部門責任者の割り当て待ち"],
-          ["等待符合条件的部门负责人"],
-        ),
-        lang,
-      );
-      for (const sid of subtaskIds) {
-        db.prepare("UPDATE subtasks SET status = 'blocked', blocked_reason = ? WHERE id = ?").run(reason, sid);
-        broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
-      }
-      const retry = setTimeout(
-        () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
-        15_000,
-      );
-      retry.unref?.();
+      const reason =
+        targetDeptId === "dev"
+          ? developmentBlockedReason
+          : pickL(
+              l(
+                ["부서 책임자 배정을 기다리는 중"],
+                ["Waiting for an eligible department leader"],
+                ["部門責任者の割り当て待ち"],
+                ["等待符合条件的部门负责人"],
+              ),
+              lang,
+            );
+      waitForAssignment(reason, 15_000);
       return;
     }
 
@@ -259,9 +316,11 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     const manualPoolFallback =
       manualScoped && projectCandidateAgentIds.length > 0
         ? pickManualPoolAgent(projectCandidateAgentIds, targetDeptId, originLeader ? [originLeader.id] : []) ||
-          pickManualPoolAgent(projectCandidateAgentIds, null, originLeader ? [originLeader.id] : []) ||
+          (targetDeptId !== "dev"
+            ? pickManualPoolAgent(projectCandidateAgentIds, null, originLeader ? [originLeader.id] : [])
+            : null) ||
           pickManualPoolAgent(projectCandidateAgentIds, targetDeptId) ||
-          pickManualPoolAgent(projectCandidateAgentIds, null)
+          (targetDeptId !== "dev" ? pickManualPoolAgent(projectCandidateAgentIds, null) : null)
         : null;
     const crossCoordinator = crossLeaderAllowed ? crossLeader : (crossSub ?? manualPoolFallback ?? crossLeader);
     const originLeaderName = originLeader
@@ -331,9 +390,11 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
       const manualPoolFallbackAtRun =
         manualScoped && projectCandidateAgentIds.length > 0
           ? pickManualPoolAgent(projectCandidateAgentIds, targetDeptId, originLeader ? [originLeader.id] : []) ||
-            pickManualPoolAgent(projectCandidateAgentIds, null, originLeader ? [originLeader.id] : []) ||
+            (targetDeptId !== "dev"
+              ? pickManualPoolAgent(projectCandidateAgentIds, null, originLeader ? [originLeader.id] : [])
+              : null) ||
             pickManualPoolAgent(projectCandidateAgentIds, targetDeptId) ||
-            pickManualPoolAgent(projectCandidateAgentIds, null)
+            (targetDeptId !== "dev" ? pickManualPoolAgent(projectCandidateAgentIds, null) : null)
           : null;
       // Re-read candidates at launch: another department/directive may have
       // reserved the same agent during the acknowledgement delay.
@@ -343,16 +404,16 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         return fresh && ["idle", "break"].includes(fresh.status) && !fresh.current_task_id ? fresh : null;
       };
       const execAgent =
-        availableAgent(crossSubAtRun) ??
-        availableAgent(crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
-        availableAgent(crossCoordinator);
+        targetDeptId === "dev"
+          ? pickDevelopmentAgent()
+          : (availableAgent(crossSubAtRun) ??
+            availableAgent(crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
+            availableAgent(crossCoordinator));
       if (!execAgent) {
-        appendTaskLog(parentTask.id, "system", `Department batch waiting for an available agent (${targetDeptId})`);
-        const retry = setTimeout(
-          () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
+        waitForAssignment(
+          targetDeptId === "dev" ? developmentBlockedReason : `Waiting for an available agent (${targetDeptId})`,
           5_000,
         );
-        retry.unref?.();
         return;
       }
       const execName = getAgentDisplayName(execAgent, lang);
@@ -456,8 +517,8 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
 
       for (const sid of subtaskIds) {
         db.prepare(
-          "UPDATE subtasks SET delegated_task_id = ?, status = 'in_progress', blocked_reason = NULL WHERE id = ?",
-        ).run(delegatedTaskId, sid);
+          "UPDATE subtasks SET delegated_task_id = ?, assigned_agent_id = ?, status = 'in_progress', blocked_reason = NULL WHERE id = ?",
+        ).run(delegatedTaskId, execAgent.id, sid);
         broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
       }
       delegatedTaskToSubtask.set(delegatedTaskId, subtaskIds[0]);

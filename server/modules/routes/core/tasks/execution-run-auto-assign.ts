@@ -30,6 +30,7 @@ export type AutoAssignableAgent = {
 };
 
 type CandidateTaskShape = {
+  id?: string;
   workflow_pack_key?: string | null;
   department_id?: string | null;
   project_id?: string | null;
@@ -432,16 +433,38 @@ export function selectAutoAssignableAgentForTask(
   task: CandidateTaskShape,
 ): AutoAssignSelectionResult | null {
   const packKey = normalizePackKey(task.workflow_pack_key);
-  const preferredDeptIds = buildPreferredDepartmentOrder(packKey, task.department_id);
+  const implementationOwnerRequired = requiresDevelopmentImplementationOwner(db, task);
+  const preferredDeptIds = implementationOwnerRequired
+    ? ["dev"]
+    : buildPreferredDepartmentOrder(packKey, task.department_id);
   const constrainedAgentIds = resolveConstrainedAgentScopeForTask(db, task);
 
   const preferredCandidate = selectCandidate(db, preferredDeptIds, constrainedAgentIds, packKey);
   if (preferredCandidate) {
     return { packKey, agent: preferredCandidate };
   }
+  if (implementationOwnerRequired) return null;
 
   const fallbackCandidate = selectCandidate(db, [], constrainedAgentIds, packKey);
   if (!fallbackCandidate) return null;
 
   return { packKey, agent: fallbackCandidate };
+}
+
+/** Accepted Development graph children cannot be re-run under a fallback department. */
+export function requiresDevelopmentImplementationOwner(db: DbLike, task: CandidateTaskShape): boolean {
+  if (!task.id) return false;
+  try {
+    return Boolean(
+      db
+        .prepare(
+          `SELECT 1 FROM subtasks s JOIN task_logs l ON l.task_id = s.task_id
+       WHERE s.delegated_task_id = ? AND s.target_department_id = 'dev'
+       AND l.kind = 'system' AND l.message LIKE 'Planned graph seeded %' LIMIT 1`,
+        )
+        .get(task.id),
+    );
+  } catch {
+    return false;
+  }
 }
