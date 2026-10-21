@@ -10,7 +10,7 @@ export type DecisionOption = {
 
 export interface DecisionInboxRouteItem {
   id: string;
-  kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick";
+  kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick" | "review_auto_started";
   created_at: number;
   summary: string;
   agent_id?: string | null;
@@ -39,6 +39,10 @@ export type ReviewRoundDecisionItem = DecisionInboxRouteItem & {
   kind: "review_round_pick";
   meeting_id: string;
   review_round: number;
+};
+
+export type ReviewAutoStartNoticeItem = DecisionInboxRouteItem & {
+  kind: "review_auto_started";
 };
 
 export type DecisionStateStatus = "collecting" | "ready" | "failed";

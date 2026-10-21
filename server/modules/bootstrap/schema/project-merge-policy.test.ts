@@ -50,3 +50,31 @@ describe("project merge policy schema", () => {
     }
   });
 });
+
+describe("project review automation schema", () => {
+  it("adds inheriting overrides to legacy projects and the notices table", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      applyBaseSchema(db);
+      db.exec("ALTER TABLE projects DROP COLUMN review_auto_start");
+      db.exec("ALTER TABLE projects DROP COLUMN review_auto_apply");
+      db.prepare("INSERT INTO projects (id, name, project_path, core_goal) VALUES (?, ?, ?, ?)").run(
+        "existing",
+        "Existing project",
+        "/project",
+        "Existing goal",
+      );
+
+      applyTaskSchemaMigrations(db);
+      applyTaskSchemaMigrations(db);
+      expect(db.prepare("SELECT review_auto_start, review_auto_apply FROM projects").get()).toMatchObject({
+        review_auto_start: null,
+        review_auto_apply: null,
+      });
+      expect(() => db.exec("UPDATE projects SET review_auto_apply = 'auto'")).toThrow();
+      expect(db.prepare("SELECT COUNT(*) AS count FROM review_auto_start_notices").get()).toMatchObject({ count: 0 });
+    } finally {
+      db.close();
+    }
+  });
+});

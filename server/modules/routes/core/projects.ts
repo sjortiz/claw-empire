@@ -6,6 +6,7 @@ import path from "node:path";
 import { getAssignedAgentIdsByProjectIds } from "../shared/project-assignments.ts";
 import { createProjectRouteHelpers } from "./projects/helpers.ts";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
+import { isReviewAutomationOverride } from "../../workflow/core/review-automation.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
 type NormalizeTextField = (value: unknown) => string | null;
@@ -216,6 +217,13 @@ export function registerProjectRoutes({
     if (mergePolicy !== null && mergePolicy !== "auto" && mergePolicy !== "manual") {
       return res.status(400).json({ error: "invalid_merge_policy" });
     }
+    const reviewAutoStart = body.review_auto_start ?? null;
+    const reviewAutoApply = body.review_auto_apply ?? null;
+    for (const value of [reviewAutoStart, reviewAutoApply]) {
+      if (value !== null && !isReviewAutomationOverride(value)) {
+        return res.status(400).json({ error: "invalid_review_automation" });
+      }
+    }
     if (!isPathInsideAllowedRoots(projectPath)) {
       return res.status(403).json({
         error: "project_path_outside_allowed_roots",
@@ -272,11 +280,26 @@ export function registerProjectRoutes({
       db.prepare(
         `
       INSERT INTO projects (
-        id, name, project_path, core_goal, default_pack_key, assignment_mode, last_used_at, created_at, updated_at, github_repo, merge_policy
+        id, name, project_path, core_goal, default_pack_key, assignment_mode, last_used_at, created_at, updated_at, github_repo, merge_policy,
+        review_auto_start, review_auto_apply
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      ).run(id, name, projectPath, coreGoal, defaultPackKey, assignmentMode, t, t, t, githubRepo, mergePolicy);
+      ).run(
+        id,
+        name,
+        projectPath,
+        coreGoal,
+        defaultPackKey,
+        assignmentMode,
+        t,
+        t,
+        t,
+        githubRepo,
+        mergePolicy,
+        reviewAutoStart,
+        reviewAutoApply,
+      );
 
       if (assignmentMode === "manual" && agentIds.length > 0) {
         const insertPA = db.prepare("INSERT INTO project_agents (project_id, agent_id, created_at) VALUES (?, ?, ?)");
@@ -365,6 +388,15 @@ export function registerProjectRoutes({
         return res.status(400).json({ error: "invalid_merge_policy" });
       }
       updates.push("merge_policy = ?");
+      params.push(value);
+    }
+    for (const column of ["review_auto_start", "review_auto_apply"]) {
+      if (!(column in body)) continue;
+      const value = body[column];
+      if (value !== null && !isReviewAutomationOverride(value)) {
+        return res.status(400).json({ error: "invalid_review_automation" });
+      }
+      updates.push(`${column} = ?`);
       params.push(value);
     }
     if ("assignment_mode" in body) {
