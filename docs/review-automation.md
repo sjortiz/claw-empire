@@ -39,8 +39,13 @@ With the setting on:
   children, video artifacts). A held task starts later, when the gate runs again.
   No notice is posted for held tasks.
 
-The gate runs when a task reaches Review. Turning the setting on does not release
-a gate that is already waiting; approve that one from the Decision Inbox.
+The gate runs when a task reaches Review and on existing workflow retries, such
+as delegated-subtask completion. Saving the setting does not itself retry gates
+that are already waiting. Approve an already-waiting gate from the Decision Inbox,
+or let the next workflow gate pass use the newly effective setting. Until that
+pass starts a meeting, the manual inbox item remains available. Once the meeting
+starts, the running-meeting guard suppresses that manual item and the informational
+auto-start notice remains available for acknowledgment.
 
 ## Apply all review items automatically
 
