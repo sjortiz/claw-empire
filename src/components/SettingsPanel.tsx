@@ -10,8 +10,9 @@ import GatewaySettingsTab from "./settings/GatewaySettingsTab";
 import GeneralSettingsTab from "./settings/GeneralSettingsTab";
 import OAuthSettingsTab from "./settings/OAuthSettingsTab";
 import SettingsTabNav from "./settings/SettingsTabNav";
-import type { AccountDraftMap, AccountDraftPatch, LocalSettings, SettingsTab } from "./settings/types";
+import type { AccountDraftMap, AccountDraftPatch, LocalSettings } from "./settings/types";
 import { useApiProvidersState } from "./settings/useApiProvidersState";
+import { useSettingsTab } from "./settings/useSettingsTab";
 
 interface SettingsPanelProps {
   settings: CompanySettings;
@@ -33,7 +34,7 @@ export default function SettingsPanel({
   const [form, setForm] = useState<LocalSettings>(settings as LocalSettings);
   const { t, locale: localeTag } = useI18n(form.language);
   const [saved, setSaved] = useState(false);
-  const [tab, setTab] = useState<SettingsTab>(oauthResult ? "oauth" : "general");
+  const [tab, setTab] = useSettingsTab(Boolean(oauthResult));
 
   const [oauthStatus, setOauthStatus] = useState<OAuthStatus | null>(null);
   const [oauthLoading, setOauthLoading] = useState(false);
@@ -124,7 +125,7 @@ export default function SettingsPanel({
         setModels(null);
       }
     }
-  }, [oauthResult]);
+  }, [oauthResult, setTab]);
 
   useEffect(() => {
     if (tab === "oauth" && !oauthStatus) {
