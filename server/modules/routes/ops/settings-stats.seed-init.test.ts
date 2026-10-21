@@ -488,3 +488,117 @@ describe("merge policy settings", () => {
     },
   );
 });
+
+describe("review automation settings", () => {
+  it.each(["reviewAutoStart", "reviewAutoApply"])("round-trips %s as a boolean", (key) => {
+    const db = setupDb();
+    try {
+      const { getRoutes, putRoutes } = createHarness(db);
+      for (const value of [true, false]) {
+        const save = createFakeResponse();
+        putRoutes.get("/api/settings")?.({ body: { [key]: value } }, save);
+        expect(save.statusCode).toBe(200);
+        const read = createFakeResponse();
+        getRoutes.get("/api/settings")?.({}, read);
+        expect(read.payload).toMatchObject({ settings: { [key]: value } });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([null, "true", 1, "on", {}])("rejects non-boolean %j before writing other settings", (value) => {
+    const db = setupDb();
+    try {
+      const { putRoutes } = createHarness(db);
+      const res = createFakeResponse();
+      putRoutes.get("/api/settings")?.({ body: { companyName: "Changed", reviewAutoStart: value } }, res);
+      expect(res.statusCode).toBe(400);
+      expect(res.payload).toMatchObject({ error: "invalid_review_automation", key: "reviewAutoStart" });
+      expect(db.prepare("SELECT value FROM settings WHERE key = 'companyName'").get()).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("Headroom settings contract", () => {
+  it("returns defaults and persists normalized settings while omission preserves them", () => {
+    const db = setupDb();
+    try {
+      const { getRoutes, putRoutes } = createHarness(db);
+      const initial = createFakeResponse();
+      getRoutes.get("/api/settings")?.({}, initial);
+      expect(initial.payload).toMatchObject({
+        settings: {
+          headroom: {
+            enabled: false,
+            proxyUrl: "http://127.0.0.1:8787",
+            providers: { claude: true, codex: false, api: true },
+          },
+        },
+      });
+      const save = createFakeResponse();
+      putRoutes.get("/api/settings")?.(
+        { body: { headroom: { enabled: true, proxyUrl: "http://localhost:9898/v1/", providers: { claude: false } } } },
+        save,
+      );
+      expect(save.statusCode).toBe(200);
+      const update = createFakeResponse();
+      putRoutes.get("/api/settings")?.({ body: { ceoName: "Updated" } }, update);
+      const read = createFakeResponse();
+      getRoutes.get("/api/settings")?.({}, read);
+      expect(read.payload).toMatchObject({
+        settings: {
+          ceoName: "Updated",
+          headroom: {
+            enabled: true,
+            proxyUrl: "http://localhost:9898",
+            providers: { claude: false, codex: false, api: true },
+          },
+        },
+      });
+    } finally {
+      db.close();
+    }
+  });
+  it.each([
+    { enabled: false, proxyUrl: "https://user:secret@example.com" },
+    { enabled: false, proxyUrl: "http://localhost:8787?token=secret" },
+    { enabled: false, proxyUrl: "ftp://localhost" },
+    { enabled: "true" },
+    { providers: { api: "false" } },
+    null,
+  ])("rejects invalid config %j before writing any settings", (headroom) => {
+    const db = setupDb();
+    try {
+      const { putRoutes } = createHarness(db);
+      const save = createFakeResponse();
+      putRoutes.get("/api/settings")?.({ body: { ceoName: "Must not save", headroom } }, save);
+      expect(save.statusCode).toBe(400);
+      expect(save.payload).toEqual({ ok: false, error: "invalid_headroom" });
+      expect(db.prepare("SELECT value FROM settings WHERE key = 'ceoName'").get()).toBeUndefined();
+      expect(db.prepare("SELECT value FROM settings WHERE key = 'headroom'").get()).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+  it("provides a sanitized status endpoint with defaults", async () => {
+    const db = setupDb();
+    try {
+      const { getRoutes } = createHarness(db);
+      const res = createFakeResponse();
+      await getRoutes.get("/api/headroom/status")?.({}, res);
+      expect(res.payload).toEqual({
+        state: "disabled",
+        reason: "disabled",
+        checkedAt: null,
+        version: null,
+        tokensSaved: null,
+        capabilities: { claude: true, codex: false, api: true },
+      });
+    } finally {
+      db.close();
+    }
+  });
+});

@@ -15,6 +15,12 @@ import { createDecisionStateHelpers } from "./decision-inbox/state-helpers.ts";
 import { createProjectReviewPlanningHelpers } from "./decision-inbox/project-review-planning.ts";
 import { createReviewRoundPlanningHelpers } from "./decision-inbox/review-round-planning.ts";
 import { readYoloModeEnabled, runYoloDecisionAutopilot } from "./decision-inbox/yolo-mode.ts";
+import {
+  createReviewAutoStartNoticeItems,
+  handleReviewAutoStartNoticeReply,
+  isReviewAutoApplyConfigured,
+  runReviewAutoApplyAutopilot,
+} from "./decision-inbox/review-automation.ts";
 
 export type { DecisionReplyBridgeInput, DecisionReplyBridgeResult };
 
@@ -121,6 +127,8 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
       queueReviewRoundPlanningConsolidation,
     });
 
+  const { buildReviewAutoStartNoticeItems } = createReviewAutoStartNoticeItems({ db, getPreferredLanguage, pickL, l });
+
   function openSupplementRound(
     taskId: string,
     assignedAgentId: string | null,
@@ -176,6 +184,7 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
       ...buildProjectReviewDecisionItems(),
       ...buildReviewRoundDecisionItems(),
       ...buildTimeoutResumeDecisionItems(),
+      ...buildReviewAutoStartNoticeItems(),
     ];
     items.sort((a, b) => b.created_at - a.created_at);
     return items;
@@ -278,6 +287,10 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
       return { status, payload };
     }
 
+    if (handleReviewAutoStartNoticeReply({ res, currentItem, selectedOption, deps: { db, nowMs } })) {
+      return { status, payload };
+    }
+
     if (
       handleTimeoutResumeDecisionReply({
         res,
@@ -310,9 +323,31 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
 
   startBackgroundNoticeSync();
 
+  let reviewAutoApplyInFlight = false;
+
+  const runReviewAutoApply = () => {
+    if (reviewAutoApplyInFlight) return;
+    if (!isReviewAutoApplyConfigured(db)) return;
+    reviewAutoApplyInFlight = true;
+    try {
+      runReviewAutoApplyAutopilot({
+        db,
+        getReviewRoundItems: buildReviewRoundDecisionItems,
+        applyDecisionReply,
+        appendTaskLog,
+      });
+    } catch (err) {
+      console.warn(`[decision-review-auto-apply] autopilot failed: ${String(err)}`);
+    } finally {
+      reviewAutoApplyInFlight = false;
+    }
+  };
+
   let yoloAutopilotInFlight = false;
 
   const runYoloAutopilot = () => {
+    // The narrower review auto-apply setting gets first pick of review rounds.
+    runReviewAutoApply();
     if (yoloAutopilotInFlight) return;
     if (!readYoloModeEnabled(db)) return;
     yoloAutopilotInFlight = true;

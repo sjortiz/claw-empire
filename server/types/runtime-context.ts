@@ -236,7 +236,15 @@ export interface WorkflowAgentExports {
   seedApprovedPlanSubtasks: (...args: any[]) => any;
   seedReviewRevisionSubtasks: (...args: any[]) => any;
   codexThreadToSubtask: Map<string, string>;
-  spawnCliAgent: (...args: any[]) => any;
+  spawnCliAgent: (
+    taskId: string,
+    provider: string,
+    prompt: string,
+    cwd: string,
+    logFilePath: string,
+    model?: string,
+    reasoningLevel?: string,
+  ) => Promise<ChildProcess>;
   normalizeOAuthProvider: (...args: any[]) => any;
   getNextOAuthLabel: (...args: any[]) => any;
   getOAuthAccounts: (...args: any[]) => any;
@@ -271,6 +279,7 @@ export interface WorkflowOrchestrationExports {
   crossDeptNextCallbacks: Map<string, () => void>;
   subtaskDelegationCallbacks: Map<string, () => void>;
   subtaskDelegationDispatchInFlight: Set<string>;
+  reviewInFlight: Set<string>;
   delegatedTaskToSubtask: Map<string, string>;
   subtaskDelegationCompletionNoticeSent: Set<string>;
   meetingPresenceUntil: Map<string, number>;
@@ -322,8 +331,10 @@ export interface RouteCollabExports {
   getDeptName: (...args: any[]) => any;
   getDeptRoleConstraint: (...args: any[]) => any;
   formatTaskSubtaskProgressSummary: (...args: any[]) => any;
+  maybeNotifyAllSubtasksComplete: (...args: any[]) => any;
   processSubtaskDelegations: (...args: any[]) => any;
   reconcileCrossDeptSubtasks: (...args: any[]) => any;
+  startCrossDeptCooperation: (...args: any[]) => any;
   recoverCrossDeptQueueAfterMissingCallback: (...args: any[]) => any;
   resolveProjectPath: (...args: any[]) => any;
   handleReportRequest: (...args: any[]) => any;

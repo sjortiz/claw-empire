@@ -1,4 +1,10 @@
+import { useState } from "react";
+import { DEFAULT_HEADROOM, type HeadroomSettings } from "../../lib/headroom";
 import type { CliProvider, MergePolicy } from "../../types";
+import HeadroomSettingsSection from "./HeadroomSettingsSection";
+import { ToggleSettingCard } from "./ToggleSettingCard";
+import { HEADROOM_COPY } from "./headroom-copy";
+import { validateProxyUrl } from "./headroom-settings";
 import type { LocalSettings, SetLocalSettings, TFunction } from "./types";
 
 interface GeneralSettingsTabProps {
@@ -7,43 +13,25 @@ interface GeneralSettingsTabProps {
   setForm: SetLocalSettings;
   saved: boolean;
   onSave: () => void;
+  savedHeadroom?: HeadroomSettings;
 }
 
-interface ToggleSettingCardProps {
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-  title?: string;
-}
-
-function ToggleSettingCard({ label, checked, onToggle, title }: ToggleSettingCardProps) {
-  return (
-    <div
-      className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 sm:px-4"
-      style={{ borderColor: "var(--th-card-border)", background: "var(--th-input-bg)" }}
-    >
-      <label className="text-sm" style={{ color: "var(--th-text-secondary)" }}>
-        {label}
-      </label>
-      <button
-        type="button"
-        aria-pressed={checked}
-        aria-label={label}
-        onClick={onToggle}
-        className={`relative h-6 w-11 rounded-full transition-colors ${checked ? "bg-blue-500" : "bg-slate-600"}`}
-        title={title}
-      >
-        <div
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
-            checked ? "left-[22px]" : "left-0.5"
-          }`}
-        />
-      </button>
-    </div>
-  );
-}
-
-export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: GeneralSettingsTabProps) {
+export default function GeneralSettingsTab({
+  t,
+  form,
+  setForm,
+  saved,
+  onSave,
+  savedHeadroom = DEFAULT_HEADROOM,
+}: GeneralSettingsTabProps) {
+  const headroom = form.headroom ?? DEFAULT_HEADROOM;
+  const invalidUrl = validateProxyUrl(headroom.proxyUrl).error !== null;
+  const [savedHeadroomChanged, setSavedHeadroomChanged] = useState(false);
+  function save() {
+    if (invalidUrl) return;
+    setSavedHeadroomChanged(JSON.stringify(headroom) !== JSON.stringify(savedHeadroom));
+    onSave();
+  }
   return (
     <>
       <section
@@ -104,6 +92,40 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
               en: "When enabled, the planning lead auto-analyzes decision steps and proceeds automatically.",
               ja: "有効にすると、企画リードが意思決定段階を自動分析して次段階へ進めます。",
               zh: "启用后，规划负责人会自动分析决策步骤并推进到下一阶段。",
+            })}
+          />
+
+          <ToggleSettingCard
+            label={t({
+              ko: "리뷰 회의 자동 시작",
+              en: "Start review meetings automatically",
+              ja: "レビュー会議を自動開始",
+              zh: "自动启动评审会议",
+            })}
+            checked={form.reviewAutoStart === true}
+            onToggle={() => setForm({ ...form, reviewAutoStart: !(form.reviewAutoStart === true) })}
+            title={t({
+              ko: "프로젝트의 모든 작업이 Review에 도달하면 CEO 승인 없이 팀장 회의를 시작하고 의사결정 인박스에 알림을 남깁니다. 프로젝트별로 재정의할 수 있습니다.",
+              en: "Once all of a project's tasks reach Review, start the team-lead meeting without CEO approval and leave a notice in the Decision Inbox. Projects can override this.",
+              ja: "プロジェクトの全タスクがReviewに達したら、CEO承認なしでチームリーダー会議を開始し、Decision Inboxに通知を残します。プロジェクトごとに上書きできます。",
+              zh: "项目所有任务进入 Review 后，无需 CEO 批准即启动组长会议，并在 Decision Inbox 留下通知。项目可覆盖此设置。",
+            })}
+          />
+
+          <ToggleSettingCard
+            label={t({
+              ko: "리뷰 항목 모두 자동 반영",
+              en: "Apply all review items automatically",
+              ja: "レビュー項目をすべて自動反映",
+              zh: "自动应用全部评审项",
+            })}
+            checked={form.reviewAutoApply === true}
+            onToggle={() => setForm({ ...form, reviewAutoApply: !(form.reviewAutoApply === true) })}
+            title={t({
+              ko: "리뷰 라운드의 모든 의견을 보완 작업으로 자동 반영합니다. 끄면 반영할 항목을 CEO가 직접 선택합니다. 프로젝트별로 재정의할 수 있습니다.",
+              en: "Apply every item of a review round as revision work. When off, the CEO picks which items to apply. Projects can override this.",
+              ja: "レビューラウンドの全項目を補完作業として自動反映します。オフの場合はCEOが反映項目を選択します。プロジェクトごとに上書きできます。",
+              zh: "将评审轮次的全部意见自动转为整改工作。关闭时由 CEO 选择要应用的项。项目可覆盖此设置。",
             })}
           />
 
@@ -237,15 +259,27 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
         </div>
       </section>
 
+      <HeadroomSettingsSection
+        t={t}
+        value={headroom}
+        savedValue={savedHeadroom}
+        locale={form.language}
+        onChange={(headroom) => setForm((previous) => ({ ...previous, headroom }))}
+      />
+
       <div className="flex justify-end gap-3">
         {saved && (
           <span className="text-green-400 text-sm self-center">
-            ✅ {t({ ko: "저장 완료", en: "Saved", ja: "保存完了", zh: "已保存" })}
+            {savedHeadroomChanged
+              ? t(HEADROOM_COPY["Saved variant"])
+              : t({ ko: "저장 완료", en: "Saved", ja: "保存完了", zh: "已保存" })}
           </span>
         )}
         <button
-          onClick={onSave}
-          className="px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30"
+          onClick={save}
+          disabled={invalidUrl}
+          title={invalidUrl ? t(HEADROOM_COPY["Save blocked"]) : undefined}
+          className="disabled:opacity-50 disabled:cursor-not-allowed px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30"
         >
           {t({ ko: "저장", en: "Save", ja: "保存", zh: "保存" })}
         </button>

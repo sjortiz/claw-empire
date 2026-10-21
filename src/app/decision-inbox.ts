@@ -9,13 +9,13 @@ function baseWorkflowDecisionItem(item: DecisionInboxRouteItem): Omit<DecisionIn
     agentId: item.agent_id ?? null,
     agentName:
       item.agent_name ||
-      (item.kind === "project_review_ready"
+      (item.kind === "project_review_ready" || item.kind === "review_auto_started"
         ? item.project_name || item.project_id || "Planning Lead"
         : item.task_title || item.task_id || "Task"),
     agentNameKo:
       item.agent_name_ko ||
       item.agent_name ||
-      (item.kind === "project_review_ready"
+      (item.kind === "project_review_ready" || item.kind === "review_auto_started"
         ? item.project_name || item.project_id || "기획팀장"
         : item.task_title || item.task_id || "작업"),
     agentAvatar:
@@ -77,6 +77,9 @@ function localizedOptionLabel(
         zh: "保留在 Inbox",
       });
     }
+  }
+  if (kind === "review_auto_started" && action === "acknowledge_review_auto_start") {
+    return pickLang(language, { ko: "확인", en: "Acknowledge", ja: "確認", zh: "确认" });
   }
   if (kind === "review_round_pick" && action === "skip_to_next_round") {
     return pickLang(language, {

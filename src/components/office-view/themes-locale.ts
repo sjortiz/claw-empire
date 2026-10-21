@@ -1,3 +1,4 @@
+import { parseMeetingVerdict, meetingVerdictNeedsRevision } from "../../lib/meeting-verdict";
 import { type Graphics, type Text, TextStyle } from "pixi.js";
 import type { UiLanguage } from "../../i18n";
 import type { MeetingReviewDecision } from "../../types";
@@ -325,23 +326,8 @@ function pickLocale<T>(locale: SupportedLocale, map: Record<SupportedLocale, T>)
 }
 
 function inferReviewDecision(line?: string | null): MeetingReviewDecision {
-  const cleaned = line?.replace(/\s+/g, " ").trim();
-  if (!cleaned) return "reviewing";
-  if (
-    /(보완|수정|보류|리스크|미흡|미완|추가.?필요|재검토|중단|불가|hold|revise|revision|changes?\s+requested|required|pending|risk|block|missing|incomplete|not\s+ready|保留|修正|风险|补充|未完成|暂缓|差し戻し)/i.test(
-      cleaned,
-    )
-  ) {
-    return "hold";
-  }
-  if (
-    /(승인|통과|문제없|진행.?가능|배포.?가능|approve|approved|lgtm|ship\s+it|go\s+ahead|承認|批准|通过|可发布)/i.test(
-      cleaned,
-    )
-  ) {
-    return "approved";
-  }
-  return "reviewing";
+  const verdict = parseMeetingVerdict(line ?? "");
+  return verdict ? (meetingVerdictNeedsRevision(verdict) ? "hold" : "approved") : "reviewing";
 }
 
 function resolveMeetingDecision(
@@ -349,7 +335,6 @@ function resolveMeetingDecision(
   decision?: MeetingReviewDecision | null,
   line?: string,
 ): MeetingReviewDecision | undefined {
-  if (phase !== "review") return undefined;
   return decision ?? inferReviewDecision(line);
 }
 
@@ -358,7 +343,7 @@ function getMeetingBadgeStyle(
   phase: "kickoff" | "review",
   decision?: MeetingReviewDecision,
 ): { fill: number; stroke: number; text: string } {
-  if (phase !== "review") {
+  if (phase !== "review" && !decision) {
     return {
       fill: 0xf59e0b,
       stroke: 0x111111,
@@ -370,20 +355,20 @@ function getMeetingBadgeStyle(
     return {
       fill: 0x34d399,
       stroke: 0x14532d,
-      text: pickLocale(locale, LOCALE_TEXT.meetingBadgeApproved),
+      text: "APPROVE",
     };
   }
   if (decision === "hold") {
     return {
       fill: 0xf97316,
       stroke: 0x7c2d12,
-      text: pickLocale(locale, LOCALE_TEXT.meetingBadgeHold),
+      text: "REVISE",
     };
   }
   return {
-    fill: 0x60a5fa,
-    stroke: 0x1e3a8a,
-    text: pickLocale(locale, LOCALE_TEXT.meetingBadgeReviewing),
+    fill: 0x94a3b8,
+    stroke: 0x475569,
+    text: "NO VERDICT",
   };
 }
 

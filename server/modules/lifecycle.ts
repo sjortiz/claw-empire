@@ -1,3 +1,6 @@
+import { sweepExpiredWorkflowWaits } from "./workflow/core/persistent-wait.ts";
+import { sweepReadyRoots } from "./workflow/core/task-resume.ts";
+import { resumeReviewsOnStartup } from "./workflow/core/review-startup.ts";
 import type { RuntimeContext } from "../types/runtime-context.ts";
 import type { IncomingMessage } from "node:http";
 import type { WebSocket as WsSocket } from "ws";
@@ -360,27 +363,7 @@ export function startLifecycle(ctx: RuntimeContext): void {
     recoverOrphanInProgressTasks("startup");
     recoverOrphanWorkingAgents("startup");
 
-    const reviewTasks = db
-      .prepare(
-        `
-    SELECT id, title
-    FROM tasks
-    WHERE status = 'review'
-    ORDER BY updated_at ASC
-  `,
-      )
-      .all() as Array<{ id: string; title: string }>;
-
-    reviewTasks.forEach((task, idx) => {
-      const delay = 1200 + idx * 400;
-      setTimeout(() => {
-        const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as
-          | { status: string }
-          | undefined;
-        if (!current || current.status !== "review") return;
-        finishReview(task.id, task.title);
-      }, delay);
-    });
+    resumeReviewsOnStartup({ db, finishReview, appendTaskLog });
   }
 
   function sweepPendingSubtaskDelegations(): void {
@@ -390,9 +373,9 @@ export function startLifecycle(ctx: RuntimeContext): void {
     SELECT DISTINCT t.id
     FROM tasks t
     JOIN subtasks s ON s.task_id = t.id
-    WHERE t.status IN ('planned', 'collaborating', 'in_progress', 'review')
+    WHERE t.status IN ('planned', 'pending', 'collaborating', 'in_progress', 'review')
       AND s.target_department_id IS NOT NULL
-      AND s.status != 'done'
+      AND s.status NOT IN ('done', 'cancelled')
       AND (s.delegated_task_id IS NULL OR s.delegated_task_id = '')
     ORDER BY t.updated_at ASC
     LIMIT 80
@@ -457,6 +440,10 @@ export function startLifecycle(ctx: RuntimeContext): void {
   setTimeout(recoverInterruptedWorkflowOnStartup, 3_000);
   setInterval(() => recoverOrphanInProgressTasks("interval"), IN_PROGRESS_ORPHAN_SWEEP_MS);
   setInterval(() => recoverOrphanWorkingAgents("interval"), IN_PROGRESS_ORPHAN_SWEEP_MS);
+  setTimeout(() => sweepExpiredWorkflowWaits(ctx), 4_000);
+  setInterval(() => sweepExpiredWorkflowWaits(ctx), SUBTASK_DELEGATION_SWEEP_MS);
+  setTimeout(() => sweepReadyRoots(ctx), 4_000);
+  setInterval(() => sweepReadyRoots(ctx), SUBTASK_DELEGATION_SWEEP_MS);
   setTimeout(sweepPendingSubtaskDelegations, 4_000);
   setInterval(sweepPendingSubtaskDelegations, SUBTASK_DELEGATION_SWEEP_MS);
   setTimeout(autoAssignAgentProviders, 4_000);

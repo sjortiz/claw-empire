@@ -45,6 +45,7 @@ export interface MeetingPromptOptions {
   planningPhase?: "draft" | "consolidation";
   requiresImplementation?: boolean;
   implementationUnits?: ImplementationUnit[];
+  verdictRequired?: boolean;
   round: number;
   taskTitle: string;
   taskDescription: string | null;

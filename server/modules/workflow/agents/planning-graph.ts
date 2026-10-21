@@ -17,8 +17,10 @@ export function parsePlanningGraph(text: string): PlanningItem[] | null {
   const source = fence?.[1] ?? text.trim();
   if (!source.startsWith("{") || !source.includes('"plan_items"')) return null;
   const parsed = JSON.parse(source) as { plan_items?: unknown };
-  if (!Array.isArray(parsed.plan_items) || parsed.plan_items.length === 0 || parsed.plan_items.length > 30) {
-    throw new Error("Invalid planning graph items: provide between 1 and 30 plan_items.");
+  // Size is a consolidation target, not a graph validity constraint. The
+  // meeting asks once to merge oversized plans without discarding valid work.
+  if (!Array.isArray(parsed.plan_items) || parsed.plan_items.length === 0) {
+    throw new Error("Invalid planning graph items");
   }
   const keys = new Set<string>();
   const items = parsed.plan_items.map((raw: unknown): PlanningItem => {

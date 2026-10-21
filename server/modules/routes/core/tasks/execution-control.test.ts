@@ -72,6 +72,8 @@ function createFakeDb(state: FakeDbState): {
 } {
   return {
     prepare(sql: string) {
+      if (sql.startsWith("SELECT message FROM task_logs"))
+        return { all: () => [], get: () => undefined, run: () => ({ changes: 0 }) };
       if (sql.startsWith("SELECT * FROM tasks WHERE id = ?")) {
         return {
           get: (id: string) => state.tasks.get(id),

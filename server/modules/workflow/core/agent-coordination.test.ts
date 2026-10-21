@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -93,7 +94,7 @@ describe("agent coordination prompts and continuation", () => {
     expect(start).not.toHaveBeenCalled();
   });
   function createStarter(worktreePath: string | null) {
-    const spawn = vi.fn(() => ({ on: vi.fn() }));
+    const spawn = vi.fn(async () => ({ on: vi.fn() }) as unknown as ChildProcess);
     const createWorktree = vi.fn();
     const tools = createExecutionStartTaskTools({
       db,

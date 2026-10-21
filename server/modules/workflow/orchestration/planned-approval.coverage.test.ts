@@ -3,6 +3,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
 import { createPlannedApprovalTools } from "./planned-approval.ts";
+import { formatMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
+
+const approveVerdict = formatMeetingVerdict({ verdict: "approve", blocking_items: [], non_blocking_notes: [] });
+const withVerdict = (text: string) => `${text}\n${approveVerdict}`;
 import { createSubtaskSeedingTools } from "../agents/subtask-seeding.ts";
 import { createMeetingLeaderSelectionTools } from "./meetings/leader-selection.ts";
 import { hasUnfinishedDependencies } from "../../routes/collab/subtask-dependencies.ts";
@@ -27,9 +31,12 @@ function setup(outputs: string[], noLeaders = false, options: { holdDrafts?: boo
   db.prepare("UPDATE tasks SET description = ? WHERE id = 'root'").run(options.description ?? `[CEO] ${nexoDirective}`);
   const releases = new Map<string, (result: { text: string }) => void>();
   const run = vi.fn((agent: any, _prompt?: string) => {
-    if (agent.id === "planner") return Promise.resolve({ text: outputs.shift() ?? "No code work" });
-    if (options.holdDrafts) return new Promise<{ text: string }>((resolve) => releases.set(agent.id, resolve));
-    return Promise.resolve({ text: "Department draft" });
+    if (agent.id === "planner") return Promise.resolve({ text: withVerdict(outputs.shift() ?? "No code work") });
+    if (options.holdDrafts)
+      return new Promise<{ text: string }>((resolve) =>
+        releases.set(agent.id, (result) => resolve({ text: withVerdict(result.text) })),
+      );
+    return Promise.resolve({ text: withVerdict("Department draft") });
   });
   const selection = createMeetingLeaderSelectionTools({
     db,
@@ -38,6 +45,7 @@ function setup(outputs: string[], noLeaders = false, options: { holdDrafts?: boo
   });
   const tools = createPlannedApprovalTools({
     db,
+    classifyMeetingReviewDecision: () => "approved",
     reviewInFlight: new Set(),
     reviewRoundState: new Map(),
     getTaskReviewLeaders: () =>
@@ -130,12 +138,14 @@ it("rejects deficient consolidation then accepts and persists only a corrected p
   );
 });
 it("never approves deficient graphs after all correction attempts", async () => {
-  const state = setup(["No code work", "Still no code"]);
-  await vi.waitFor(() => expect(state.finish).toHaveBeenCalledWith("meeting", "failed"));
+  // Two summaries per meeting; the failed meeting is retried once, then needs attention.
+  const state = setup(["No code work", "Still no code", "No code work", "Still no code"]);
+  await vi.waitFor(() =>
+    expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "pending" }),
+  );
   expect(state.approved).not.toHaveBeenCalled();
-  expect(state.run.mock.calls.filter(([agent]) => agent.id === "planner")).toHaveLength(2);
+  expect(state.run.mock.calls.filter(([agent]) => agent.id === "planner")).toHaveLength(4);
   expect(state.notify.mock.calls.at(-1)?.[0]).toContain("blocked after correction attempts");
-  expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "planned" });
   expect(db.prepare("SELECT COUNT(*) AS n FROM subtasks").get()).toEqual({ n: 0 });
 });
 it("cannot bypass coverage when no planning leader exists", async () => {
@@ -209,10 +219,14 @@ it.each(["unknown-department", "cycle", "dangling-key", "no-tests"])(
       graph.push({ key: "verify", title: "Verify completed fix #84", department_id: "operations", depends_on: [] });
     }
     const output = JSON.stringify({ plan_items: graph });
-    const state = setup([output, output]);
-    await vi.waitFor(() => expect(state.finish).toHaveBeenCalledWith("meeting", "failed"));
+    // Two summaries per meeting; a failed planning meeting is retried once before it needs attention.
+    const state = setup([output, output, output, output]);
+    await vi.waitFor(() =>
+      expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "pending" }),
+    );
+    expect(state.finish).toHaveBeenCalledWith("meeting", "failed");
     expect(state.approved).not.toHaveBeenCalled();
-    expect(state.run.mock.calls.filter(([agent]) => agent.id === "planner")).toHaveLength(2);
+    expect(state.run.mock.calls.filter(([agent]) => agent.id === "planner")).toHaveLength(4);
     expect(state.notify.mock.calls.at(-1)?.[0]).toMatch(
       {
         "unknown-department": /missing_department.*fix84/,
@@ -221,7 +235,9 @@ it.each(["unknown-department", "cycle", "dangling-key", "no-tests"])(
         "no-tests": /fix84.*regression tests/,
       }[failure]!,
     );
-    expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "planned" });
+    expect(db.prepare("SELECT planning_attention_reason FROM tasks WHERE id = 'root'").get()).toEqual({
+      planning_attention_reason: expect.stringContaining("fix84"),
+    });
     expect(db.prepare("SELECT COUNT(*) AS n FROM subtasks").get()).toEqual({ n: 0 });
   },
 );

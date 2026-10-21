@@ -61,6 +61,22 @@ describe("buildDirectReplyPrompt", () => {
 });
 
 describe("buildMeetingPrompt", () => {
+  it.each(["planned", "review"] as const)(
+    "requires final verdict lines on every %s turn, including opening and summary",
+    (meetingType) => {
+      const prompt = createTools().buildMeetingPrompt(createAgent(), {
+        meetingType,
+        round: 1,
+        taskTitle: "Task",
+        taskDescription: "Context",
+        transcript: [],
+        turnObjective: "Open or summarize the meeting",
+        lang: "en",
+      });
+      expect(prompt).toContain("single standalone final line: APPROVE or REVISE");
+    },
+  );
+
   it("keeps complete department drafts in consolidation instead of applying speech limits", () => {
     const tools = createTools();
     const draft = "department implementation details\n".repeat(200) + "item: late_api; depends_on: late_schema";

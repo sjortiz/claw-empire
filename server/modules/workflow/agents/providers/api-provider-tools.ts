@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { prepareHeadroomRoute } from "../../../headroom.ts";
 import path from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { decryptSecret } from "../../../../oauth/helpers.ts";
@@ -14,6 +15,7 @@ type DbLike = {
 type CreateApiProviderToolsDeps = {
   db: DbLike;
   logsDir: string;
+  appendTaskLog?: (taskId: string, kind: string, message: string) => void;
   activeProcesses: Map<string, ChildProcess>;
   broadcast: (event: string, payload: unknown) => void;
   normalizeStreamChunk: (raw: Buffer | string, opts?: { dropCliNoise?: boolean }) => string;
@@ -41,6 +43,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
   const {
     db,
     logsDir,
+    appendTaskLog,
     activeProcesses,
     broadcast,
     normalizeStreamChunk,
@@ -227,24 +230,68 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
 
     const req = buildApiProviderRequest(provider, model, prompt, projectPath, effort);
 
-    const resp = await fetch(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: req.body,
+    const route = await prepareHeadroomRoute(db, provider.type === "google" ? "google" : "api", {
+      upstreamUrl: req.url,
       signal,
     });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`API provider '${provider.name}' error (${resp.status}): ${text}`);
+    signal.throwIfAborted();
+    // Keep diagnostics out of safeWriteOverride, which one-shot uses as model text.
+    const routeWarning = (message: string) => {
+      createSafeLogStreamOps(logStream).safeWrite(`${message}\n`);
+      if (taskId) {
+        appendTaskLog?.(taskId, "system", message);
+        broadcast("cli_output", { task_id: taskId, stream: "stderr", data: `${message}\n` });
+      }
+    };
+    if (route.reason && !["disabled", "provider_disabled", "unsupported_provider"].includes(route.reason))
+      routeWarning(`Headroom unavailable; continuing directly (${route.reason}).`);
+    const directHeaders = Object.fromEntries(
+      Object.entries(req.headers).filter(([key]) => !key.toLowerCase().startsWith("x-headroom-")),
+    );
+    const upstream = new URL(req.url);
+    const url = route.proxyUrl ? `${route.proxyUrl}${upstream.pathname}` : req.url;
+    const headers = route.proxyUrl ? { ...directHeaders, "X-Headroom-Base-Url": upstream.origin } : directHeaders;
+    let resp: Response;
+    try {
+      resp = await fetch(url, { method: "POST", headers, body: req.body, signal, redirect: "error" });
+    } catch (error) {
+      // ECONNREFUSED proves the proxy connection was never established. Other
+      // network failures can follow upstream processing, so must not be replayed.
+      const code = (error as { cause?: { code?: string } })?.cause?.code;
+      signal.throwIfAborted();
+      if (!route.proxyUrl || code !== "ECONNREFUSED") throw new Error("API provider connection failed");
+      routeWarning("Headroom unavailable; continuing directly (connection_refused).");
+      try {
+        resp = await fetch(req.url, {
+          method: "POST",
+          headers: directHeaders,
+          body: req.body,
+          signal,
+          redirect: "error",
+        });
+      } catch {
+        signal.throwIfAborted();
+        throw new Error("API provider connection failed");
+      }
     }
 
-    if (provider.type === "anthropic") {
-      await parseAnthropicSSEStream(resp.body!, signal, safeWrite, taskId);
-    } else if (provider.type === "google") {
-      await parseGeminiSSEStream(resp.body!, signal, safeWrite, taskId);
-    } else {
-      await parseSSEStream(resp.body!, signal, safeWrite, taskId);
+    if (!resp.ok) {
+      await resp.body?.cancel();
+      // Never echo provider errors: bodies may contain credentials or prompts.
+      throw new Error(`API provider error (${resp.status})`);
+    }
+
+    try {
+      if (provider.type === "anthropic") {
+        await parseAnthropicSSEStream(resp.body!, signal, safeWrite, taskId);
+      } else if (provider.type === "google") {
+        await parseGeminiSSEStream(resp.body!, signal, safeWrite, taskId);
+      } else {
+        await parseSSEStream(resp.body!, signal, safeWrite, taskId);
+      }
+    } catch {
+      signal.throwIfAborted();
+      throw new Error("API provider stream failed");
     }
 
     safeWrite(`\n---\n[api:${provider.type}] Done.\n`);

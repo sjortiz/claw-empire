@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -44,7 +45,7 @@ describe("QA acceptance: cooperation late-note delivery (AC-QA-001)", () => {
       taskWorktrees.set(taskId, { projectPath, worktreePath, branchName: `climpire/${taskId.slice(0, 8)}` });
       return worktreePath;
     });
-    const launch = vi.fn((..._args: any[]) => ({ on: vi.fn() }));
+    const launch = vi.fn(async (..._args: any[]) => ({ on: vi.fn() }) as unknown as ChildProcess);
     const appendTaskLog = vi.fn();
     const shared = {
       db,
@@ -141,7 +142,7 @@ describe("QA acceptance: cooperation late-note delivery (AC-QA-001)", () => {
     );
 
     const createWorktree = vi.fn();
-    const continuationSpawn = vi.fn((..._args: any[]) => ({ on: vi.fn() }));
+    const continuationSpawn = vi.fn(async (..._args: any[]) => ({ on: vi.fn() }) as unknown as ChildProcess);
     const starter = createExecutionStartTaskTools({
       ...shared,
       createWorktree,

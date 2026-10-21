@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS projects (
   core_goal TEXT NOT NULL,
   default_pack_key TEXT NOT NULL DEFAULT 'development',
   merge_policy TEXT CHECK(merge_policy IS NULL OR merge_policy IN ('auto','manual')),
+  review_auto_start TEXT CHECK(review_auto_start IS NULL OR review_auto_start IN ('on','off')),
+  review_auto_apply TEXT CHECK(review_auto_apply IS NULL OR review_auto_apply IN ('on','off')),
   last_used_at INTEGER,
   created_at INTEGER DEFAULT (unixepoch()*1000),
   updated_at INTEGER DEFAULT (unixepoch()*1000)
@@ -101,6 +103,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   output_format TEXT,
   project_path TEXT,
   result TEXT,
+  planning_attention_reason TEXT,
+  planning_meeting_failures INTEGER NOT NULL DEFAULT 0,
   started_at INTEGER,
   completed_at INTEGER,
   created_at INTEGER DEFAULT (unixepoch()*1000),
@@ -272,7 +276,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
   title TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('pending','in_progress','done','blocked')),
+    CHECK(status IN ('pending','in_progress','done','blocked','cancelled')),
   assigned_agent_id TEXT REFERENCES agents(id),
   blocked_reason TEXT,
   depends_on TEXT NOT NULL DEFAULT '[]',
@@ -317,6 +321,14 @@ CREATE TABLE IF NOT EXISTS project_review_decision_events (
   created_at INTEGER DEFAULT (unixepoch()*1000)
 );
 
+CREATE TABLE IF NOT EXISTS review_auto_start_notices (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  task_ids_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  acknowledged_at INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS review_round_decision_states (
   meeting_id TEXT PRIMARY KEY REFERENCES meeting_minutes(id) ON DELETE CASCADE,
   snapshot_hash TEXT NOT NULL,
@@ -352,6 +364,8 @@ CREATE INDEX IF NOT EXISTS idx_project_review_decision_states_updated
   ON project_review_decision_states(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_review_decision_events_project
   ON project_review_decision_events(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_review_auto_start_notices_pending
+  ON review_auto_start_notices(acknowledged_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_review_round_decision_states_updated
   ON review_round_decision_states(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, updated_at DESC);

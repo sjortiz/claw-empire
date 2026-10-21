@@ -1,3 +1,7 @@
+import type { RuntimeContext } from "../../../types/runtime-context.ts";
+import { isTaskAutoRecoveryHeld } from "../../workflow/core/task-resume.ts";
+import { createPersistentWait } from "../../workflow/core/persistent-wait.ts";
+import { pickAvailableDepartmentAgent } from "./available-department-agent.ts";
 import { buildAgentCoordinationContext } from "../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../workflow/core/reasoning-effort.ts";
 import fs from "node:fs";
@@ -79,17 +83,7 @@ interface BatchDeps {
   };
   ensureClaudeMd: (projectPath: string, worktreePath: string) => void;
   getProviderModelConfig: () => Record<string, { model?: string; reasoningLevel?: string }>;
-  spawnCliAgent: (
-    taskId: string,
-    provider: string,
-    prompt: string,
-    cwd: string,
-    logFilePath: string,
-    model?: string,
-    reasoningLevel?: string,
-  ) => {
-    on: (event: "close", listener: (code: number | null) => void) => void;
-  };
+  spawnCliAgent: RuntimeContext["spawnCliAgent"];
   getNextHttpAgentPid: () => number;
   launchApiProviderAgent: (
     taskId: string,
@@ -162,6 +156,8 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     buildSubtaskDelegationPrompt,
   } = deps;
 
+  const persistentWait = createPersistentWait({ db, nowMs, appendTaskLog, notifyCeo, broadcast });
+
   function getConstrainedAgentIds(parentTask: ParentTaskRow, targetDeptId: string | null): string[] | null {
     return resolveConstrainedAgentScopeForTask(db as any, {
       workflow_pack_key: parentTask.workflow_pack_key ?? null,
@@ -208,6 +204,10 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     parentTask: ParentTaskRow,
     onBatchDone?: () => void,
   ): void {
+    if (isTaskAutoRecoveryHeld(deps, parentTask.id)) {
+      onBatchDone?.();
+      return;
+    }
     const lang = resolveLang(parentTask.description ?? parentTask.title);
     if (subtasks.length === 0) {
       onBatchDone?.();
@@ -217,6 +217,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     const targetDeptId = subtasks[0].target_department_id!;
     const targetDeptName = getDeptName(targetDeptId, parentTask.workflow_pack_key ?? null);
     const subtaskIds = subtasks.map((st) => st.id);
+    const waitKey = `department-batch:${targetDeptId}:${[...subtaskIds].sort().join(",")}`;
     const firstTitle = subtasks[0].title;
     const batchTitle = subtasks.length > 1 ? `${firstTitle} +${subtasks.length - 1}` : firstTitle;
     const projectCandidateAgentIds = getConstrainedAgentIds(parentTask, targetDeptId);
@@ -256,11 +257,16 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         }
       }
       if (changed) appendTaskLog(parentTask.id, "system", `Department assignment blocked (${targetDeptId}): ${reason}`);
-      const retry = setTimeout(
-        () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
-        delay,
-      );
-      retry.unref?.();
+      if (
+        !persistentWait.wait(
+          parentTask.id,
+          waitKey,
+          `Department batch waiting (${targetDeptId}): ${reason}`,
+          () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
+          { delayMs: delay },
+        )
+      )
+        onBatchDone?.();
     };
     const developmentBlockedReason = pickL(
       l(
@@ -369,7 +375,11 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     });
 
     const ackDelay = 1500 + Math.random() * 1000;
-    setTimeout(() => {
+    setTimeout(async () => {
+      if (isTaskAutoRecoveryHeld(deps, parentTask.id)) {
+        onBatchDone?.();
+        return;
+      }
       const latestParent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(parentTask.id) as
         | { status?: string }
         | undefined;
@@ -408,7 +418,8 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
           ? pickDevelopmentAgent()
           : (availableAgent(crossSubAtRun) ??
             availableAgent(crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
-            availableAgent(crossCoordinator));
+            availableAgent(crossCoordinator) ??
+            pickAvailableDepartmentAgent(db, targetDeptId, projectCandidateAgentIds, parentTask.workflow_pack_key));
       if (!execAgent) {
         waitForAssignment(
           targetDeptId === "dev" ? developmentBlockedReason : `Waiting for an available agent (${targetDeptId})`,
@@ -416,6 +427,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         );
         return;
       }
+      persistentWait.clear(parentTask.id, waitKey);
       const execName = getAgentDisplayName(execAgent, lang);
 
       sendAgentMessage(
@@ -718,7 +730,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
               on: (event: "close", listener: (code: number | null) => void) => void;
             } | null = null;
             try {
-              child = spawnCliAgent(
+              child = await spawnCliAgent(
                 delegatedTaskId,
                 execProvider,
                 sessionPrompt,
@@ -728,6 +740,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
                 delegateReasoningLevel,
               );
             } catch (error) {
+              if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") return;
               failDelegatedLaunch(error, "cli_spawn");
               return;
             }

@@ -11,6 +11,7 @@ import { createMeetingLeaderSelectionTools } from "../../workflow/orchestration/
 import { createSubtaskSeedingTools } from "../../workflow/agents/subtask-seeding.ts";
 import { createMeetingMinutesTools } from "../../workflow/orchestration/meetings/minutes.ts";
 import { nexoDirective, nexoSupportPlan } from "../../../test/implementation-planning-fixture.ts";
+import { formatMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 
 vi.mock("../../../config/runtime.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../config/runtime.ts")>()),
@@ -68,7 +69,9 @@ it.each([
   const supportOnly = JSON.stringify({ plan_items: nexoSupportPlan() });
   // Every department draft, consolidation and correction repeats the deficient original plan.
   // Success must come from production validation/repair, never from a helpful model stub.
-  const runAgentOneShot = vi.fn(async (_agent: { id: string }, _prompt: string) => ({ text: supportOnly }));
+  const runAgentOneShot = vi.fn(async (_agent: { id: string }, _prompt: string) => ({
+    text: `${supportOnly}\n${formatMeetingVerdict({ verdict: "approve", blocking_items: [], non_blocking_notes: [] })}`,
+  }));
   const appendTaskProjectMemo = vi.fn();
   const minutes = createMeetingMinutesTools({
     ...common,
@@ -79,6 +82,7 @@ it.each([
   });
   const meeting = createPlannedApprovalTools({
     ...common,
+    classifyMeetingReviewDecision: () => "approved",
     reviewInFlight: new Set(),
     reviewRoundState: new Map(),
     getTaskReviewLeaders: (id, dept) => selection.getTaskReviewLeaders(id, dept, { fallbackAll: false }),

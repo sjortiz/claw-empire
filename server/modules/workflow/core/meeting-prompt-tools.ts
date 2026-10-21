@@ -1,4 +1,5 @@
 import { implementationPlanningRules } from "../agents/implementation-intent.ts";
+import { meetingVerdictInstruction } from "../meeting-verdict.ts";
 import type { AgentRow, MeetingPromptOptions } from "./conversation-types.ts";
 import type { Lang } from "../../../types/lang.ts";
 
@@ -91,7 +92,8 @@ export function createMeetingPromptTools(deps: CreateMeetingPromptToolsDeps) {
               ? "- Include the requested JSON plan_items block. Preserve all department items and prerequisite keys."
               : "- Include every department work item and its prerequisite keys. Do not shorten the plan into meeting speech.",
           ]
-        : ["- Return one natural chat message only (no JSON, no markdown).", "- Keep it concise: 1-3 sentences."]),
+        : ["- Return one concise natural chat message (1-3 sentences)."]),
+      meetingVerdictInstruction(lang),
       "- Make your stance explicit and actionable.",
       "- Do not call tools, run commands, or inspect files. Respond from the provided context only.",
       opts.stanceHint ? `Required stance: ${opts.stanceHint}` : "",

@@ -85,6 +85,19 @@ describe("parallel department delegation", () => {
     // A retained original poll sees the claimed status and cannot start twice.
   });
 
+  it("resumes a pending root immediately when the last revision completes", () => {
+    const tools = fixture();
+    db.exec(`INSERT INTO agents (id,name,role,cli_provider,status) VALUES ('owner','Owner','senior','codex','idle');
+      UPDATE tasks SET status = 'pending', assigned_agent_id = 'owner' WHERE id = 'root';
+      UPDATE subtasks SET title = '[Review Revision] Apply feedback', status = 'done';
+      UPDATE subtasks SET status = 'pending' WHERE id = 'qa';`);
+    tools.maybeNotifyAllSubtasksComplete("root");
+    expect(resumeRoot).not.toHaveBeenCalled();
+    db.exec("UPDATE subtasks SET status = 'cancelled' WHERE id = 'qa'");
+    tools.maybeNotifyAllSubtasksComplete("root");
+    expect(resumeRoot).toHaveBeenCalledOnce();
+  });
+
   it("keeps final render deferred and does not restart inactive tasks", () => {
     const tools = fixture();
     db.prepare("UPDATE subtasks SET title = '[VIDEO_FINAL_RENDER]' WHERE id = 'qa'").run();

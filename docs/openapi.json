@@ -158,6 +158,102 @@
         },
         "required": ["id", "name"],
         "additionalProperties": true
+      },
+      "HeadroomSettings": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "proxyUrl": {
+            "type": "string",
+            "format": "uri",
+            "default": "http://127.0.0.1:8787",
+            "description": "HTTP(S) proxy base URL without credentials, query or fragment. A trailing /v1 is normalized away; validated even when disabled."
+          },
+          "providers": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "claude": {
+                "type": "boolean",
+                "default": true
+              },
+              "codex": {
+                "type": "boolean",
+                "default": false,
+                "description": "Reserved capability; Codex routing remains unverified and is kept direct."
+              },
+              "api": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        }
+      },
+      "HeadroomStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "reason", "checkedAt", "version", "tokensSaved", "capabilities"],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": ["disabled", "healthy", "unavailable"]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "provider_disabled",
+              "unsupported_provider",
+              "codex_unverified",
+              "upstream_unverified",
+              "health_timeout",
+              "connection_refused",
+              "http_error",
+              "invalid_response",
+              "not_ready",
+              "invalid_settings",
+              null
+            ],
+            "nullable": true
+          },
+          "checkedAt": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "version": {
+            "type": "string",
+            "nullable": true
+          },
+          "tokensSaved": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true,
+            "description": "Optional measured proxy compression savings; null when unavailable."
+          },
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["claude", "codex", "api"],
+            "properties": {
+              "claude": {
+                "type": "boolean"
+              },
+              "codex": {
+                "type": "boolean",
+                "enum": [false]
+              },
+              "api": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -10500,7 +10596,50 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "additionalProperties": true
+                  "required": ["settings"],
+                  "properties": {
+                    "settings": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {
+                        "headroom": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "enabled": {
+                              "type": "boolean",
+                              "default": false
+                            },
+                            "proxyUrl": {
+                              "type": "string",
+                              "format": "uri",
+                              "default": "http://127.0.0.1:8787",
+                              "description": "HTTP(S) proxy base URL without credentials, query or fragment. A trailing /v1 is normalized away; validated even when disabled."
+                            },
+                            "providers": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "claude": {
+                                  "type": "boolean",
+                                  "default": true
+                                },
+                                "codex": {
+                                  "type": "boolean",
+                                  "default": false,
+                                  "description": "Reserved capability; Codex routing remains unverified and is kept direct."
+                                },
+                                "api": {
+                                  "type": "boolean",
+                                  "default": true
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 },
                 "example": {
                   "additionalProp1": "value"
@@ -10620,7 +10759,44 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "additionalProperties": true
+                "additionalProperties": true,
+                "properties": {
+                  "headroom": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "proxyUrl": {
+                        "type": "string",
+                        "format": "uri",
+                        "default": "http://127.0.0.1:8787",
+                        "description": "HTTP(S) proxy base URL without credentials, query or fragment. A trailing /v1 is normalized away; validated even when disabled."
+                      },
+                      "providers": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "claude": {
+                            "type": "boolean",
+                            "default": true
+                          },
+                          "codex": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Reserved capability; Codex routing remains unverified and is kept direct."
+                          },
+                          "api": {
+                            "type": "boolean",
+                            "default": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               },
               "example": {
                 "ceoName": "CEO",
@@ -10640,6 +10816,31 @@
                 },
                 "example": {
                   "ok": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid settings; no values are written for invalid Headroom configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "error"],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [false]
+                    },
+                    "error": {
+                      "type": "string",
+                      "example": "invalid_headroom"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": false,
+                  "error": "invalid_headroom"
                 }
               }
             }
@@ -10764,7 +10965,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Headroom configuration is normalized and validated before any settings writes; omitted headroom preserves the existing value. Invalid Headroom configuration returns invalid_headroom."
       }
     },
     "/api/skills": {
@@ -18261,6 +18463,195 @@
                 "session_id": "current-session",
                 "to_task_id": "related-task",
                 "content": "Reuse the completed helper on my branch."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/headroom/status": {
+      "get": {
+        "tags": ["runtime"],
+        "summary": "Get Headroom readiness and savings",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sanitized Headroom readiness and optional measured savings. Disabled configuration does not contact the proxy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["state", "reason", "checkedAt", "version", "tokensSaved", "capabilities"],
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": ["disabled", "healthy", "unavailable"]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "enum": [
+                        "disabled",
+                        "provider_disabled",
+                        "unsupported_provider",
+                        "codex_unverified",
+                        "upstream_unverified",
+                        "health_timeout",
+                        "connection_refused",
+                        "http_error",
+                        "invalid_response",
+                        "not_ready",
+                        "invalid_settings",
+                        null
+                      ],
+                      "nullable": true
+                    },
+                    "checkedAt": {
+                      "type": "integer",
+                      "format": "int64",
+                      "nullable": true
+                    },
+                    "version": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "tokensSaved": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "nullable": true,
+                      "description": "Optional measured proxy compression savings; null when unavailable."
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["claude", "codex", "api"],
+                      "properties": {
+                        "claude": {
+                          "type": "boolean"
+                        },
+                        "codex": {
+                          "type": "boolean",
+                          "enum": [false]
+                        },
+                        "api": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "state": "disabled",
+                  "reason": "disabled",
+                  "checkedAt": null,
+                  "version": null,
+                  "tokensSaved": null,
+                  "capabilities": {
+                    "claude": true,
+                    "codex": false,
+                    "api": true
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": true
+                },
+                "example": {
+                  "error": "unauthorized",
+                  "message": "Authentication is required."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": true
+                },
+                "example": {
+                  "error": "forbidden",
+                  "message": "You do not have permission to access this resource."
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": true
+                },
+                "example": {
+                  "error": "too_many_requests",
+                  "message": "Rate limit exceeded."
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": true
+                },
+                "example": {
+                  "error": "internal_error",
+                  "message": "Unexpected server error."
+                }
               }
             }
           }

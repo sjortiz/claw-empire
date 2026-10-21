@@ -24,6 +24,7 @@ function fixture(globalEffort?: string) {
     (args[7] as (text: string) => void)("API response");
   });
   const runner = createOneShotRunner({
+    db: { prepare: () => ({ get: () => undefined }) },
     logsDir,
     broadcast: vi.fn(),
     getProviderModelConfig: () => ({ claude: { model: "sonnet", reasoningLevel: globalEffort } }),

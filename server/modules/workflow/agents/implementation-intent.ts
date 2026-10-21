@@ -42,7 +42,8 @@ export function detectImplementationIntent(directiveText: string, projectContext
     .split(/\n(?:What happened|Background|History|For example|Example|Context)\s*[:(]/i)[0];
   const clauses = directive
     .split(
-      /(?:[.!?;]\s+|\n|\b(?:and|then|also)\b(?=\s+(?:fix|implement|build|develop|patch|refactor|repair|resolve|change|modify|update|add|write|create|open|document|review|research|report|prepare|draft)\b))/i,
+      // A comma before a new action ("Fix #84, add tests and documentation") also starts a clause.
+      /(?:[.!?;]\s+|\n|(?:\b(?:and|then|also)\b|,)(?=\s+(?:fix|implement|build|develop|patch|refactor|repair|resolve|change|modify|update|add|write|create|open|document|review|research|report|prepare|draft)\b))/i,
     )
     .map((s) => s.trim().replace(/^(?:please|can you|could you|we need to|I want you to|I need you to)\s+/i, ""))
     // Supporting deliverables must not erase the action's code target or add

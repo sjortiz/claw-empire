@@ -786,6 +786,8 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     getDeptRoleConstraint,
     formatTaskSubtaskProgressSummary,
     processSubtaskDelegations,
+    maybeNotifyAllSubtasksComplete,
+    startCrossDeptCooperation,
     reconcileCrossDeptSubtasks,
     recoverCrossDeptQueueAfterMissingCallback,
     resolveProjectPath,

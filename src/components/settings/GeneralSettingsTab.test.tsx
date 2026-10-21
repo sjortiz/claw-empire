@@ -42,3 +42,28 @@ describe("GeneralSettingsTab merge policy", () => {
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ mergePolicy: "auto" }));
   });
 });
+
+describe("GeneralSettingsTab review automation", () => {
+  it.each([
+    ["en", "Start review meetings automatically", "Apply all review items automatically", "Save"],
+    ["ko", "리뷰 회의 자동 시작", "리뷰 항목 모두 자동 반영", "저장"],
+    ["ja", "レビュー会議を自動開始", "レビュー項目をすべて自動反映", "保存"],
+    ["zh", "自动启动评审会议", "自动应用全部评审项", "保存"],
+  ] as const)("defaults both settings off and saves each independently in %s", (language, start, apply, save) => {
+    const onSave = vi.fn();
+    render(<SettingsForm language={language} onSave={onSave} />);
+
+    const startToggle = screen.getByRole("button", { name: start });
+    const applyToggle = screen.getByRole("button", { name: apply });
+    expect(startToggle).toHaveAttribute("aria-pressed", "false");
+    expect(applyToggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(startToggle);
+    fireEvent.click(screen.getByRole("button", { name: save }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ reviewAutoStart: true, reviewAutoApply: false }));
+
+    fireEvent.click(applyToggle);
+    fireEvent.click(screen.getByRole("button", { name: save }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ reviewAutoStart: true, reviewAutoApply: true }));
+  });
+});
