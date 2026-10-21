@@ -1,3 +1,4 @@
+import { parseMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../src/lib/meeting-verdict.ts";
 import { isLang, type Lang } from "../../../types/lang.ts";
 import { readNonNegativeIntEnv } from "../../../db/runtime.ts";
 import {
@@ -365,6 +366,8 @@ export function createReplyCoreTools(deps: CreateReplyCoreToolsDeps) {
   }
 
   function classifyMeetingReviewDecision(text: string): MeetingReviewDecision {
+    const verdict = parseMeetingVerdict(text);
+    if (verdict) return meetingVerdictNeedsRevision(verdict) ? "hold" : "approved";
     const cleaned = text.replace(/\s+/g, " ").trim();
     if (!cleaned) return "reviewing";
     const hasApprovalAgreement = hasApprovalAgreementSignal(cleaned);

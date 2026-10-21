@@ -1,3 +1,4 @@
+import { parseMeetingVerdict, meetingVerdictNeedsRevision, stripMeetingVerdict } from "../lib/meeting-verdict";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Agent, Task, MeetingMinute } from "../types";
 import * as api from "../api";
@@ -742,29 +743,68 @@ export default function TerminalPanel({
                   </span>
                 </div>
                 <div className="space-y-1.5">
-                  {meeting.entries.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="rounded-md border px-2 py-1.5"
-                      style={{ borderColor: "var(--th-border)", background: "var(--th-panel-bg)" }}
-                    >
+                  {meeting.entries.map((entry) => {
+                    const verdict = parseMeetingVerdict(entry.content);
+                    return (
                       <div
-                        className="mb-0.5 flex items-center gap-2 text-[10px]"
-                        style={{ color: "var(--th-text-secondary)" }}
+                        key={entry.id}
+                        className="rounded-md border px-2 py-1.5"
+                        style={{ borderColor: "var(--th-border)", background: "var(--th-panel-bg)" }}
                       >
-                        <span>#{entry.seq}</span>
-                        <span className="text-cyan-300">{entry.speaker_name}</span>
-                        {entry.department_name && <span>{entry.department_name}</span>}
-                        {entry.role_label && <span>· {entry.role_label}</span>}
+                        <div
+                          className="mb-0.5 flex items-center gap-2 text-[10px]"
+                          style={{ color: "var(--th-text-secondary)" }}
+                        >
+                          <span>#{entry.seq}</span>
+                          <span className="text-cyan-300">{entry.speaker_name}</span>
+                          {entry.department_name && <span>{entry.department_name}</span>}
+                          {entry.role_label && <span>· {entry.role_label}</span>}
+                          {verdict && (
+                            <span
+                              className={`ml-auto rounded px-2 py-0.5 ${meetingVerdictNeedsRevision(verdict) ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}
+                              title={
+                                verdict.verdict === "revise" && !meetingVerdictNeedsRevision(verdict)
+                                  ? tr(
+                                      "차단 항목 없는 보완 요청 · 승인 처리",
+                                      "Revise without blocking items; counted as approval",
+                                      "ブロッキングなしの修正要請・承認扱い",
+                                      "无阻塞项的修订请求 · 按批准处理",
+                                    )
+                                  : undefined
+                              }
+                            >
+                              {meetingVerdictNeedsRevision(verdict)
+                                ? t({ ko: "수정 요청", en: "Revise", ja: "修正依頼", zh: "需修改" })
+                                : t({ ko: "승인", en: "Approve", ja: "承認", zh: "批准" })}
+                              {meetingVerdictNeedsRevision(verdict) &&
+                                ` · ${verdict.blocking_items.length} ${tr("차단 항목", "blocking", "ブロッキング", "阻塞项")}`}
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          className="text-xs leading-relaxed whitespace-pre-wrap break-words"
+                          style={{ color: "var(--th-text-primary)" }}
+                        >
+                          {stripMeetingVerdict(entry.content)}
+                          {verdict && (
+                            <div className="mt-1">
+                              {meetingVerdictNeedsRevision(verdict) &&
+                                verdict.blocking_items.map((item, index) => (
+                                  <div key={`block-${index}`}>
+                                    {t({ ko: "차단 항목", en: "Blocking", ja: "阻害項目", zh: "阻塞项" })}: {item}
+                                  </div>
+                                ))}
+                              {verdict.non_blocking_notes.map((note, index) => (
+                                <div key={`note-${index}`} style={{ color: "var(--th-text-muted)" }}>
+                                  {t({ ko: "참고 사항", en: "Note", ja: "参考情報", zh: "备注" })}: {note}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div
-                        className="text-xs leading-relaxed whitespace-pre-wrap break-words"
-                        style={{ color: "var(--th-text-primary)" }}
-                      >
-                        {entry.content}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))

@@ -1,3 +1,9 @@
+import { resolveMeetingVerdict, planningWorkFromVerdict } from "../meeting-verdict.ts";
+import {
+  formatMeetingVerdict,
+  meetingVerdictNeedsRevision,
+  stripMeetingVerdict,
+} from "../../../../src/lib/meeting-verdict.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
@@ -32,6 +38,7 @@ type CreatePlannedApprovalToolsDeps = {
   collectPlannedActionItems: (...args: any[]) => any[];
   appendTaskProjectMemo: (...args: any[]) => any;
   appendTaskLog: (...args: any[]) => any;
+  wantsReviewRevision: (text: string) => boolean;
   reviewMeetingOneShotTimeoutMs?: number;
 };
 
@@ -65,6 +72,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     collectPlannedActionItems,
     appendTaskProjectMemo,
     appendTaskLog,
+    wantsReviewRevision,
     reviewMeetingOneShotTimeoutMs,
   } = deps;
 
@@ -123,12 +131,10 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         });
         const lang = resolveLang(taskDescription ?? taskTitle);
         const transcript: any[] = [];
+        const informationalNotes: string[] = [];
+        const workTranscript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };
-        const wantsRevision = (content: string): boolean =>
-          /보완|수정|보류|리스크|추가.?필요|hold|revise|revision|required|pending|risk|block|保留|修正|补充|暂缓/i.test(
-            content,
-          );
         const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
           const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
           return /timeout after|timed out|request timed out|aborted/i.test(source);
@@ -234,6 +240,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             const draftPrompt = buildMeetingPrompt(leader, {
               meetingType: "planned",
               planningPhase: "draft",
+              verdictRequired: true,
               round,
               taskTitle,
               taskDescription,
@@ -249,10 +256,21 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
               throw new Error(run?.error || "Department planning draft did not complete");
             }
+            const resolved = await resolveMeetingVerdict({
+              text: String(run.text),
+              lang,
+              reviewer: leader.id,
+              phase: "planned draft",
+              retry: (prompt) => runAgentOneShot(leader, prompt, { ...oneShotOptions, rawOutput: true }),
+              fallback: wantsReviewRevision,
+              log: (message) => appendTaskLog(taskId, "system", message),
+            });
             return {
               leader,
-              text: String(run.text).trim(),
-              displayText: chooseSafeReply(run, lang, "feedback", leader),
+              verdict: resolved.verdict,
+              workText: planningWorkFromVerdict(String(run.text), resolved.verdict),
+              text: `${planningWorkFromVerdict(String(run.text), resolved.verdict)}\n\n${formatMeetingVerdict({ ...resolved.verdict, non_blocking_notes: [] })}`,
+              displayText: `${chooseSafeReply({ ...run, text: stripMeetingVerdict(String(run.text)) }, lang, "feedback", leader)}\n\n${formatMeetingVerdict(resolved.verdict)}`,
             };
           }),
         );
@@ -267,19 +285,33 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             draft.value.displayText,
             draft.value.text,
           );
-          if (wantsRevision(draft.value.text)) hasSupplementSignals = true;
+          workTranscript.push({
+            speaker_agent_id: draft.value.leader.id,
+            speaker: getAgentDisplayName(draft.value.leader, lang),
+            department: getDeptName(draft.value.leader.department_id ?? "", taskWorkflowPackKey),
+            role: getRoleLabel(draft.value.leader.role, lang),
+            content: draft.value.workText,
+          });
+          if (meetingVerdictNeedsRevision(draft.value.verdict)) hasSupplementSignals = true;
+          informationalNotes.push(
+            ...draft.value.verdict.non_blocking_notes.map(
+              (note) => `${getAgentDisplayName(draft.value.leader, lang)}: ${note}`,
+            ),
+          );
         }
 
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
           meetingType: "planned",
           planningPhase: "consolidation",
+          verdictRequired: true,
           round,
           taskTitle,
           taskDescription,
           workflowPackKey: taskWorkflowPackKey,
           transcript,
-          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. End with a JSON fenced block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
-          stanceHint: "Keep kickoff moving and show concrete planned next steps instead of blocking.",
+          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a JSON fenced plan block before the final verdict block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
+          stanceHint:
+            "Keep kickoff moving and show concrete planned next steps. Nonblocking reviewer notes are informational only; never turn them into plan_items or remediation work.",
           lang,
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
@@ -288,16 +320,36 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
         const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
-        const summaryText = chooseSafeReply(summaryRun, lang, "summary", planningLeader);
+        const summaryVerdict = await resolveMeetingVerdict({
+          text: String(summaryRun?.text ?? ""),
+          lang,
+          reviewer: planningLeader.id,
+          phase: "planned consolidation",
+          retry: (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+          fallback: wantsReviewRevision,
+          log: (message) => appendTaskLog(taskId, "system", message),
+        });
+        if (abortIfInactive()) return;
+        informationalNotes.push(
+          ...summaryVerdict.verdict.non_blocking_notes.map(
+            (note) => `${getAgentDisplayName(planningLeader, lang)}: ${note}`,
+          ),
+        );
+        if (meetingVerdictNeedsRevision(summaryVerdict.verdict)) hasSupplementSignals = true;
+        const summaryText = `${chooseSafeReply({ ...summaryRun, text: stripMeetingVerdict(String(summaryRun?.text ?? "")) }, lang, "summary", planningLeader)}\n\n${formatMeetingVerdict(summaryVerdict.verdict)}`;
         speak(planningLeader, "report", "all", null, summaryText);
-        const planItems = graph ? [JSON.stringify({ plan_items: graph })] : collectPlannedActionItems(transcript, 10);
+        const planItems = graph
+          ? [JSON.stringify({ plan_items: graph })]
+          : collectPlannedActionItems(workTranscript, 10);
         const memoItems = graph
           ? graph.map(
               (item) =>
                 `${item.department_id}: ${item.title}${item.depends_on.length ? ` (depends on: ${item.depends_on.join(", ")})` : ""}`,
             )
           : planItems;
-        appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
+        if (memoItems.length) appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
+        if (informationalNotes.length)
+          appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
         appendTaskLog(
           taskId,
           "system",

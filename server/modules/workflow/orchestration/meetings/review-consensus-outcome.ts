@@ -1,3 +1,4 @@
+import { parseMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../../src/lib/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import type { MeetingTranscriptEntry } from "./minutes.ts";
 
@@ -22,6 +23,7 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     onApproved,
     abortIfInactive,
     meetingReviewDecisionByAgent,
+    verdictSources,
     findLatestTranscriptContentByAgent,
     isDeferrableReviewHold,
     summarizeForMeetingBubble,
@@ -51,6 +53,17 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     scheduleNextReviewRound,
   } = ctx;
 
+  const informationalNotes = [
+    ...new Set(
+      (transcript as MeetingTranscriptEntry[]).flatMap((row) => {
+        const verdict = parseMeetingVerdict(row.content);
+        return verdict?.non_blocking_notes.map((note) => `${row.department} ${row.speaker}: ${note}`) ?? [];
+      }),
+    ),
+  ];
+  if (informationalNotes.length)
+    appendTaskProjectMemo(taskId, "review", round, informationalNotes, lang, "non_blocking");
+
   // Final review result should follow each leader's last approval statement,
   // not stale "needs revision" flags from earlier feedback turns.
   const finalHoldLeaders: any[] = [];
@@ -58,9 +71,11 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   const deferredMonitoringNotes: string[] = [];
   const finalHoldDeptCount = new Map<string, number>();
   for (const leader of leaders as any[]) {
-    if (meetingReviewDecisionByAgent.get(leader.id) !== "hold") continue;
     const latestDecisionLine = findLatestTranscriptContentByAgent(transcript as MeetingTranscriptEntry[], leader.id);
-    if (isDeferrableReviewHold(latestDecisionLine)) {
+    const verdict = parseMeetingVerdict(latestDecisionLine);
+    if (verdict ? !meetingVerdictNeedsRevision(verdict) : meetingReviewDecisionByAgent.get(leader.id) !== "hold")
+      continue;
+    if ((!verdict || verdictSources?.get(leader.id) === "legacy") && isDeferrableReviewHold(latestDecisionLine)) {
       const clipped = summarizeForMeetingBubble(latestDecisionLine, 160, lang as Lang);
       deferredMonitoringLeaders.push(leader);
       deferredMonitoringNotes.push(
@@ -109,7 +124,11 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
 
   if (needsRevision) {
     const rawMemoItems = collectRevisionMemoItems(
-      transcript as MeetingTranscriptEntry[],
+      (transcript as MeetingTranscriptEntry[]).filter(
+        (row, index, entries) =>
+          finalHoldLeaders.some((leader) => leader.id === row.speaker_agent_id) &&
+          !entries.slice(index + 1).some((later) => later.speaker_agent_id === row.speaker_agent_id),
+      ),
       REVIEW_MAX_MEMO_ITEMS_PER_ROUND,
       REVIEW_MAX_MEMO_ITEMS_PER_DEPT,
     );
