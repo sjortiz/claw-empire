@@ -1,0 +1,367 @@
+
+> climpire@2.0.4 test:api /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41
+> vitest --config server/vitest.config.ts
+
+
+ RUN  v3.2.4 /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent personalities > seeds a fresh install with English personalities when language is en
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+ ✓ server/messenger/telegram-receiver.test.ts (3 tests) 95ms
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent personalities > localizes an existing Korean-seeded install on startup without touching edited personalities
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent personalities > switches between languages and restores the original Korean wording
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Aria
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Bolt
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Nova
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Pixel
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Luna
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Sage
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Clio
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Atlas
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Turbo
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Hawk
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Lint
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Vault
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for Pipe
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects the migrated English personality for DORO
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > default agent prompt personalities > injects an edited Korean persona verbatim rather than rewriting authored content
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+ ✓ server/modules/routes/collab/coordination/cross-dept-cooperation.test.ts (13 tests) 59ms
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > persisted office-pack localization > migrates report profiles and hydrated prompt data while retaining edits and cleared personas
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+ ✓ server/modules/routes/ops/api-providers.test.ts (9 tests) 116ms
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > persisted office-pack localization > migrates web_research_report profiles and hydrated prompt data while retaining edits and cleared personas
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+ ✓ server/modules/routes/core/projects.merge-policy.test.ts (12 tests) 95ms
+ ✓ server/gateway/client.test.ts (17 tests) 248ms
+ ✓ server/modules/routes/core/tasks/agent-messages.test.ts (8 tests) 112ms
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > persisted office-pack localization > migrates novel profiles and hydrated prompt data while retaining edits and cleared personas
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > persisted office-pack localization > migrates video_preprod profiles and hydrated prompt data while retaining edits and cleared personas
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+stdout | server/modules/bootstrap/schema/default-agent-personalities.test.ts > persisted office-pack localization > migrates roleplay profiles and hydrated prompt data while retaining edits and cleared personas
+[Claw-Empire] Seeded default departments
+[Claw-Empire] Seeded default agents
+[Claw-Empire] Seeded default settings
+
+ ✓ server/modules/bootstrap/schema/default-agent-personalities.test.ts (23 tests) 179ms
+ ✓ server/modules/workflow/agents/cli-runtime.test.ts (5 tests) 266ms
+ ✓ server/test/qa/agent-messages.acceptance.test.ts (7 tests) 197ms
+ ✓ server/scripts/cleanup-staff.test.ts (2 tests) 82ms
+stdout | server/db/runtime.test.ts > db runtime > initializeDatabaseRuntime는 DB/로그 디렉터리를 초기화한다
+[Claw-Empire] SQLite write resilience: busy_timeout=5000ms, retries=4, backoff=40-400ms, jitter<=20ms
+[Claw-Empire] Review guardrails: max_rounds=3, final_round=3, remediation_requests=1/task, hold_cap=6/round, hold_cap_per_dept=2, memo_cap=8/round, memo_cap_per_dept=2
+[Claw-Empire] In-progress watchdog: grace=600000ms, sweep=30000ms
+[Claw-Empire] Subtask delegation sweep: interval=15000ms
+
+ ✓ server/db/runtime.test.ts (3 tests) 34ms
+ ✓ server/messenger/discord-receiver.test.ts (3 tests) 47ms
+ ✓ server/test/qa/late-note.launch-gap.test.ts (1 test) 303ms
+   ✓ QA acceptance: cooperation late-note delivery (AC-QA-001) > delivers an authenticated late note in the same dirty worktree before review without a CEO pause  303ms
+ ✓ server/modules/workflow/orchestration/planned-approval.parallel.test.ts (1 test) 60ms
+ ✓ server/modules/workflow/core/worktree/shared.test.ts (3 tests) 491ms
+ ✓ server/test/qa/scoped-delegation.acceptance.test.ts (4 tests) 33ms
+ ✓ server/modules/workflow/core/related-work.test.ts (12 tests) 10ms
+ ✓ server/modules/routes/core/projects.review-automation.test.ts (7 tests) 66ms
+ ✓ server/modules/workflow/core/agent-coordination.test.ts (10 tests) 29ms
+ ✓ server/modules/routes/ops/messages/decision-inbox/review-automation.test.ts (8 tests) 25ms
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > worktree lifecycle branch collision handling > reuses existing task branch when branch already exists
+[Claw-Empire] Created worktree for task reuse001: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-wt-reuse-QaxoPU/.climpire-worktrees/reuse001 (branch: climpire/reuse001, agent: Tester)
+[Claw-Empire] Cleaned up worktree for task reuse001
+
+ ✓ server/modules/workflow/orchestration/review-finalize-tools.integration.test.ts (10 tests) 26ms
+ ✓ server/modules/routes/collab/planner-selection.test.ts (5 tests) 34ms
+ ✓ server/modules/bootstrap/schema/project-merge-policy.test.ts (3 tests) 12ms
+ ✓ server/modules/workflow/orchestration/review-finalize-tools.review-auto-start.test.ts (10 tests) 62ms
+ ✓ server/modules/workflow/orchestration/review-auto-start-safety.test.ts (3 tests) 13ms
+ ✓ server/modules/routes/collab/subtask-delegation.parallel.test.ts (4 tests) 14ms
+ ✓ server/modules/workflow/core/one-shot-runner.effort.test.ts (5 tests) 13ms
+ ✓ server/modules/workflow/packs/video-render-engine-gate.test.ts (5 tests) 43ms
+ ✓ server/security/auth.test.ts (8 tests) 138ms
+ ✓ server/modules/workflow/orchestration/run-complete-handler.video-review.test.ts (7 tests) 19ms
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > worktree verify-commit route > 커밋 없이 변경만 있으면 dirty_without_commit 판정을 돌려준다
+[Claw-Empire] Created worktree for task verify-d: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-verify-dirty-iLL8uD/.climpire-worktrees/verify-d (branch: climpire/verify-d, agent: Tester)
+[Claw-Empire] Cleaned up worktree for task verify-d
+
+ ✓ server/modules/workflow/orchestration/run-complete-handler.agent-notes.test.ts (6 tests) 36ms
+ ✓ server/modules/routes/collab/task-delegation.planning.test.ts (1 test) 22ms
+ ✓ server/modules/workflow/agents/providers/api-provider-tools.test.ts (26 tests) 15ms
+ ✓ server/modules/workflow/core/review-automation.test.ts (5 tests) 15ms
+ ✓ server/modules/bootstrap/schema/oauth-runtime.test.ts (3 tests) 11ms
+ ✓ server/modules/routes/collab/subtask-dependencies.test.ts (3 tests) 12ms
+ ✓ server/test/qa/related-work.git.acceptance.test.ts (2 tests) 980ms
+   ✓ QA acceptance: real local Git related-work snapshot > discovers a suffixed completed branch after restart and counts commits against its base  389ms
+   ✓ QA acceptance: real local Git related-work snapshot > does not count dirty files as commits or change either worktree  590ms
+ ✓ server/messenger/session-agent-routing.test.ts (8 tests) 3ms
+ ✓ server/modules/routes/ops/settings-stats.seed-init.test.ts (21 tests) 12ms
+ ✓ server/modules/routes/core/agents/crud.seed-filter.test.ts (6 tests) 5ms
+ ✓ server/modules/routes/collab/subtask-delegation-scope.test.ts (8 tests) 6ms
+ ✓ server/modules/bootstrap/schema/api-providers-schema.test.ts (2 tests) 10ms
+ ✓ server/modules/workflow/core/video-skill-bootstrap.test.ts (1 test) 3ms
+ ✓ server/modules/workflow/agents/planning-graph.test.ts (3 tests) 8ms
+ ✓ server/modules/routes/ops/messages/decision-inbox/project-review-reply.test.ts (4 tests) 5ms
+ ✓ server/modules/routes/core/tasks/execution-run-auto-assign.test.ts (9 tests) 5ms
+ ✓ server/modules/workflow/orchestration/review-finalize-tools.video-gate.test.ts (2 tests) 8ms
+ ✓ server/ws/hub.test.ts (3 tests) 6ms
+ ✓ server/modules/routes/core/tasks/execution-control.test.ts (4 tests) 9ms
+ ✓ server/modules/routes/collab/direct-chat-task-flow.pack-inference.test.ts (1 test) 3ms
+ ✓ server/modules/routes/ops/messages/decision-inbox/yolo-mode.test.ts (9 tests) 3ms
+ ✓ server/modules/routes/core/agents/spawn.effort.test.ts (5 tests) 6ms
+ ✓ server/modules/routes/collab/direct-chat.normalize.test.ts (15 tests) 7ms
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > worktree lifecycle branch collision handling > reuses a registered task branch at a nonstandard path instead of creating a stale sibling
+[Claw-Empire] Cleaned up worktree for task fallback
+
+ ✓ server/modules/workflow/core/cli-tools.test.ts (16 tests) 3ms
+ ✓ server/modules/workflow/orchestration/meetings/leader-selection.test.ts (2 tests) 4ms
+ ✓ server/modules/routes/collab/office-pack-agent-hydration.test.ts (4 tests) 5ms
+ ✓ server/modules/routes/core/tasks/crud.workflow-pack-filter.test.ts (3 tests) 4ms
+ ✓ server/modules/routes/ops/messages/directive-leader-scope.test.ts (3 tests) 3ms
+ ✓ server/modules/workflow/agents/subtask-seeding.test.ts (4 tests) 4ms
+ ✓ server/modules/routes/ops/messages/decision-inbox-routes.bridge.test.ts (3 tests) 5ms
+ ✓ server/modules/workflow/meeting-prompt-utils.test.ts (12 tests) 3ms
+ ✓ server/modules/routes/collab/language-policy.test.ts (2 tests) 3ms
+ ✓ server/modules/workflow/packs/task-pack-resolver.test.ts (4 tests) 3ms
+stdout | server/modules/workflow/core/worktree/merge.test.ts > directive integration > integrates approved changes and leaves checkout, dirty files and dev unchanged
+[Claw-Empire] Created worktree for task approved: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/directive-integration-lleXBq/.climpire-worktrees/approved (branch: climpire/approved, agent: Coder)
+[Claw-Empire] Cleaned up worktree for task approved
+
+ ✓ server/modules/routes/ops/task-reports/helpers.test.ts (1 test) 10ms
+ ✓ server/modules/workflow/packs/execution-guidance.test.ts (3 tests) 2ms
+ ✓ server/modules/workflow/core/interrupt-injection-tools.test.ts (2 tests) 8ms
+ ✓ server/modules/workflow/core/meeting-prompt-tools.test.ts (4 tests) 3ms
+ ✓ server/modules/workflow/packs/video-artifact.test.ts (2 tests) 3ms
+ ✓ server/modules/workflow/core/worktree/merge-policy.test.ts (7 tests) 4ms
+ ✓ server/modules/workflow/core/worktree/merge-into-checkout.test.ts (1 test) 3ms
+ ✓ server/modules/routes/update-auto-utils.test.ts (5 tests) 3ms
+ ✓ server/modules/workflow/core/prompt-skills.test.ts (4 tests) 8ms
+ ✓ server/modules/routes/collab/messenger-report.test.ts (4 tests) 2ms
+ ✓ server/modules/routes/update-auto-command.test.ts (4 tests) 2ms
+ ✓ server/modules/workflow/core/project-context-tools.test.ts (6 tests) 3ms
+ ✓ server/modules/routes/update-auto-policy.test.ts (5 tests) 2ms
+stderr | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > never recovers the project checkout as an agent worktree when a human checks out a task branch
+[Claw-Empire] Failed to create worktree for task human: Task branch is checked out in the project checkout; isolated execution is required
+
+ ✓ server/modules/workflow/core/reasoning-effort.test.ts (4 tests) 2ms
+ ✓ server/modules/routes/collab/project-resolution.round-goal.test.ts (2 tests) 1ms
+ ✓ server/modules/routes/update-auto-lock.test.ts (2 tests) 1ms
+ ✓ server/modules/workflow/packs/video-final-render.test.ts (2 tests) 2ms
+ ✓ server/test/smoke.test.ts (1 test) 1ms
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > worktree verify-commit route > 커밋된 코드 변경이 있으면 ok 판정을 돌려준다
+[Claw-Empire] Created worktree for task verify-o: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-verify-ok-TYYAze/.climpire-worktrees/verify-o (branch: climpire/verify-o, agent: Tester)
+[Claw-Empire] Cleaned up worktree for task verify-o
+
+ ✓ server/modules/routes/collab/coordination/cross-dept-cooperation.agent-notes.test.ts (16 tests) 1965ms
+   ✓ cooperation late-note launch contract (AC-QA-001) > preserves the 'gemini' cooperation launch contract (worktree failure=false)  314ms
+   ✓ cooperation late-note launch contract (AC-QA-001) > preserves the 'opencode' cooperation launch contract (worktree failure=false)  305ms
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > starts a directive at its root task's base branch without changing the project checkout
+[Claw-Empire] Created worktree for task child: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-directive-base-PKg0oA/.climpire-worktrees/child (branch: climpire/child, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > worktree verify-commit route > 수동 merge 전에 최종 브랜치 검증 통과 로그를 남긴다
+[Claw-Empire] Created worktree for task verify-m: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-verify-merge-FxZAoa/.climpire-worktrees/verify-m (branch: climpire/verify-m, agent: Tester)
+[Claw-Empire] Cleaned up worktree for task verify-m
+
+stdout | server/modules/workflow/orchestration/review-finalize-tools.merge-policy.test.ts > manual approval checkout isolation > integrates into the directive branch and leaves the real checkout, index and origin untouched (GitHub=false)
+[Claw-Empire] Created worktree for task task-1: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-merge-policy-SPk8Zg/project's checkout/.climpire-worktrees/task-1 (branch: climpire/task-1, agent: Tester)
+[Claw-Empire] Cleaned up worktree for task task-1
+
+stdout | server/modules/workflow/core/worktree/merge.test.ts > directive integration > builds successive approved subtasks on one shared directive result
+[Claw-Empire] Created worktree for task first-ch: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/directive-integration-vwWONT/.climpire-worktrees/first-ch (branch: climpire/first-ch, agent: Coder)
+[Claw-Empire] Cleaned up worktree for task first-ch
+[Claw-Empire] Created worktree for task next-chi: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/directive-integration-vwWONT/.climpire-worktrees/next-chi (branch: climpire/next-chi, agent: Coder)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > starts later subtasks from the current directive tip, including nested subtasks
+[Claw-Empire] Created worktree for task first: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-directive-tip-tGyjUA/.climpire-worktrees/first (branch: climpire/first, agent: Tester)
+[Claw-Empire] Created worktree for task next: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-directive-tip-tGyjUA/.climpire-worktrees/next (branch: climpire/next, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > recovers done task diff, verification and list from the task path
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-s96PtC/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stderr | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > refuses an invalid explicit base instead of silently using HEAD
+[Claw-Empire] Failed to create worktree for task invalid: Command failed: git rev-parse --verify --end-of-options missing-branch^{commit}
+fatal: Needed a single revision
+
+
+stdout | server/modules/workflow/orchestration/review-finalize-tools.merge-policy.test.ts > manual approval checkout isolation > integrates into the directive branch and leaves the real checkout, index and origin untouched (GitHub=true)
+[Claw-Empire] Created worktree for task task-1: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-merge-policy-nioIi1/project's checkout/.climpire-worktrees/task-1 (branch: climpire/task-1, agent: Tester)
+[Claw-Empire] Cleaned up worktree for task task-1
+
+ ✓ server/modules/workflow/orchestration/review-finalize-tools.merge-policy.test.ts (10 tests) 3199ms
+   ✓ manual approval checkout isolation > integrates into the directive branch and leaves the real checkout, index and origin untouched (GitHub=false)  765ms
+   ✓ manual approval checkout isolation > integrates into the directive branch and leaves the real checkout, index and origin untouched (GitHub=true)  749ms
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > recovers done task diff, verification and list from the project path
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-lKixhf/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/merge.test.ts > directive integration > reports conflicts without moving the integration ref or leaving a merge/index state
+[Claw-Empire] Created worktree for task conflict: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/directive-integration-Kc0Mbp/.climpire-worktrees/conflict (branch: climpire/conflict, agent: Coder)
+
+ ✓ server/modules/workflow/core/worktree/merge.test.ts (4 tests) 3660ms
+   ✓ directive integration > integrates approved changes and leaves checkout, dirty files and dev unchanged  1432ms
+   ✓ directive integration > builds successive approved subtasks on one shared directive result  1103ms
+   ✓ directive integration > reports conflicts without moving the integration ref or leaving a merge/index state  1028ms
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > shows staged and unstaged tracked changes and warns about untracked files before manual merge
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-KU7LUV/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > refreshes a reused revision from approved siblings while retaining its own commits and unstaged edits
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-nwBOjP/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+[Claw-Empire] Created worktree for task sibling: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-nwBOjP/.climpire-worktrees/sibling (branch: climpire/sibling, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > recovers a kept branch for manual merge and cleans up only on success=true
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-5KOfMu/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > recovers a kept branch for manual merge and cleans up only on success=false
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-09OsGD/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > recovers an orphaned legacy branch at a free path without losing commits or deleting an occupied directory
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-CXP2Km/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+[Claw-Empire] Created worktree for task sibling: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-CXP2Km/.climpire-worktrees/sibling (branch: climpire/sibling, agent: Tester)
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-CXP2Km/.climpire-worktrees/revision-1 (branch: climpire/revision, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > refuses a changed target before any merge or cleanup
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-1gUOD6/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > retains staged revision changes and reports that refresh needs owner action
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-hkkjfI/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+[Claw-Empire] Created worktree for task sibling: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-hkkjfI/.climpire-worktrees/sibling (branch: climpire/sibling, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > refuses a detached target before any merge or cleanup
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-Bl3cjw/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/routes/ops/worktrees-and-usage.test.ts > retained worktrees after server restart > refuses a missing target before any merge or cleanup
+[Claw-Empire] Created worktree for task retained: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-retained-route-gU9WKq/.climpire-worktrees/retained (branch: climpire/retained, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > leaves overlapping dirty files untouched rather than overwriting them during refresh
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-SRv0dw/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+[Claw-Empire] Created worktree for task sibling: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-SRv0dw/.climpire-worktrees/sibling (branch: climpire/sibling, agent: Tester)
+
+ ✓ server/modules/routes/ops/worktrees-and-usage.test.ts (13 tests) 6324ms
+   ✓ worktree verify-commit route > 커밋 없이 변경만 있으면 dirty_without_commit 판정을 돌려준다  856ms
+   ✓ worktree verify-commit route > 커밋된 코드 변경이 있으면 ok 판정을 돌려준다  924ms
+   ✓ worktree verify-commit route > 수동 merge 전에 최종 브랜치 검증 통과 로그를 남긴다  511ms
+   ✓ retained worktrees after server restart > recovers done task diff, verification and list from the task path  569ms
+   ✓ retained worktrees after server restart > recovers done task diff, verification and list from the project path  529ms
+   ✓ retained worktrees after server restart > shows staged and unstaged tracked changes and warns about untracked files before manual merge  421ms
+   ✓ retained worktrees after server restart > recovers a kept branch for manual merge and cleans up only on success=true  414ms
+   ✓ retained worktrees after server restart > recovers a kept branch for manual merge and cleans up only on success=false  407ms
+   ✓ retained worktrees after server restart > refuses a changed target before any merge or cleanup  508ms
+   ✓ retained worktrees after server restart > refuses a detached target before any merge or cleanup  492ms
+   ✓ retained worktrees after server restart > refuses a missing target before any merge or cleanup  511ms
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > reports committed revision conflicts without moving refs or leaving a half-merged index
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-8vzDG9/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+[Claw-Empire] Created worktree for task sibling: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-8vzDG9/.climpire-worktrees/sibling (branch: climpire/sibling, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > keeps overlapping unstaged edits when the directive changes the same tracked file
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-ZPZDPa/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+[Claw-Empire] Created worktree for task sibling: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-cumulative-revision-ZPZDPa/.climpire-worktrees/sibling (branch: climpire/sibling, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > preserves dirty revisions both during execution and after a server restart
+[Claw-Empire] Created worktree for task revision: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-directive-revision-1Qj9EH/.climpire-worktrees/revision (branch: climpire/revision, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > directive worktree bases and revision reuse > retains a migrated legacy task worktree and never deletes an occupied task directory
+[Claw-Empire] Created worktree for task occupied: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-directive-legacy-OSE1Dm/.climpire-worktrees/occupied-1 (branch: climpire/occupied-1, agent: Tester)
+
+stdout | server/modules/workflow/core/worktree/lifecycle.test.ts > retained task worktree discovery > reuses a retained worktree after restart and preserves uncommitted changes
+[Claw-Empire] Created worktree for task retain01: /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/.tmp/review-integration-revision/tmp/climpire-wt-retain-5CdzNU/.climpire-worktrees/retain01 (branch: climpire/retain01, agent: Tester)
+
+ ✓ server/modules/workflow/core/worktree/lifecycle.test.ts (25 tests) 9714ms
+   ✓ worktree lifecycle branch collision handling > reuses existing task branch when branch already exists  613ms
+   ✓ worktree lifecycle branch collision handling > reuses a registered task branch at a nonstandard path instead of creating a stale sibling  670ms
+   ✓ directive worktree bases and revision reuse > never recovers the project checkout as an agent worktree when a human checks out a task branch  387ms
+   ✓ directive worktree bases and revision reuse > starts a directive at its root task's base branch without changing the project checkout  509ms
+   ✓ directive worktree bases and revision reuse > starts later subtasks from the current directive tip, including nested subtasks  616ms
+   ✓ directive worktree bases and revision reuse > refreshes a reused revision from approved siblings while retaining its own commits and unstaged edits  1005ms
+   ✓ directive worktree bases and revision reuse > recovers an orphaned legacy branch at a free path without losing commits or deleting an occupied directory  802ms
+   ✓ directive worktree bases and revision reuse > retains staged revision changes and reports that refresh needs owner action  724ms
+   ✓ directive worktree bases and revision reuse > leaves overlapping dirty files untouched rather than overwriting them during refresh  720ms
+   ✓ directive worktree bases and revision reuse > reports committed revision conflicts without moving refs or leaving a half-merged index  677ms
+   ✓ directive worktree bases and revision reuse > keeps overlapping unstaged edits when the directive changes the same tracked file  738ms
+   ✓ directive worktree bases and revision reuse > preserves dirty revisions both during execution and after a server restart  432ms
+   ✓ directive worktree bases and revision reuse > retains a migrated legacy task worktree and never deletes an occupied task directory  388ms
+   ✓ retained task worktree discovery > reuses a retained worktree after restart and preserves uncommitted changes  377ms
+
+ Test Files  86 passed (86)
+      Tests  538 passed (538)
+   Start at  12:15:09
+   Duration  10.02s (transform 1.78s, setup 475ms, collect 5.79s, tests 29.07s, environment 7ms, prepare 3.98s)
+

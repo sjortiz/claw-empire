@@ -1,0 +1,8 @@
+
+> climpire@2.0.4 format:check /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41
+> prettier --check "**/*.{ts,tsx,js,mjs,cjs,json,yml,yaml,css,scss,html}"
+
+Checking formatting...
+[warn] .tmp/review-integration-revision/compatibility-proof.json
+[warn] Code style issues found in the above file. Run Prettier with --write to fix.
+ ELIFECYCLE  Command failed with exit code 1.

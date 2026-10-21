@@ -1,0 +1,33 @@
+{
+  "selected_target": "f3187fe758b3d0ec640fa04c5338d9c1b72cd67a",
+  "base": "5561a2735574769fbfff3b77278385ca4da42296",
+  "original_parent_head": "9baff52087249a871ea533d8ef2116017859c80f",
+  "composed_worktree_tree": "70e4bc77dd69f27736aab14d43c27ff1b7b9173b",
+  "all_reconciled_paths_match": true,
+  "file_count": 68,
+  "residual_vs_selected_target": ["A\tdocs/reviews/review-autostart-round1.md"],
+  "method": "Disposable GIT_INDEX_FILE seeded from target and populated from actual tracked files plus parent review record; unchanged gitlinks retained. git write-tree and git diff only. No merge, rebase, cherry-pick, push, branch switch, or real-index mutation. Source paths have no residual delta; parent review documentation is the only expected additional path.",
+  "all_source_paths_match": true,
+  "source_file_count": 505,
+  "selected_server_tree": "c077a59d3a03ecd735677fc3a64b3bd7520120a9",
+  "selected_src_tree": "8e8f97e88f0ee940ec5fb7585810fca7ae0d6f62",
+  "snapshot_scope": "All selected target tracked files plus the parent review record at snapshot creation. Fresh verification files in this directory are generated afterwards and intentionally excluded to avoid self-hash cycles.",
+  "real_index_unchanged_at_snapshot": true,
+  "source_mismatch_count": 0,
+  "reconciled_path_mismatch_count": 0,
+  "obsolete_paths_absent": [
+    "server/modules/bootstrap/schema/project-review-automation.test.ts",
+    "server/modules/routes/ops/settings-stats.review-automation.test.ts",
+    "server/modules/workflow/core/review-policy.ts",
+    "server/modules/workflow/orchestration/review-automation.test.ts",
+    "server/modules/workflow/orchestration/review-automation.ts",
+    "src/components/project-manager/ProjectReviewAutomationSelectors.tsx",
+    "src/components/settings/review-automation.ts"
+  ],
+  "detailed_local_proof": {
+    "path": ".tmp/review-integration-revision/compatibility-proof.json",
+    "sha256": "bbfc19e7deb3a1f20c53ea586d28d2a603af77765f062bfbbe4a14e37116ec5e",
+    "retention": "Full 505-file source and 68-path reconciliation arrays retained unchanged in ignored checkout-local evidence."
+  },
+  "index_note": "The unchanged-index assertion describes the original snapshot. Parent subsequently staged the reviewed changes intentionally; this evidence refinement does not modify the index."
+}
