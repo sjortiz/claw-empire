@@ -75,6 +75,32 @@ describe("directive implementation intent", () => {
       detectImplementationIntent("Fix API authentication and write release documentation").requiresImplementation,
     ).toBe(true);
   });
+  it.each([
+    "Fix API authentication with tests and documentation",
+    "Fix #84 with tests and update documentation",
+    "Fix #84 with documentation about #85",
+    "Fix #84 and #85 with tests and documentation, one branch per issue",
+  ])("retains implementation ownership with supporting deliverables: %s", (text) => {
+    const mixedIntent = detectImplementationIntent(text);
+    expect(mixedIntent.requiresImplementation).toBe(true);
+    expect(includeImplementationDepartment(["operations"], mixedIntent)).toContain("dev");
+    expect(validateImplementationCoverage(null, mixedIntent)).not.toEqual([]);
+    if (text.includes("#84")) {
+      expect(mixedIntent.implementationUnits.map((unit) => unit.reference)).toEqual(
+        text.includes("and #85") ? ["#84", "#85"] : ["#84"],
+      );
+    }
+    if (text.includes("branch")) {
+      expect(mixedIntent.implementationUnits.every((unit) => unit.separateBranch && unit.requiresTests)).toBe(true);
+    }
+  });
+  it.each([
+    "Update API documentation with tests and examples",
+    "Write API documentation including code fixes for #84",
+    "Fix documentation for API authentication with regression tests",
+  ])("does not infer code work from documentation supplements: %s", (text) => {
+    expect(detectImplementationIntent(text).requiresImplementation).toBe(false);
+  });
 });
 
 describe("implementation graph acceptance", () => {

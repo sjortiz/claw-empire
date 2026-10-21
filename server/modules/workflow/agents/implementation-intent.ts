@@ -45,6 +45,12 @@ export function detectImplementationIntent(directiveText: string, projectContext
       /(?:[.!?;]\s+|\n|\b(?:and|then|also)\b(?=\s+(?:fix|implement|build|develop|patch|refactor|repair|resolve|change|modify|update|add|write|create|open|document|review|research|report|prepare|draft)\b))/i,
     )
     .map((s) => s.trim().replace(/^(?:please|can you|could you|we need to|I want you to|I need you to)\s+/i, ""))
+    // Supporting deliverables must not erase the action's code target or add
+    // issue references mentioned only in documentation. A documentation target
+    // itself ("Update API documentation") still remains supporting work.
+    .map((clause) =>
+      supportingTarget.test(clause) ? clause.split(/\b(?:with|including|alongside|plus)\b/i)[0].trim() : clause,
+    )
     .filter(Boolean);
   const executionClauses = clauses.filter((clause) => {
     if (!action.test(clause) || nonExecution.test(clause)) return false;
