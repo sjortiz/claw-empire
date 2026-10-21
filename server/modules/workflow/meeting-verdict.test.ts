@@ -35,6 +35,12 @@ describe("explicit meeting verdicts", () => {
     expect(core.classifyMeetingReviewDecision(stripMeetingVerdict(reply()))).toBe("reviewing");
     expect(core.wantsReviewRevision(reply())).toBe(false);
   });
+  it("reads the verdict before an API provider's Done footer", () => {
+    const withFooter = `${reply()}\n---\n[api:ollama] Done.\n`;
+    expect(parseMeetingVerdict(withFooter)?.verdict).toBe("approve");
+    expect(core.classifyMeetingReviewDecision(withFooter)).toBe("approved");
+    expect(parseMeetingVerdict(`${formatMeetingVerdict(revise)}\n---\n[copilot] Done.`)?.verdict).toBe("revise");
+  });
   it("requires concrete blockers for revision", () => {
     expect(core.wantsReviewRevision(formatMeetingVerdict(revise))).toBe(true);
     expect(core.wantsReviewRevision(formatMeetingVerdict({ ...revise, blocking_items: ["  "] }))).toBe(false);

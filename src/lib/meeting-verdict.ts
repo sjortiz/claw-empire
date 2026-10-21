@@ -26,9 +26,12 @@ function trailingMetadata(text: string): { start: number; value: MeetingVerdict 
   }
 }
 
+// HTTP/API providers end their output with a "---\n[provider] Done." footer.
+const PROVIDER_FOOTER = /\n-{3}\n\[[\w:-]+\] Done\.\s*$/;
+
 // Only the final standalone line decides a live reply. Earlier prose/JSON never votes.
 export function parseMeetingVerdict(text: string): MeetingVerdict | null {
-  const trimmed = text.trimEnd();
+  const trimmed = text.replace(PROVIDER_FOOTER, "").trimEnd();
   const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1).trim();
   if (lastLine !== "APPROVE" && lastLine !== "REVISE") return null;
   const body = trimmed.slice(0, trimmed.lastIndexOf("\n") + 1).trimEnd();
