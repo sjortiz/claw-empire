@@ -1,113 +1,150 @@
 # Planning acceptance review and CEO evidence
 
-Review date: 2026-10-21. Planning reviewer: Clio, consolidating Sage's assigned
-acceptance item `e277f358-d5d4-48b7-884e-83c63911a1cb`. Execution task:
-`632fceb9-2e7a-4bf8-a77c-8bf83bcb5b59`. Parent:
+Review date: 2026-10-21. Planning reviewer: Clio, consolidating Sage's acceptance
+item `e277f358-d5d4-48b7-884e-83c63911a1cb`. Parent:
 `5b948211-0b00-47b1-91f8-9f96a4ecb8ff`.
 
-**Decision: Planning acceptance passes; the final Development correction and
-report are now integrated in this checkout, closing the prior integration HOLD.**
-Production implementation and the Nexo HTTP regression are present. Planning
-found a HIGH mixed-request detection gap;
-Development reproduced it, supplied a focused correction and reran all five
-CEO-required checks successfully. No unresolved executable verification failures
-remain in that tested patch. The extra delegated `check` script is unavailable,
-not passed. System commit `e359f32` contains the final correction, regressions and
-report; reviewed integration HEAD is `82ceced2df5386bfb892a03b19cd39128ca07193`.
-`897b9a4` alone must not be treated as the accepted final implementation.
+**Decision: HOLD — QA-HIGH-01 remains unresolved.** This decision supersedes
+Planning's earlier acceptance at `fbdc22b`. Production code and the original
+passing Nexo replay are integrated, resolving the earlier documentation-only and
+patch-integration concerns. Independent QA then reproduced mixed code/support
+requests that bypass intent detection and create no Development implementation
+owner. The new regressions are enabled; the overall API check fails. Supporting
+review documents cannot close this behavioral defect.
 
-Planning reviewed source, diffs, supplied execution reports and task-scoped
-references. Planning did not change production code or execute tests. Results
-below are attributed to their Development owners rather than presented as a
-new Planning test run.
+Planning reviewed source, diffs, owner reports and task-scoped notes. Planning
+changed documentation only and ran no tests. Command results below belong to QA
+and Development, with their reviewed revisions stated explicitly.
 
-## Implementation coverage and evidence baseline
+## Implementation coverage
 
-The initial review branch was `climpire/632fceb9`, based on integrated revision
-`897b9a4`. This continuation reviews `climpire/5b948211` at `82ceced`.
-Production commits are `2ad82c1` (intent, coverage, ownership and
-conditional prompts) and `1139826` (deterministic repair and prerequisite
-validation). `897b9a4` adds the independent HTTP regression and its evidence.
-Final acceptance also includes the two-file correction originally reviewed
-read-only in `climpire/732f346c`, now committed by the system as `e359f32`:
-base `897b9a46126ff3af99bad17c6b103c4626c43a95` plus production/test
-patch SHA-256 `881644babade4c807ba94027f9aa7cf0fdbc2c4e08da8aca8250ff389b00f9f2`.
-Planning independently matched that hash to the owner's two-file diff, then to
-the integrated diff from `897b9a4` to `82ceced`, without applying either patch.
-`git diff --name-status e359f32 HEAD` shows only two Planning documents changed
-after the tested correction; no production or test changes intervene. The final
-Development report is present at its linked path in this checkout. Production
-scope including the patch is 12 TypeScript files, +691/-54 lines versus
-`5561a27`; this Planning batch changes documentation only.
+Requested production outcomes: **3**. Named accountable Development owners:
+**3 of 3**. Production changes exist for all three outcomes. Full acceptance:
+**blocked**, because intent detection can bypass coverage enforcement entirely.
+Named ownership in this review does not prove every runtime directive gains an
+implementation owner. The [Design coverage view](../design/2026-10-21-directive-implementation-coverage.md)
+supplies the presentation structure; its historical “Verified 3/3” label is
+superseded here by the newer QA evidence.
 
-Aria / Development is accountable for implementation. Nova / Development
-executed both production batches and defined the regression contract. Bolt /
-Development independently verified the implementation and executed the Nexo API
-replay; Bolt also owns the last verification batch on `climpire/732f346c`.
+| Requested production outcome / implementation items                                                                                          | Named owner and delivered code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Current verification state                                                                                                                                                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Recognize code-change intent, include Development and log chosen departments/reasons.** `DEV-01`, `DEV-1`, `DEV-2`                      | **Development — Aria**, accountable; Nova implemented, Bolt supplied the earlier F-01 correction. `2ad82c1`, `e359f32`: [implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts), [task-delegation.ts](../../server/modules/routes/collab/task-delegation.ts), [leader-selection.ts](../../server/modules/workflow/orchestration/meetings/leader-selection.ts).                                                                                                                                | Specified; code present; **QA-HIGH-01 open**. Five mixed-language requests return false intent; the mixed Nexo replay has zero Development rows.                             |
+| **2. Require per-unit production code and tests; repair or block approval, preserving dependencies.** `DEV-02`, `DEV-3`, conditional prompts | **Development — Aria**, accountable; Nova implemented. `2ad82c1`, `1139826`: [planning-graph.ts](../../server/modules/workflow/agents/planning-graph.ts), [planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts), [meeting-prompt-tools.ts](../../server/modules/workflow/core/meeting-prompt-tools.ts), delegation/seeding guards.                                                                                                                                                             | Specified; code present; existing detected-intent regressions pass. **End-to-end requirement unmet** while false intent permits a support-only plan.                         |
+| **3. Preserve implementation ownership through seeding, routing, materialization and execution.** `DEV-03`                                   | **Development — Aria**, accountable; Nova implemented, Bolt verified. `2ad82c1`: [subtask-seeding.ts](../../server/modules/workflow/agents/subtask-seeding.ts), [subtask-routing.ts](../../server/modules/workflow/agents/subtask-routing.ts), [subtask-delegation-batch.ts](../../server/modules/routes/collab/subtask-delegation-batch.ts), [execution-run-auto-assign.ts](../../server/modules/routes/core/tasks/execution-run-auto-assign.ts), [execution-run.ts](../../server/modules/routes/core/tasks/execution-run.ts). | Specified; code present; existing ownership/unavailable-developer regressions pass. No independent new execution-ownership defect reported; parent acceptance still blocked. |
 
-| Requested production outcome | Specified | Implemented | Verification evidence |
-| --- | --- | --- | --- |
-| Recognize code work and include Development alongside relevant supporting departments | Yes | [implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts); [task-delegation.ts](../../server/modules/routes/collab/task-delegation.ts); [meetings/leader-selection.ts](../../server/modules/workflow/orchestration/meetings/leader-selection.ts) | Nexo and representative EN/KO/JA/ZH inputs pass; the final patch adds passing same-clause mixed-request controls. |
-| Require actionable code/test work for every unit; repair deficient plans or block approval | Yes | [planning-graph.ts](../../server/modules/workflow/agents/planning-graph.ts); [planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts); delegation and seeding guards | Reported passing negative, repair, invalid-repair and HTTP regressions; final mixed-request regressions exercise intent plus graph enforcement. |
-| Preserve owner, tests, branches and real dependencies into execution | Yes | [subtask-seeding.ts](../../server/modules/workflow/agents/subtask-seeding.ts); [subtask-routing.ts](../../server/modules/workflow/agents/subtask-routing.ts); [subtask-delegation-batch.ts](../../server/modules/routes/collab/subtask-delegation-batch.ts); execution assignment/run guards | Reported passing persisted-child/executor, availability, routing and dependency regressions. |
+Nexo #84/#85 are fixture units for the planning regression, not additional code
+changes requested in this project. No actual Nexo code, issue branches or live
+assignments are claimed.
 
-These are this project's planning-server changes. Nexo #84/#85 are fixture units
-used to verify planning; this work does not implement those issues again. Their
-fixture states are **Specified**, with pending Development rows; no actual Nexo
-code changes, issue branches or verification of the Nexo fixes are claimed.
+## Supporting work and explicit owner handoffs
+
+Every row below is supporting work and does not satisfy implementation. These
+links document review accountability; they do not mutate runtime dependencies.
+Independent preparation stays parallel; behavior-dependent verification consumes
+the relevant implementation changes. Separate key families remain separate.
+
+| Supporting item                                           | Named supporting owner                   | Deliverable / current state                                                                                   | Supports implementation and accountable owner |
+| --------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `QA-01` regression definition (`4fffb9cc`)                | Development — Nova                       | Regression contract delivered                                                                                 | Rows 1–3 → Development — Aria                 |
+| `DEV-04` routing/materialization regressions (`7f367e5e`) | Development — Nova                       | Regression tests delivered                                                                                    | Rows 1 and 3 → Development — Aria             |
+| `QA-02` independent verification (`6ad1c405`)             | Development — Bolt                       | Historical independent report delivered                                                                       | Rows 1–3 → Development — Aria                 |
+| Nexo API replay (`83386cb9`)                              | Development — Bolt                       | `897b9a4` and original replay evidence delivered                                                              | Rows 1 and 2 → Development — Aria             |
+| Final required verification (`720e0244`)                  | Development — Bolt                       | Historical report delivered; corrected-revision rerun required                                                | Rows 1–3 → Development — Aria                 |
+| `PLN-01` acceptance criteria                              | Planning — Clio, for Sage                | [Acceptance contract](2026-10-21-implementation-coverage-acceptance.md) delivered                             | Rows 1–3 → Development — Aria                 |
+| CEO acceptance review (`e277f358`)                        | Planning — Clio, for Sage                | This consolidation delivered; decision HOLD                                                                   | Rows 1–3 → Development — Aria                 |
+| Implementation-owner checklist validation                 | Operations — Turbo, accountable to Atlas | [Revision 2 checklist](../procedures/directive-planning-checklist.md) delivered                               | Row 2 → Development — Aria                    |
+| Implementation-owner assignment review                    | Operations — Turbo, accountable to Atlas | [Review revision](2026-10-21-operations-review-revision.md) delivered within its stated regression scope      | Row 3 → Development — Aria                    |
+| Code-change directive procedure                           | Operations — Turbo, accountable to Atlas | [Procedure](../procedures/code-change-directives.md) delivered                                                | Rows 1–3 → Development — Aria                 |
+| Coverage presentation specification                       | Design — Luna, for Pixel                 | [Specification](../design/implementation-coverage-presentation.md) delivered; no production UI change claimed | Row 2 → Development — Aria                    |
+| Independent review regressions (`ec497805`)               | QA/QC — Lint, for Hawk                   | `d6b9eda`; [QA report](2026-10-21-qa-planning-revision.md); approval withheld                                 | Rows 1 and 2 → Development — Aria             |
+
+Unlinked supporting items in this review map: **0**. Operations ownership is
+confirmed by notes 102, 108 and 145 and its integrated revision report; it is no
+longer recorded as an unnamed “Operations” handoff. The Operations review's
+13 passing tests and conditional dispositions predate the added mixed-request
+regressions. They do not override QA's later HOLD or certify live assignments.
 
 ## Acceptance matrix
 
-Criteria are defined in the [Planning acceptance contract](2026-10-21-implementation-coverage-acceptance.md).
-Production and test paths below are relative to `server/modules/` unless noted.
-“Verified” means the named Development report supplies passing results at the
-reviewed implementation baseline plus the identified final patch, with the scope
-stated in that row. Source links now address the integrated correction in this
-checkout. The Development report remains a record of its original verification
-run; this continuation establishes integration identity, not a new test run.
+Criteria follow the [Planning acceptance contract](2026-10-21-implementation-coverage-acceptance.md).
+The latest execution evidence is [QA's independent report](2026-10-21-qa-planning-revision.md)
+and [structured results](evidence/qa-planning-revision.json). Passing historical
+cases establish only their documented scope.
 
-| Criterion / requirement | Production implementation | Executable verification and observed evidence | Review state |
-| --- | --- | --- | --- |
-| AC-01: capability-based participation, without a Development keyword; preserve relevant departments and supported UI languages | [workflow/agents/implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts); [routes/collab/task-delegation.ts](../../server/modules/routes/collab/task-delegation.ts); [workflow/orchestration/meetings/leader-selection.ts](../../server/modules/workflow/orchestration/meetings/leader-selection.ts) | [implementation-intent.test.ts](../../server/modules/workflow/agents/implementation-intent.test.ts), [task-delegation.planning.test.ts](../../server/modules/routes/collab/task-delegation.planning.test.ts), [leader-selection.test.ts](../../server/modules/workflow/orchestration/meetings/leader-selection.test.ts), [nexo-planning.api.test.ts](../../server/modules/routes/collab/nexo-planning.api.test.ts): Operations-only inference gains Development; representative EN/KO/JA/ZH cases pass. | Verified for the representative language and Nexo cases plus the final mixed-request patch; F-01 is resolved in that patch. |
-| AC-02: every requested unit gets executable code/test deliverables and retains branch constraints | [workflow/agents/planning-graph.ts](../../server/modules/workflow/agents/planning-graph.ts) unit matching/validation/repair; [workflow/agents/implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts) unit extraction and prompt rules | [implementation-intent.test.ts](../../server/modules/workflow/agents/implementation-intent.test.ts), [planning-graph.test.ts](../../server/modules/workflow/agents/planning-graph.test.ts), [planned-approval.coverage.test.ts](../../server/modules/workflow/orchestration/planned-approval.coverage.test.ts), HTTP replay: two distinct #84/#85 items contain production code, regression tests and a separate branch for each issue; combined units, missing tests and shared branches are rejected. | Verified for the Nexo reference and final mixed-request cases; requested tests/branches remain explicit. |
-| AC-03: supporting documents, readiness, evidence and Development-owned specifications cannot replace implementation | [workflow/agents/planning-graph.ts](../../server/modules/workflow/agents/planning-graph.ts) actionable implementation matching; conditional [workflow/core/meeting-prompt-tools.ts](../../server/modules/workflow/core/meeting-prompt-tools.ts) rules | Tests reject original support-only graph, misleading dev specifications and tests-only replacement of a product fix; valid mixed graph retains supporting work. | Verified within detected code directives. Documentation alone does not qualify as delivery. |
-| AC-04: correct/revalidate missing coverage or block with logs/CEO notification; no prompt-only enforcement | [workflow/orchestration/planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts); [routes/collab/task-delegation.ts](../../server/modules/routes/collab/task-delegation.ts); [workflow/agents/subtask-seeding.ts](../../server/modules/workflow/agents/subtask-seeding.ts) | One corrective prompt, deterministic repair, structural/semantic revalidation; cyclic/dangling/unknown-department/explicit-test-omission repairs remain unapproved. [planned-approval.coverage.test.ts](../../server/modules/workflow/orchestration/planned-approval.coverage.test.ts) includes absent leader; ownership suite covers skip/bypass blocks. HTTP replay records rejection followed by repaired acceptance. | Verified within detected code directives; no approval on unresolved invalid repair. |
-| AC-05: preserve code-writing owner through seeding, routing, materialization and execution; no noncoding fallback | [workflow/agents/subtask-seeding.ts](../../server/modules/workflow/agents/subtask-seeding.ts), [subtask-routing.ts](../../server/modules/workflow/agents/subtask-routing.ts); [routes/collab/subtask-delegation-batch.ts](../../server/modules/routes/collab/subtask-delegation-batch.ts); [routes/core/tasks/execution-run-auto-assign.ts](../../server/modules/routes/core/tasks/execution-run-auto-assign.ts), [execution-run.ts](../../server/modules/routes/core/tasks/execution-run.ts) | [subtask-implementation-ownership.test.ts](../../server/modules/routes/collab/subtask-implementation-ownership.test.ts): actual child task/executor remains `dev`; missing, offline, busy, providerless and project-scope exclusions block instead of falling back; availability is rechecked and work resumes when eligible. Per-issue descriptions reach execution prompts. | Verified; pending/blocked implementation is not completion. |
-| AC-06: preserve draft items and prerequisite keys; parallel preparation stays independent; consumers wait for implementation | [workflow/agents/planning-graph.ts](../../server/modules/workflow/agents/planning-graph.ts) structural checks, transitive dependencies and consumer repair; [workflow/orchestration/planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts) parallel drafting/full consolidation; existing dependency scheduler | [planning-graph.test.ts](../../server/modules/workflow/agents/planning-graph.test.ts), [planned-approval.coverage.test.ts](../../server/modules/workflow/orchestration/planned-approval.coverage.test.ts), existing parallel/dependency suites: all seven support items retained, nine total rows; #84 verification follows #84, combined evidence follows both; independent preparation stays parallel. | Verified in reported full API suite. Distinct parent key families are retained below, never collapsed. |
-| AC-07: docs/meeting-only work gains no code; quoted/background requests do not force code; actual mixed requests retain code | [workflow/agents/implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts); conditional prompt and graph rules | Negative announcement/research/docs/meeting cases and `Fix API authentication and write release documentation` pass. Stored project goals do not manufacture new code intent. | Verified for negative controls, split-clause input and seven new same-clause/control regressions in the final patch. |
-| AC-08: department choice/reason, missing units, repair/block and accepted-plan/child coverage are reviewable | [routes/collab/task-delegation.ts](../../server/modules/routes/collab/task-delegation.ts) coverage/override log; [workflow/orchestration/planned-approval.ts](../../server/modules/workflow/orchestration/planned-approval.ts) rejection/repair log and graph memoization; seeding/routing | HTTP regression asserts `Planning pre-check related departments: operations, dev`, `override=added dev; inferred=operations`, per-unit rejection and `revalidation passed`; graph-to-child assignment evidence is reported. | Verified for persisted graph/logs. Medium summary-prose warning F-03 remains; Design delivered a specification, not a new production presentation feature. |
-| AC-09: final completion requires production diff and reported required verification, with unavailable/failed checks visible | Production commits above; Development regression and independent verification reports below | All five parent-required commands pass again on the final patch; web 178, API 582. Additional delegated `check` command is explicitly unavailable. | Verified evidence accepted; exact companion patch and report are now integrated. The prior integration HOLD is closed; CEO review/publication remains separate. |
+| Criterion                                                                | Current evidence and disposition                                                                                                                                                                 |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AC-01: capability-based participation and supported languages            | **Unmet.** Five mixed code/documentation directives, including EN/KO/JA/ZH examples, return false implementation intent.                                                                         |
+| AC-02: executable work per requested unit, tests and separate branches   | **Unmet for mixed inputs.** The original Nexo case retains two implementations, tests and branch instructions; the mixed case persists zero.                                                     |
+| AC-03: support work cannot replace implementation                        | Detected-intent graph checks pass; the false-intent path still admits seven support rows without implementation. Overall requirement remains unproven.                                           |
+| AC-04: repair/revalidate or block with logs and notification             | **Unmet.** Mixed Nexo intake returns HTTP 200 and seeds the deficient plan without activating coverage repair. Existing invalid-repair/block tests pass.                                         |
+| AC-05: preserve coding owner through execution                           | Existing materialization/executor, no-fallback and unavailable-developer cases pass within QA's full suite. No new independent defect reported here.                                             |
+| AC-06: preserve draft items, parallel planning and `depends_on`          | Existing parallel/dependency tests pass. Original replay retains seven supports plus two implementations and consumer dependencies; the failing mixed replay has no implementation dependencies. |
+| AC-07: docs/meeting-only remain non-code; actual mixed work retains code | **Unmet for mixed work.** Four added docs-only controls pass, including stored code-change project goals; five positive mixed cases fail. Existing non-code controls pass.                       |
+| AC-08: reviewable department choices, coverage/repair/block logs         | Original replay verifies `operations, dev`, override reasons and repair logs. No claim that the false-intent mixed path meets coverage logging requirements. MEDIUM prose warning remains.       |
+| AC-09: production diff and required checks before completion             | **Unmet.** Production diff exists, but full API run exits 1 with six failures. Earlier 582-test green report cannot close this gate.                                                             |
 
-## Nexo before/after and execution evidence
+## QA-HIGH-01 and Development correction requirements
 
-Bolt's [independent report](2026-10-21-development-independent-verification.md)
-and [HTTP regression](../../server/modules/routes/collab/nexo-planning.api.test.ts)
-exercise authenticated `POST /api/inbox`, real delegation, leader selection,
-meeting orchestration and in-memory SQLite graph seeding. Department inference
-returns only Operations and every model response returns the seven-item deficient
-graph, including the corrective response. Production repair supplies the owners.
+Accountable production owner: **Development — Aria**. Correction scope: intent
+recognition and preservation of requested implementation units/constraints through
+the existing planning path. Planning supplies requirements and evidence; it does
+not implement another department's code or claim a new executor assignment.
 
-| Input revision | Observed result from Development | Evidence |
-| --- | --- | --- |
-| Local `main` `66a24ea7df2435ef897c48c147deb7ec572c01c2` | HTTP 200, no Development owner; identical regression exits 1 on expected two owners (older four-item legacy shape). | [main.json](evidence/nexo-api-replay/main.json) |
-| Immediate pre-coverage `5561a27` | HTTP 200, exactly seven Operations/Planning support items, no Development owner; regression exits 1 on ownership assertion. | [pre-fix.json](evidence/nexo-api-replay/pre-fix.json) |
-| Production `1139826` plus regression committed as `897b9a4` | HTTP 200, nine rows: all seven supports and two pending Development implementations; regression and final 575-test API suite exit 0. | [integrated.json](evidence/nexo-api-replay/integrated.json) |
+QA locates the defect in
+[implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts).
+The supporting-target filter discards a remaining clause containing documentation
+even when it also requests a code fix. The prior `e359f32` splitter correction
+handles only a subset of mixed requests. `requiresImplementation=false` bypasses
+downstream coverage validation, repair and ownership guards.
 
-| Fixture unit | Persisted implementation owner/item | Retained deliverables | Verification/dependencies |
-| --- | --- | --- | --- |
-| #84 | Development / seeded agent `developer`; “Implement code change for #84” | Production code, regression tests, separate branch for this issue; no prerequisite on unrelated preparation | Operations / `operator` owns “Verify completed fix #84”, depending on its actual implementation row ID. |
-| #85 | Development / seeded agent `developer`; “Implement code change for #85” | Production code, regression tests, a separate issue branch; independent of #84 | Planning / `planner` owns combined completion evidence, depending on both implementation row IDs. The fixture does not include a separate #85 verification item; #85's regression tests remain implementation deliverables. |
+Required behavior on the existing enabled regressions:
 
-Root stays `collaborating`, dispatcher receives the root ID and root execution
-does not start while code rows remain pending. The additional ownership suite
-checks actual delegated children and executor assignments, including preservation
-of both issue descriptions in a batch. It verifies preservation of requested
-branch instructions, not creation of real per-issue branches by a CLI agent.
+- Preserve implementation for `Fix the first two open issues on Nexo, #84 and #85, add tests and documentation, one branch per issue`; retain two units, production code, regression tests and separate branch instructions.
+- Preserve implementation for `Fix API authentication and documentation`, `버그를 수정하고 문서를 업데이트해`, `APIのバグを修正して文書を更新`, and `修复登录功能并更新文档`.
+- Keep documentation-only controls negative, including requests mentioning API/tests and stored code-change project goals. Do not resolve this by treating every support request as code work.
+- Through actual intake/planning/seeding, reject and repair the deficient support-only model graph or block it clearly. Never persist the mixed Nexo plan with no Development owner.
+- Keep existing parallel planning, per-issue tests/branch constraints, ownership and `depends_on` behavior passing. Keep all six new regressions enabled.
+- Development must report the corrected production revision and all five required checks; QA must reassess the HIGH finding before Planning replaces HOLD with acceptance.
 
-The replay stubs model calls, final execution dispatch and ancillary ingress/
-notification services. It is an isolated HTTP integration regression, not a live
-model/deployment test. Fixture `/workspace/nexo` is inert metadata. No live
-checkout/database or Nexo repository was used by the reported replay.
+[Independent acceptance suite](../../server/test/qa/planning-implementation.acceptance.test.ts)
+and [Nexo HTTP replay](../../server/modules/routes/collab/nexo-planning.api.test.ts)
+are already integrated. New tests that merely mirror implementation are not
+requested. The existing failures supply the acceptance boundary.
+
+## Nexo HTTP evidence
+
+| Directive form                                                                                                      | QA-observed result                                                                                                                                                                    | Acceptance                                             |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Original sentence-separated request: fix #84/#85, regression tests, lint/tests, observability, one branch per issue | HTTP 200; nine rows, including two pending Development implementations; seven support rows retained. #84 verification follows #84; combined evidence follows both implementation IDs. | Pass for this input.                                   |
+| Comma-separated mixed request: fix #84/#85, add tests and documentation, one branch per issue                       | HTTP 200; exactly seven Operations/Planning support rows; zero Development owners; dependencies empty.                                                                                | **Fail; original failure shape remains reproducible.** |
+
+Both graphs and command exits are retained in
+[QA evidence JSON](evidence/qa-planning-revision.json). The regression uses local
+Express and in-memory SQLite; model calls, external execution and ancillary
+integrations are stubbed. It does not use the live checkout/database or run Nexo
+code. Seeded fixture agents `developer`, `operator` and `planner` establish test
+assignments, not actual CLI branch creation or completion of Nexo issues.
+
+Earlier [Development replay evidence](2026-10-21-development-independent-verification.md)
+compares local main and pre-coverage `5561a27` (no Development owner) with the
+original passing production replay. That history remains valid for that input;
+it does not refute the newer mixed-request failure.
+
+## Reviewed integration and production scope
+
+Current integration at review: `3efaeb0`. QA commit `d6b9eda` and Operations
+commit `4528a08` are integrated by the system. Production commits remain
+`2ad82c1`, `1139826`, `e359f32`; `897b9a4` supplied the initial HTTP regression.
+QA's reviewed production at `82ceced` matches the server implementation at the
+previous parent `fbdc22b`; this continuation checks production identity against
+that baseline without applying patches. The focused production diff against
+`5561a27` remains 12 TypeScript files, +691/-54. Source presence resolves the
+initial “76-line document only” concern; behavior still requires correction.
+
+The prior two-file production/test patch hash
+`881644babade4c807ba94027f9aa7cf0fdbc2c4e08da8aca8250ff389b00f9f2`
+proved integration identity for `e359f32`. It did not prove universal mixed-request
+coverage. Earlier reports remain dated evidence rather than current sign-off.
 
 ## Ownership and prerequisite reconciliation
 
@@ -115,20 +152,20 @@ The following map uses actual delegated item IDs from scoped task references.
 Aria is the accountable implementation owner; Nova and Bolt are named executors
 in their reports, resolving the earlier unnamed-verifier concern.
 
-| Existing key / obligation | Delegated item ID | Accountable owner / evidence executor |
-| --- | --- | --- |
-| `DEV-01`: implementation participation | `e7d017d3-4f56-4786-b0ff-092306277ff5` | Aria / Nova; `2ad82c1`, `1139826` |
-| `DEV-02`: coverage acceptance | `4c5f3cef-c961-45b6-8547-5aa80e1b1f05` | Aria / Nova; same production commits |
-| `DEV-03`: execution ownership | `42817db7-dd3c-454f-9055-991d3335cae3` | Aria / Nova; `2ad82c1`, ownership regressions |
-| `QA-01`: regression definition | `4fffb9cc-2637-4be0-8eb6-a44982c1ce75` | Nova / Development, explicitly named in regression report |
-| `DEV-04`: routing/materialization regressions | `7f367e5e-e352-4565-a9a5-4df7723be0b8` | Aria / Nova; follow-up regression report |
-| `QA-02`: independent verification | `6ad1c405-ddce-48ca-9c2d-6996c4475ab9` | Bolt / Development, independent report |
-| `DEV-1`: intent/units | `208c7cd1-67ee-443a-bc56-2abaaa662f6c` | Aria / Nova; `2ad82c1`; Bolt owns the tested F-01 correction |
-| `DEV-2`: pre-check inclusion | `3088bf6c-b2fa-42fe-8cc8-aa86861ef399` | Aria / Nova; follow-up report |
-| `DEV-3`: validation/repair | `d62f9b47-a930-417a-88f1-9793b1216bb7` | Aria / Nova; `1139826` |
-| Conditional prompts; local key not established in scoped description | `96dfd9e7-7a6f-4d84-ad90-da952accf6d8` | Aria / Nova; `2ad82c1` |
-| Nexo API replay | `83386cb9-319e-474c-8496-7346f71bc51c` | Bolt; `897b9a4` |
-| Final required verification/report | `720e0244-61c7-4a47-8025-b8e71af46e3b` | Aria / Bolt; superseding report received for `897b9a4` plus tested mixed-intent patch on `climpire/732f346c` |
+| Existing key / obligation                                            | Delegated item ID                      | Accountable owner / evidence executor                                                                        |
+| -------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `DEV-01`: implementation participation                               | `e7d017d3-4f56-4786-b0ff-092306277ff5` | Aria / Nova; `2ad82c1`, `1139826`                                                                            |
+| `DEV-02`: coverage acceptance                                        | `4c5f3cef-c961-45b6-8547-5aa80e1b1f05` | Aria / Nova; same production commits                                                                         |
+| `DEV-03`: execution ownership                                        | `42817db7-dd3c-454f-9055-991d3335cae3` | Aria / Nova; `2ad82c1`, ownership regressions                                                                |
+| `QA-01`: regression definition                                       | `4fffb9cc-2637-4be0-8eb6-a44982c1ce75` | Nova / Development, explicitly named in regression report                                                    |
+| `DEV-04`: routing/materialization regressions                        | `7f367e5e-e352-4565-a9a5-4df7723be0b8` | Aria / Nova; follow-up regression report                                                                     |
+| `QA-02`: independent verification                                    | `6ad1c405-ddce-48ca-9c2d-6996c4475ab9` | Bolt / Development, independent report                                                                       |
+| `DEV-1`: intent/units                                                | `208c7cd1-67ee-443a-bc56-2abaaa662f6c` | Aria / Nova; `2ad82c1`; Bolt owns the tested F-01 correction                                                 |
+| `DEV-2`: pre-check inclusion                                         | `3088bf6c-b2fa-42fe-8cc8-aa86861ef399` | Aria / Nova; follow-up report                                                                                |
+| `DEV-3`: validation/repair                                           | `d62f9b47-a930-417a-88f1-9793b1216bb7` | Aria / Nova; `1139826`                                                                                       |
+| Conditional prompts; local key not established in scoped description | `96dfd9e7-7a6f-4d84-ad90-da952accf6d8` | Aria / Nova; `2ad82c1`                                                                                       |
+| Nexo API replay                                                      | `83386cb9-319e-474c-8496-7346f71bc51c` | Bolt; `897b9a4`                                                                                              |
+| Final required verification/report                                   | `720e0244-61c7-4a47-8025-b8e71af46e3b` | Aria / Bolt; superseding report received for `897b9a4` plus tested mixed-intent patch on `climpire/732f346c` |
 
 Retain the recorded edges: `DEV-04` follows `DEV-01`, `DEV-02`, `DEV-03`,
 `QA-01`; `QA-02` follows `DEV-04`; this review follows `PLN-01` and `QA-02`.
@@ -138,109 +175,60 @@ The separate final-verification edge list is `DEV-1`, `DEV-2`, `DEV-3`, `DEV-4`,
 do not silently substitute `DEV-04` or deduplicate the obligations. This review
 does not change task assignments or the persisted parent graph.
 
-The [Operations review](2026-10-21-operations-implementation-owner-review.md)
-was a dated HOLD before the production and replay evidence arrived. Its
-materialization/routing and historical-replay evidence requests are now answered
-for this project's regression acceptance. The verifier is named above. This does
-not retroactively certify historical live Nexo assignments or claim Operations
-issued a new manual PASS; that owner's original record remains unchanged.
-
 ## Required command results
 
-Sources: Bolt's [independent verification](2026-10-21-development-independent-verification.md)
-and the superseding [final verification report](2026-10-21-development-final-verification.md)
-(note 124), originally read in its owner's worktree `climpire/732f346c` and now
-present in this checkout through `e359f32`. The latter ran all six commands on
-exact HEAD
-`897b9a46126ff3af99bad17c6b103c4626c43a95` **plus the two-file patch identified
-above**, 2026-10-21 14:42 UTC. It supersedes note 120's earlier no-production-change
-and 575-test report. Runtime: Node 24.20.0, pnpm 10.30.1. Planning did not rerun
-these commands. The final report and raw logs remain Development-owned; raw logs
-were recorded in the verifier's ignored `tasks/verification/` directory and are
-not claimed as integrated artifacts. No cross-worktree copy or integration was
-performed by Planning.
+Latest source: QA commit `d6b9eda`, [report](2026-10-21-qa-planning-revision.md)
+and [command/HTTP evidence](evidence/qa-planning-revision.json), at production
+`82ceced` plus the enabled QA test additions now integrated here. Runtime:
+Node 24.20.0, pnpm 10.30.1. Planning did not rerun tests or these project checks.
+The web run preceded the API-test-only additions and used the same production
+and frontend tree, as recorded by QA.
 
-| Command | Exit | Reported outcome |
-| --- | --- | --- |
-| `pnpm run format:check` | 0 | Pass; all matched files conform. |
-| `pnpm run lint` | 0 | Pass; zero errors, 42 warnings. |
-| `pnpm run build` | 0 | Pass; TypeScript and Vite, existing large-chunk warnings. |
-| `pnpm run test:web --run` | 0 | Pass; 39 files / 178 tests. |
-| `pnpm run test:api --run` | 0 | Pass; 85 files / 582 tests, including HTTP replay and seven new mixed-intent regressions. |
-| `pnpm run check` (additional delegated item) | 1 | **Unavailable**: missing script, `ERR_PNPM_NO_SCRIPT`. `package.json` has no `check` entry; build checks do not turn this into a pass. |
+| Command                   | QA-reported exit | Latest reported outcome                                                                                       |
+| ------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `pnpm run format:check`   | 0                | Pass.                                                                                                         |
+| `pnpm run lint`           | 0                | Pass; zero errors, 42 existing warnings.                                                                      |
+| `pnpm run build`          | 0                | Pass; existing bundle-size warning.                                                                           |
+| `pnpm run test:web --run` | 0                | 39 files, 178 tests pass.                                                                                     |
+| `pnpm run test:api --run` | 1                | **586 pass, six fail**; two files fail. Five positive mixed-intent cases and one mixed Nexo HTTP replay fail. |
 
-The first five are the CEO's full required list. The extra `check` is disclosed
-as unavailable, not treated as a parent-required failure or silently replaced.
-Initial harness/baseline setup failures and their corrected reruns are documented
-in the independent report; final baseline failures are behavioral ownership
-failures, rather than setup failures. All required checks were rerun after the
-mixed-intent correction. The earlier 575-test suite alone was not used to close
-F-01.
+All 582 existing API tests and four added documentation-only controls pass.
+This does not make the API check pass. The prior
+[Development final report](2026-10-21-development-final-verification.md) recorded
+582 API tests passing before the new regressions; it remains historical. The
+optional `check` script is unavailable and is not a CEO-required command.
 
-## Remaining findings and CEO disposition
+## Review disposition and remaining gates
 
-1. **F-01 — HIGH, resolved and integrated in `e359f32`.**
-   [implementation-intent.ts](../../server/modules/workflow/agents/implementation-intent.ts)
-   rejected an entire execution clause containing a supporting target. Planning
-   sent source-review examples to Bolt (note 118) and parent Planning (note 119).
-   Bolt confirmed two failing regressions at unchanged `897b9a4`, exit 1 (2 fail,
-   41 pass): “Fix API authentication with tests and documentation” and the
-   analogous #84/#85 request with separate branches. The separate “and update
-   documentation” example already passed and is not a reproduced defect. The
-   six-line production correction separates supplemental
-   with/including/alongside/plus deliverables before intent classification. Seven
-   added regressions check code ownership, missing-graph rejection, both issue
-   units, branch/test constraints, docs-only controls and exclusion of issue
-   references mentioned only in documentation. Targeted intent suite: 44 pass,
-   exit 0. Final full API suite: 582 pass, exit 0. Planning reviewed the patch
-   read-only and matched the supplied hash. Detection remains deterministic and
-   heuristic; representative supported-language cases are verified, not an
-   exhaustive proof over arbitrary natural-language wording.
-2. **F-02 — verification reporting and integration HOLD resolved.**
-   Notes 120 and 124 answer note 117; note 124 supersedes the initial baseline
-   report after F-01's fix. Exact patch identity, all command exits and unavailable
-   `check` are recorded above. No unresolved executable failure remains. System
-   integration now includes the Development-owned two-file correction and final
-   report in `e359f32`, followed by this Planning report in `8a5d4f7` and
-   integration HEAD `82ceced`. The integrated two-file diff matches the tested
-   SHA-256 above; the intervening changes are documentation only. Reviewing
-   `897b9a4` alone would leave the confirmed HIGH defect present. Planning did
-   not merge, cherry-pick, commit another owner's files or change board status.
-3. **F-03 — MEDIUM, report only:** Nova and Bolt report that model summary
-   prose can omit implementation items added by deterministic repair, although
-   the accepted, memoized and persisted graph includes them. No presentation
-   code change is requested by this Planning batch under the MVP review policy.
-   The Design specification is supporting evidence, not proof that all proposed
-   presentation fields were implemented.
-4. Existing lint and bundle warnings remain visible. No push, PR or GitHub
-   comment is authorized; CEO publication follows final review. Planning makes
-   no changes to the live checkout or application database.
+- **QA-HIGH-01: open, blocks acceptance.** Aria/Development owns the production correction. The enabled tests and explicit requirements above define the handoff; supporting documentation cannot substitute for it.
+- **Prior F-01: partial correction integrated.** `e359f32` resolves its original examples; QA-HIGH-01 proves the broader requirement still fails. Do not reuse “fully tested mixed-request correction” as current acceptance language.
+- **Design revisions: consolidated.** Three actual production outcomes have named Development accountability and every supporting item links to those outcomes. This document is the requested static coverage presentation, not a new live UI feature.
+- **Operations revisions: consolidated within scope.** Revision 2 procedures and named support handoffs are present. Its earlier regression PASS is conditional evidence, not parent or independent QA approval.
+- **F-03: MEDIUM, report only.** Model summary prose can omit deterministically repaired implementation items even where the persisted graph is correct. No production presentation change is requested under the review policy.
+- Existing lint and bundle warnings remain. CEO review/publication is separate; no push, PR, GitHub comment or Git integration operation is performed by Planning.
 
-The CEO can review the focused production changes, demonstrated Nexo recovery
-and fully tested mixed-request correction. The evidence supports acceptance of
-that combined implementation, now present in the checkout. The prior integration
-HOLD is closed; final CEO review and publication remain with the CEO.
-Supporting Planning, Operations and Design documents do not substitute for those
-production artifacts.
+Resubmission requires the Development correction, both currently failing suites
+passing, all five required checks reported on the corrected revision, and QA's
+updated disposition. Until then the parent directive is incomplete.
 
 ## Planning review record
 
-- Read the full parent directive in both scoped reference chunks and the
-  delegated implementation/verification checklists; initial inbox was empty.
-- Notes 117–119 requested current verification and escalated F-01; notes 120,
-  121 and 124 were read and acknowledged through 124. Notes 122–123 requested
-  the corrected final evidence and exact patch identity. Parent note 125 carries
-  the final evidence decision and integration gate.
-- A closing acknowledgement to the Development task returned HTTP 409 after its
-  completion; no new work was requested. The parent handoff succeeded. This does
-  not change the received final report or its verification results.
-- Reviewed relative evidence/source links and documentation whitespace. The
-  local `tasks/todo.md` records this review; `/tasks/` is intentionally ignored
-  by the repository. No production files or another owner's artifacts were
-  modified. No Planning test execution or Git integration operation occurred.
-- Parent continuation read and reconciled inbox notes 99–126, including the
-  implementation, Operations HOLD, verification and final Planning handoffs.
-  Confirmed system integration at `82ceced`, presence of `e359f32`'s three files,
-  exact tested patch hash and documentation-only subsequent changes. This
-  continuation updates only the Planning decision; prior execution reports
-  retain their historical wording and test attribution.
+Read and reconciled inbox through note 154. Notes 139, 146 and 154 supersede
+historical green acceptance; notes 134/144/145 establish Operations revisions;
+note 142 supplies Design's coverage presentation and asks for named Operations
+ownership. This revision preserves owner/key mappings, corrects the decision and
+check counts, and keeps the HIGH production correction outside Planning scope.
+Local `tasks/todo.md` and `tasks/lessons.md` record this review; `/tasks/` is
+intentionally ignored. Only this Planning report is changed for delivery.
+
+The correction handoff to the previous Development verification task
+`732f346c-82b0-4e44-8245-8d254fe3428f` returned HTTP 409
+`recipient_unavailable` because that task is complete. No new Development run or
+assignment is claimed. The correction specification above is ready for the
+orchestrator to assign to Aria/Development; this Planning delivery must not be
+interpreted as closure of QA-HIGH-01.
+
+Planning documentation verification: Prettier check passed; all 29 relative
+source/evidence links resolve; `git diff --check` passed. Production source is
+unchanged from QA's reviewed `82ceced` baseline (test additions are present).
+Closing inbox after note 154 was empty; handled notes were acknowledged through 154. No tests were executed by Planning.
