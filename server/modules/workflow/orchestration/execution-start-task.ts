@@ -83,7 +83,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     execAgent: any,
     deptId: string | null,
     deptName: string,
-    options?: { reuseWorktree: boolean },
+    options?: { reuseWorktree: boolean; recoveryNote?: string },
   ): void {
     const execName = execAgent.name_ko || execAgent.name;
     const t = nowMs();
@@ -264,6 +264,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         deptPromptBlock,
         `NOTE: You are working in an isolated Git worktree branch (climpire/${taskId.slice(0, 8)}). Commit your changes normally.`,
         interruptPromptBlock,
+        options?.recoveryNote ? "[Run Recovery] " + options.recoveryNote : "",
         continuationInstruction,
         runInstruction,
       ],
@@ -330,6 +331,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         logFilePath,
         modelForProvider,
         reasoningLevel,
+        ...(options?.recoveryNote ? [{ resume: true }] : []),
       );
       child.on("close", (code: number | null) => {
         handleTaskRunComplete(taskId, code ?? 1);

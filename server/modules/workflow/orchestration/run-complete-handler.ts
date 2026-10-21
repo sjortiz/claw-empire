@@ -1,3 +1,4 @@
+import { hasAutomaticRunRetry, queueTaskRunRecovery, resumeQueuedTaskRun } from "../core/run-recovery.ts";
 import { continueTaskForAgentNotes } from "../core/agent-coordination.ts";
 import fs from "node:fs";
 import path from "node:path";
@@ -285,6 +286,17 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       })
     )
       return;
+
+    if (
+      exitCode !== 0 &&
+      finalExitCode !== 0 &&
+      queueTaskRunRecovery(deps, taskId, "Automatic retry after agent process failure", finalExitCode)
+    ) {
+      // The durable queue is claimed before scheduling. A second close event or
+      // server restart sees planned, not another failed run.
+      setTimeout(() => resumeQueuedTaskRun(deps, taskId), 0).unref();
+      return;
+    }
 
     // Auto-complete own-department subtasks on CLI success; foreign ones get delegated
     if (finalExitCode === 0) {
@@ -631,6 +643,24 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         }, 2500);
       }, 2500);
     } else {
+      const retryExhausted = exitCode !== 0 && hasAutomaticRunRetry(db, taskId);
+      if (retryExhausted) {
+        const lang = resolveLang(task.description ?? task.title);
+        notifyCeo(
+          pickL(
+            l(
+              [`'${task.title}' 자동 재시도도 실패했습니다. Inbox로 이동합니다 (exit code: ${finalExitCode}).`],
+              [
+                `Task '${task.title}' failed again after its one automatic retry; moved to Inbox (exit code: ${finalExitCode}).`,
+              ],
+              [`'${task.title}' は自動再試行も失敗したため Inbox に移動しました (exit code: ${finalExitCode})。`],
+              [`任务 '${task.title}' 自动重试后仍失败，已移至 Inbox（exit code: ${finalExitCode}）。`],
+            ),
+            lang,
+          ),
+          taskId,
+        );
+      }
       // ── FAILURE: Reset to inbox, team leader reports failure ──
       db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(t, taskId);
 
@@ -658,10 +688,12 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           "Agent note continuation failed; prior worktree/branch preserved and notes returned to inbox.",
         );
       }
-      if (failWtInfo && !wasNoteContinuation) {
+      if (failWtInfo && !wasNoteContinuation && exitCode === 0) {
         cleanupWorktree(failWtInfo.projectPath, taskId);
         appendTaskLog(taskId, "system", "Worktree cleaned up (task failed)");
       }
+
+      if (exitCode !== 0) appendTaskLog(taskId, "system", "Failed run worktree/branch preserved for manual recovery");
 
       if (task) {
         const leader = findTeamLeader(task.department_id);
@@ -721,18 +753,19 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           }, 1500);
         }
         const failLang = resolveLang(task.description ?? task.title);
-        notifyCeo(
-          pickL(
-            l(
-              [`'${task.title}' 작업 실패 (exit code: ${finalExitCode}).`],
-              [`Task '${task.title}' failed (exit code: ${finalExitCode}).`],
-              [`'${task.title}' のタスクが失敗しました (exit code: ${finalExitCode})。`],
-              [`任务 '${task.title}' 失败（exit code: ${finalExitCode}）。`],
+        if (!retryExhausted)
+          notifyCeo(
+            pickL(
+              l(
+                [`'${task.title}' 작업 실패 (exit code: ${finalExitCode}).`],
+                [`Task '${task.title}' failed (exit code: ${finalExitCode}).`],
+                [`'${task.title}' のタスクが失敗しました (exit code: ${finalExitCode})。`],
+                [`任务 '${task.title}' 失败（exit code: ${finalExitCode}）。`],
+              ),
+              failLang,
             ),
-            failLang,
-          ),
-          taskId,
-        );
+            taskId,
+          );
       }
 
       // Even on failure, trigger next cross-dept cooperation so the queue doesn't stall

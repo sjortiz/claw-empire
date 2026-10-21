@@ -50,7 +50,7 @@ export function createCliTools(deps: CreateCliToolsDeps) {
     provider: string,
     model?: string,
     reasoningLevel?: string,
-    opts: { noTools?: boolean } = {},
+    opts: { noTools?: boolean; resumeSessionId?: string } = {},
   ): string[] {
     const { noTools = false } = opts;
     switch (provider) {
@@ -60,7 +60,9 @@ export function createCliTools(deps: CreateCliToolsDeps) {
         if (model) args.push("-m", model);
         if (reasoningLevel) args.push("-c", `model_reasoning_effort="${reasoningLevel}"`);
         if (!noTools) args.push("--yolo");
-        args.push("exec", "--json");
+        args.push("exec");
+        if (opts.resumeSessionId) args.push("resume", opts.resumeSessionId);
+        args.push("--json");
         if (noTools) args.push("--sandbox", "read-only");
         return args;
       }
@@ -78,12 +80,14 @@ export function createCliTools(deps: CreateCliToolsDeps) {
         if (model) args.push("--model", model);
         const effort = normalizeClaudeEffort(reasoningLevel);
         if (effort) args.push("--effort", effort);
+        if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
         // Keep no-tools as a single argv token so empty value is preserved across shells.
         if (noTools) args.push("--tools=");
         return args;
       }
       case "gemini": {
         const args = ["gemini"];
+        if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
         if (model) args.push("-m", model);
         if (noTools) {
           args.push("--approval-mode", "plan", "--output-format=stream-json");
@@ -94,11 +98,13 @@ export function createCliTools(deps: CreateCliToolsDeps) {
       }
       case "kimi": {
         const args = ["kimi", "--print", "--output-format=stream-json"];
+        if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
         if (model) args.push("-m", model);
         return args;
       }
       case "opencode": {
         const args = ["opencode", "run"];
+        if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
         if (model) args.push("-m", model);
         args.push("--format", "json");
         return args;

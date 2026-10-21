@@ -4,15 +4,19 @@ import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
 import { initializeSubtaskDelegation } from "./subtask-delegation.ts";
 
-const { delegateBatch } = vi.hoisted(() => ({ delegateBatch: vi.fn() }));
+const { delegateBatch, captureBatchDeps } = vi.hoisted(() => ({ delegateBatch: vi.fn(), captureBatchDeps: vi.fn() }));
 vi.mock("./subtask-delegation-batch.ts", () => ({
-  createSubtaskDelegationBatch: () => ({ delegateSubtaskBatch: delegateBatch }),
+  createSubtaskDelegationBatch: (deps: any) => {
+    captureBatchDeps(deps);
+    return { delegateSubtaskBatch: delegateBatch };
+  },
 }));
 
 let db: DatabaseSync;
 const resumeRoot = vi.fn();
 beforeEach(() => {
   delegateBatch.mockReset();
+  captureBatchDeps.mockReset();
   resumeRoot.mockReset();
   vi.useFakeTimers();
 });
@@ -20,7 +24,7 @@ afterEach(() => {
   vi.useRealTimers();
   db?.close();
 });
-function fixture() {
+function fixture(extra: Record<string, any> = {}) {
   db = new DatabaseSync(":memory:");
   applyBaseSchema(db);
   applyTaskSchemaMigrations(db);
@@ -45,10 +49,30 @@ function fixture() {
     activeProcesses: new Map(),
     nowMs: () => 10,
     startTaskExecutionForAgent: resumeRoot,
+    ...extra,
   } as any);
 }
 
 describe("parallel department delegation", () => {
+  it("keeps the parent subtask in progress while a failed child is queued for its automatic retry", () => {
+    const linked = new Map([["child", "dev"]]);
+    fixture({
+      stopRequestedTasks: new Set(),
+      stopRequestModeByTask: new Map(),
+      delegatedTaskToSubtask: linked,
+      handleTaskRunComplete: (id: string) => db.prepare("UPDATE tasks SET status = 'planned' WHERE id = ?").run(id),
+    });
+    db.exec(
+      "INSERT INTO tasks (id,title,status,source_task_id) VALUES ('child','Child','in_progress','root'); UPDATE subtasks SET status = 'in_progress', delegated_task_id = 'child' WHERE id = 'dev'",
+    );
+    captureBatchDeps.mock.calls[0][0].finalizeDelegatedSubtasks("child", ["dev"], 1);
+    expect(db.prepare("SELECT status,blocked_reason,delegated_task_id FROM subtasks WHERE id = 'dev'").get()).toEqual({
+      status: "in_progress",
+      blocked_reason: null,
+      delegated_task_id: "child",
+    });
+    expect(linked.get("child")).toBe("dev");
+  });
   it("starts independent departments together despite unfinished origin work and avoids duplicate launches", () => {
     const tools = fixture();
     tools.processSubtaskDelegations("root");

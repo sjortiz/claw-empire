@@ -1,5 +1,8 @@
+import { isTaskAutoRecoveryHeld } from "./task-recovery-control.ts";
+export { isTaskAutoRecoveryHeld } from "./task-recovery-control.ts";
+import { latestTaskRunEvent, resumeQueuedTaskRun } from "./run-recovery.ts";
 import { parseStoredMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
-import { createPersistentWait, hasExhaustedWait } from "./persistent-wait.ts";
+import { createPersistentWait } from "./persistent-wait.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
@@ -14,20 +17,6 @@ function ownerWait(deps: any) {
   return waiting;
 }
 
-export function isTaskAutoRecoveryHeld(deps: any, taskId: string): boolean {
-  if (deps.stopRequestedTasks?.has(taskId) || hasExhaustedWait(deps.db, taskId)) return true;
-  const task = deps.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
-  if (task?.planning_attention_reason) return true;
-  const control = deps.db
-    .prepare(
-      `SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system'
-    AND (message LIKE 'PAUSE_BREAK%' OR message LIKE 'RESUME:%' OR message LIKE '%action=apply_review_pick%')
-    ORDER BY created_at DESC, id DESC LIMIT 1`,
-    )
-    .get(taskId);
-  return String(control?.message ?? "").startsWith("PAUSE_BREAK");
-}
-
 // Both the HTTP control and recovery sweep use this driver. It deliberately
 // re-reads the owner at dispatch time rather than trusting a captured CLI slot.
 export function resumeTaskExecution(
@@ -40,7 +29,10 @@ export function resumeTaskExecution(
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
   if (!task || activeProcesses.has(taskId) || !["pending", "planned", "collaborating"].includes(task.status))
     return false;
-  if (deps.stopRequestedTasks?.has(taskId) || hasExhaustedWait(db, taskId)) return false;
+  if (isTaskAutoRecoveryHeld(deps, taskId)) return false;
+  if (latestTaskRunEvent(db, taskId).startsWith("Run recovery queued:")) {
+    return resumeQueuedTaskRun(deps, taskId);
+  }
   // Retrying a held graph restores dependency dispatch; consolidation must
   // still wait for every child to be approved and integrated.
   if (!options?.planning && deps.processSubtaskDelegations) {
@@ -102,7 +94,7 @@ export function resumeTaskExecution(
   const launch = () => {
     const fresh = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
     const owner = db.prepare("SELECT * FROM agents WHERE id = ?").get(agent.id);
-    if (!fresh || fresh.status !== "planned" || activeProcesses.has(taskId) || deps.stopRequestedTasks?.has(taskId))
+    if (!fresh || fresh.status !== "planned" || activeProcesses.has(taskId) || isTaskAutoRecoveryHeld(deps, taskId))
       return;
     if (
       !owner ||
@@ -124,7 +116,7 @@ export function resumeTaskExecution(
     db.prepare("UPDATE agents SET current_task_id = ? WHERE id = ?").run(taskId, agent.id);
     deps.startPlannedApprovalMeeting(taskId, task.title, deptId, (notes: string[] = []) => {
       const fresh = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId);
-      if (fresh?.status !== "planned" || deps.stopRequestedTasks?.has(taskId)) return;
+      if (fresh?.status !== "planned" || isTaskAutoRecoveryHeld(deps, taskId)) return;
       deps.seedApprovedPlanSubtasks(taskId, deptId, notes);
       if (notes.some((note: string) => parsePlanningGraph(note) !== null)) {
         db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(

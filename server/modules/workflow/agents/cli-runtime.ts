@@ -1,4 +1,6 @@
+import { createProviderSessionCapture, readProviderSession } from "../core/provider-session.ts";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolveCliReasoningLevel } from "../core/reasoning-effort.ts";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +9,12 @@ import { spawn, type ChildProcess } from "node:child_process";
 type CliRuntimeDeps = {
   db: any;
   logsDir: string;
-  buildAgentArgs: (provider: string, model?: string, reasoningLevel?: string) => string[];
+  buildAgentArgs: (
+    provider: string,
+    model?: string,
+    reasoningLevel?: string,
+    options?: { resumeSessionId?: string },
+  ) => string[];
   clearCliOutputDedup: (taskId: string) => void;
   normalizeStreamChunk: (chunk: Buffer, options?: { dropCliNoise?: boolean }) => string;
   shouldSkipDuplicateCliOutput: (taskId: string, stream: "stdout" | "stderr", text: string) => boolean;
@@ -226,6 +233,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     logPath: string,
     model?: string,
     reasoningLevel?: string,
+    options?: { resume?: boolean },
   ): ChildProcess {
     clearCliOutputDedup(taskId);
     // Save prompt for debugging
@@ -233,7 +241,28 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
     fs.chmodSync(promptPath, 0o600);
 
-    const args = buildAgentArgs(provider, model, reasoningLevel);
+    let nativeSession = options?.resume ? readProviderSession(db, taskId, provider, logPath) : null;
+    const resumingSession = Boolean(nativeSession);
+    // Kimi's print stream does not consistently expose session metadata. Its
+    // --session flag creates a missing named session, so allocate it durably.
+    if (provider === "kimi" && !nativeSession) {
+      nativeSession = randomUUID();
+      appendTaskLog(taskId, "system", "Provider session: " + JSON.stringify({ provider, id: nativeSession }));
+    }
+    const args = nativeSession
+      ? buildAgentArgs(provider, model, reasoningLevel, { resumeSessionId: nativeSession })
+      : buildAgentArgs(provider, model, reasoningLevel);
+    if (options?.resume)
+      appendTaskLog(
+        taskId,
+        "system",
+        resumingSession
+          ? "Provider session resuming: " + provider + " " + nativeSession
+          : "Provider session unavailable for " + provider + "; starting a new run with retained worktree changes",
+      );
+    const captureSession = createProviderSessionCapture(provider, (id) =>
+      appendTaskLog(taskId, "system", "Provider session: " + JSON.stringify({ provider, id })),
+    );
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
     const effectiveEffort = resolveCliReasoningLevel(provider, reasoningLevel, undefined);
@@ -259,6 +288,8 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
       detached: process.platform !== "win32",
       windowsHide: true,
     });
+
+    if (child.pid && child.pid > 0) appendTaskLog(taskId, "system", "Run process: pid=" + child.pid);
 
     let finished = false;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -339,6 +370,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     stdoutListener = (chunk: Buffer) => {
       touchIdleTimer();
       const text = normalizeStreamChunk(chunk, { dropCliNoise: true });
+      captureSession(text);
       if (!text) return;
       if (shouldSkipDuplicateCliOutput(taskId, "stdout", text)) return;
       safeWrite(text);

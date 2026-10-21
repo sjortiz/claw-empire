@@ -1,3 +1,4 @@
+import { holdRecoveryDuringShutdown } from "../workflow/core/task-recovery-control.ts";
 import type { ChildProcess } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket as WsSocket, WebSocketServer } from "ws";
@@ -20,16 +21,18 @@ export function registerGracefulShutdownHandlers({
   activeProcesses,
   stopRequestedTasks,
   killPidTree,
-  rollbackTaskWorktree,
   db,
   nowMs,
-  endTaskExecutionSession,
   wsClients,
   wss,
   server,
   onBeforeClose,
 }: RegisterGracefulShutdownHandlersOptions): void {
+  let shuttingDown = false;
   function gracefulShutdown(signal: string): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    holdRecoveryDuringShutdown(activeProcesses);
     console.log(`\n[Claw-Empire] ${signal} received. Shutting down gracefully...`);
 
     try {
@@ -41,12 +44,15 @@ export function registerGracefulShutdownHandlers({
     for (const [taskId, child] of activeProcesses) {
       console.log(`[Claw-Empire] Stopping process for task ${taskId} (pid: ${child.pid})`);
       stopRequestedTasks.add(taskId);
-      if (child.pid) {
+      if (child.pid && child.pid < 0) {
+        child.kill();
+      } else if (child.pid) {
         killPidTree(child.pid);
       }
       activeProcesses.delete(taskId);
 
-      rollbackTaskWorktree(taskId, "server_shutdown");
+      // Server shutdown interrupts a run; it is not a CEO cancellation.
+      // Preserve both the worktree and execution session for startup recovery.
 
       const task = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(taskId) as
         | {
@@ -54,15 +60,11 @@ export function registerGracefulShutdownHandlers({
           }
         | undefined;
       if (task?.assigned_agent_id) {
-        db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ?").run(
-          task.assigned_agent_id,
-        );
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ? AND current_task_id = ?",
+        ).run(task.assigned_agent_id, taskId);
       }
-      db.prepare("UPDATE tasks SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'in_progress'").run(
-        nowMs(),
-        taskId,
-      );
-      endTaskExecutionSession(taskId, "server_shutdown");
+      db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ? AND status = 'in_progress'").run(nowMs(), taskId);
     }
 
     for (const ws of wsClients) {

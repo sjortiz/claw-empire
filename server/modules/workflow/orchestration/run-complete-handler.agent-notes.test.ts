@@ -136,6 +136,9 @@ describe("run complete handler - agent notes", () => {
     const previouslyHandledId = addNote(db, "handled-in-earlier-run", 90);
     const otherTaskId = addNote(db, "other-task-note", 80, "target");
     session.coordinationNoteIds = [deliveredId, otherTaskId];
+    db.prepare(
+      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES ('source','system','Automatic run retry: 1/1',1)",
+    ).run();
 
     handleTaskRunComplete("source", 1);
 
@@ -156,14 +159,18 @@ describe("run complete handler - agent notes", () => {
     expect(deps.finishReview).not.toHaveBeenCalled();
   });
 
-  it("keeps the existing cleanup behavior for failures outside note continuations", () => {
+  it("preserves the worktree after an exhausted process retry outside note continuations", () => {
     const { db, deps, worktree, handleTaskRunComplete } = createHarness();
     addNote(db, "unread-after-normal-failure");
+    db.prepare(
+      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES ('source','system','Automatic run retry: 1/1',1)",
+    ).run();
 
     handleTaskRunComplete("source", 1);
 
     expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
-    expect(deps.cleanupWorktree).toHaveBeenCalledExactlyOnceWith(worktree.projectPath, "source");
+    expect(deps.cleanupWorktree).not.toHaveBeenCalled();
+    expect(deps.taskWorktrees.get("source")).toBe(worktree);
     expect(deps.reconcileDelegatedSubtasksAfterRun).toHaveBeenCalledExactlyOnceWith("source", 1);
   });
 
