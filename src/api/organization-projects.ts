@@ -385,6 +385,8 @@ export async function createProject(input: {
   github_repo?: string;
   assignment_mode?: "auto" | "manual";
   merge_policy?: Project["merge_policy"];
+  review_meeting_auto_start?: Project["review_meeting_auto_start"];
+  review_items_auto_apply?: Project["review_items_auto_apply"];
   agent_ids?: string[];
 }): Promise<Project> {
   const j = (await post("/api/projects", input)) as { ok: boolean; project: Project };
@@ -398,6 +400,8 @@ export async function updateProject(
     github_repo?: string | null;
     assignment_mode?: "auto" | "manual";
     merge_policy?: Project["merge_policy"];
+    review_meeting_auto_start?: Project["review_meeting_auto_start"];
+    review_items_auto_apply?: Project["review_items_auto_apply"];
     agent_ids?: string[];
   },
 ): Promise<Project> {

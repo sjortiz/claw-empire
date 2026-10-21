@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS projects (
   core_goal TEXT NOT NULL,
   default_pack_key TEXT NOT NULL DEFAULT 'development',
   merge_policy TEXT CHECK(merge_policy IS NULL OR merge_policy IN ('auto','manual')),
+  review_meeting_auto_start INTEGER CHECK(review_meeting_auto_start IS NULL OR review_meeting_auto_start IN (0,1)),
+  review_items_auto_apply INTEGER CHECK(review_items_auto_apply IS NULL OR review_items_auto_apply IN (0,1)),
   last_used_at INTEGER,
   created_at INTEGER DEFAULT (unixepoch()*1000),
   updated_at INTEGER DEFAULT (unixepoch()*1000)

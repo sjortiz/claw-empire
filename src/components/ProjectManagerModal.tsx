@@ -58,6 +58,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
 
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("auto");
   const [mergePolicy, setMergePolicy] = useState<MergePolicy | null>(null);
+  const [reviewMeetingAutoStart, setReviewMeetingAutoStart] = useState<boolean | null>(null);
+  const [reviewItemsAutoApply, setReviewItemsAutoApply] = useState<boolean | null>(null);
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set());
   const [agentFilterDept, setAgentFilterDept] = useState<string>("all");
   const [manualAssignmentWarning, setManualAssignmentWarning] = useState<ManualAssignmentWarning | null>(null);
@@ -121,6 +123,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
           setCoreGoal(res.project.core_goal);
           setAssignmentMode(res.project.assignment_mode || "auto");
           setMergePolicy(res.project.merge_policy ?? null);
+          setReviewMeetingAutoStart(res.project.review_meeting_auto_start ?? null);
+          setReviewItemsAutoApply(res.project.review_items_auto_apply ?? null);
           setSelectedAgentIds(new Set(res.project.assigned_agent_ids || []));
         }
       })
@@ -208,6 +212,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
     setCoreGoal("");
     setAssignmentMode("auto");
     setMergePolicy(null);
+    setReviewMeetingAutoStart(null);
+    setReviewItemsAutoApply(null);
     setSelectedAgentIds(new Set());
     setManualAssignmentWarning(null);
     pathTools.resetPathHelperState();
@@ -222,6 +228,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
     setCoreGoal(viewedProject.core_goal);
     setAssignmentMode(viewedProject.assignment_mode || "auto");
     setMergePolicy(viewedProject.merge_policy ?? null);
+    setReviewMeetingAutoStart(viewedProject.review_meeting_auto_start ?? null);
+    setReviewItemsAutoApply(viewedProject.review_items_auto_apply ?? null);
     setSelectedAgentIds(new Set(viewedProject.assigned_agent_ids || []));
     setManualAssignmentWarning(null);
     pathTools.resetPathHelperState();
@@ -233,6 +241,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
     setSaving,
     assignmentMode,
     mergePolicy,
+    reviewMeetingAutoStart,
+    reviewItemsAutoApply,
     getManualAssignmentWarning,
     setManualAssignmentWarning,
     projectPath,
@@ -408,6 +418,10 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
                   setFormFeedback={pathTools.setFormFeedback}
                   mergePolicy={mergePolicy}
                   setMergePolicy={setMergePolicy}
+                  reviewMeetingAutoStart={reviewMeetingAutoStart}
+                  setReviewMeetingAutoStart={setReviewMeetingAutoStart}
+                  reviewItemsAutoApply={reviewItemsAutoApply}
+                  setReviewItemsAutoApply={setReviewItemsAutoApply}
                   assignmentMode={assignmentMode}
                   setAssignmentMode={setAssignmentMode}
                   setManualAssignmentWarning={setManualAssignmentWarning}
@@ -431,6 +445,8 @@ export default function ProjectManagerModal({ agents, departments = [], onClose 
                       setProjectPath(viewedProject.project_path);
                       setCoreGoal(viewedProject.core_goal);
                       setMergePolicy(viewedProject.merge_policy ?? null);
+                      setReviewMeetingAutoStart(viewedProject.review_meeting_auto_start ?? null);
+                      setReviewItemsAutoApply(viewedProject.review_items_auto_apply ?? null);
                     }
                   }}
                   onStartEditSelected={startEditSelected}

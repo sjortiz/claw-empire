@@ -127,7 +127,7 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
     }
 
     const rows = db.prepare("SELECT key, value FROM settings").all() as { key: string; value: string }[];
-    const settings: Record<string, unknown> = {};
+    const settings: Record<string, unknown> = { reviewMeetingAutoStart: false, reviewItemsAutoApply: false };
     for (const row of rows) {
       try {
         const parsed = JSON.parse(row.value);
@@ -143,6 +143,11 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
     const body = req.body ?? {};
     if (Object.hasOwn(body, "mergePolicy") && !isMergePolicy(body.mergePolicy)) {
       return res.status(400).json({ ok: false, error: "invalid_merge_policy" });
+    }
+    for (const key of ["reviewMeetingAutoStart", "reviewItemsAutoApply"]) {
+      if (Object.hasOwn(body, key) && typeof body[key] !== "boolean") {
+        return res.status(400).json({ ok: false, error: `invalid_${key}` });
+      }
     }
     const officePackProfilesInPayload = (body as Record<string, unknown>)[OFFICE_PACK_PROFILES_KEY];
     const selectedOfficePackInPayload = (body as Record<string, unknown>)["officeWorkflowPack"];

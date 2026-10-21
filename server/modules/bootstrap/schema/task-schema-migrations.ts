@@ -116,6 +116,15 @@ CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(sourc
     /* already exists */
   }
 
+  // Null overrides retain global review automation settings for existing projects.
+  for (const column of ["review_meeting_auto_start", "review_items_auto_apply"]) {
+    try {
+      db.exec(`ALTER TABLE projects ADD COLUMN ${column} INTEGER CHECK(${column} IS NULL OR ${column} IN (0,1))`);
+    } catch {
+      /* already exists */
+    }
+  }
+
   // 프로젝트별 직원 직접선택 기능: assignment_mode + project_agents 테이블
   try {
     db.exec("ALTER TABLE projects ADD COLUMN assignment_mode TEXT NOT NULL DEFAULT 'auto'");

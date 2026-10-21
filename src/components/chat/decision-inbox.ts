@@ -10,6 +10,7 @@ export interface DecisionInboxItem {
   agentNameKo: string;
   agentAvatar?: string | null;
   requestContent: string;
+  informational?: boolean;
   options: DecisionOption[];
   createdAt: number;
   taskId?: string | null;

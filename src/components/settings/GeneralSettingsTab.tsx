@@ -1,5 +1,6 @@
 import type { CliProvider, MergePolicy } from "../../types";
 import type { LocalSettings, SetLocalSettings, TFunction } from "./types";
+import { GlobalReviewAutomationSettings } from "../ReviewAutomationSettings";
 
 interface GeneralSettingsTabProps {
   t: TFunction;
@@ -138,6 +139,16 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
         </div>
 
         <div>
+          <div className="mb-4">
+            <GlobalReviewAutomationSettings
+              t={t}
+              autoStart={form.reviewMeetingAutoStart === true}
+              autoApply={form.reviewItemsAutoApply === true}
+              onAutoStartChange={(value) => setForm({ ...form, reviewMeetingAutoStart: value })}
+              onAutoApplyChange={(value) => setForm({ ...form, reviewItemsAutoApply: value })}
+            />
+          </div>
+
           <label htmlFor="merge-policy" className="block text-xs mb-1" style={{ color: "var(--th-text-secondary)" }}>
             {t({
               ko: "승인 후 병합 정책",

@@ -1,3 +1,5 @@
+import { startReadyProjectReviewMeetings } from "../../../workflow/orchestration/review-automation.ts";
+import { applyAllReviewItemsAutomatically, buildAutomaticReviewInfoItems } from "./decision-inbox/review-automation.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
 import type { DecisionInboxRouteItem } from "./decision-inbox/types.ts";
@@ -173,6 +175,7 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
 
   function getDecisionInboxItems(): DecisionInboxRouteItem[] {
     const items = [
+      ...buildAutomaticReviewInfoItems(db, getPreferredLanguage()),
       ...buildProjectReviewDecisionItems(),
       ...buildReviewRoundDecisionItems(),
       ...buildTimeoutResumeDecisionItems(),
@@ -196,6 +199,9 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
     const currentItem = getDecisionInboxItems().find((item) => item.id === decisionId);
     if (!currentItem) {
       return { status: 404, payload: { error: "decision_not_found" } };
+    }
+    if (currentItem.informational) {
+      return { status: 409, payload: { error: "informational_item" } };
     }
     const selectedOption = currentItem.options.find((option) => option.number === optionNumber);
     if (!selectedOption) {
@@ -314,9 +320,11 @@ export function registerDecisionInboxRoutes(ctx: RuntimeContext): DecisionInboxR
 
   const runYoloAutopilot = () => {
     if (yoloAutopilotInFlight) return;
-    if (!readYoloModeEnabled(db)) return;
     yoloAutopilotInFlight = true;
     try {
+      startReadyProjectReviewMeetings(db, finishReview);
+      applyAllReviewItemsAutomatically({ db, getDecisionInboxItems, applyDecisionReply });
+      if (!readYoloModeEnabled(db)) return;
       runYoloDecisionAutopilot({
         getDecisionInboxItems,
         applyDecisionReply,

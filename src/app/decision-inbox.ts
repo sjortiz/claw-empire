@@ -21,6 +21,7 @@ function baseWorkflowDecisionItem(item: DecisionInboxRouteItem): Omit<DecisionIn
     agentAvatar:
       item.agent_avatar ?? (item.kind === "project_review_ready" || item.kind === "review_round_pick" ? "🧑‍💼" : null),
     requestContent: item.summary,
+    informational: item.informational,
     createdAt: item.created_at,
     taskId: item.task_id,
     projectId: item.project_id,
