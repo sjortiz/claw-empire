@@ -216,6 +216,18 @@ describe("persistent root recovery", () => {
     );
     expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
   });
+  it("leaves a review held at the project decision gate alone", () => {
+    const deps = fixture();
+    db.exec("UPDATE tasks SET status = 'review';");
+    deps.appendTaskLog(
+      "root",
+      "system",
+      "Review gate: waiting for project-level decision (1/1 active tasks in review)",
+    );
+    sweepReadyRoots(deps);
+    sweepReadyRoots(deps);
+    expect(deps.finishReview).not.toHaveBeenCalled();
+  });
   it("recovers review via the existing gate without bypass options", () => {
     const deps = fixture();
     db.exec("UPDATE tasks SET status = 'review';");

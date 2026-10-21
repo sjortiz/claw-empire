@@ -230,6 +230,14 @@ export function recoverReadyRoot(deps: any, taskId: string, trigger: string): bo
       )
       .get(taskId);
     if (latest?.status === "revision_requested") return false;
+    // A review gate that already logged its hold (CEO decision, other project tasks)
+    // is driven by that decision; re-driving it every sweep only repeats the log.
+    const lastSystem = db
+      .prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY created_at DESC, id DESC LIMIT 1",
+      )
+      .get(taskId) as { message?: string } | undefined;
+    if (String(lastSystem?.message ?? "").startsWith("Review gate: waiting")) return false;
     if (latest?.status === "failed") {
       const entries = db
         .prepare("SELECT content FROM meeting_minute_entries WHERE meeting_id = ?")
