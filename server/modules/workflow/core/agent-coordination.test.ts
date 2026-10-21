@@ -148,6 +148,7 @@ describe("agent coordination prompts and continuation", () => {
       expect.any(String),
       undefined,
       undefined,
+      expect.objectContaining({ executionSession: expect.objectContaining({ sessionId: "target-session" }) }),
     );
     expect(fs.readFileSync(dirtyFile, "utf8")).toBe("preserve unfinished work");
   });

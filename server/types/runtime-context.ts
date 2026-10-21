@@ -93,6 +93,7 @@ export type TaskCreationAuditInput = {
 // ---------------------------------------------------------------------------
 
 export interface BaseRuntimeContext {
+  shuttingDown?: boolean;
   app: Express;
   db: DatabaseSync;
   dbPath: string;
@@ -244,6 +245,7 @@ export interface WorkflowAgentExports {
     logFilePath: string,
     model?: string,
     reasoningLevel?: string,
+    options?: { executionSession?: any; resumeSessionId?: string },
   ) => Promise<ChildProcess>;
   normalizeOAuthProvider: (...args: any[]) => any;
   getNextOAuthLabel: (...args: any[]) => any;

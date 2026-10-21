@@ -1,4 +1,5 @@
 import type { Lang } from "../../../types/lang.ts";
+import { executionSessionStateLog, loadTaskExecutionSession } from "../core/execution-session.ts";
 
 type CreateSessionReviewToolsDeps = Record<string, any>;
 
@@ -29,7 +30,7 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
 
   function ensureTaskExecutionSession(taskId: string, agentId: string, provider: string): any {
     const now = nowMs();
-    const existing = taskExecutionSessions.get(taskId);
+    const existing = taskExecutionSessions.get(taskId) ?? loadTaskExecutionSession(db, taskId);
     if (existing && existing.agentId === agentId && existing.provider === provider) {
       existing.lastTouchedAt = now;
       taskExecutionSessions.set(taskId, existing);
@@ -52,11 +53,12 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
         ? `Execution session rotated: ${existing.sessionId} -> ${nextSession.sessionId} (agent=${agentId}, provider=${provider})`
         : `Execution session opened: ${nextSession.sessionId} (agent=${agentId}, provider=${provider})`,
     );
+    appendTaskLog(taskId, "system", executionSessionStateLog(nextSession));
     return nextSession;
   }
 
   function endTaskExecutionSession(taskId: string, reason: string): void {
-    const existing = taskExecutionSessions.get(taskId);
+    const existing = taskExecutionSessions.get(taskId) ?? loadTaskExecutionSession(db, taskId);
     if (!existing) return;
     taskExecutionSessions.delete(taskId);
     appendTaskLog(
@@ -64,6 +66,7 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
       "system",
       `Execution session closed: ${existing.sessionId} (reason=${reason}, duration_ms=${Math.max(0, nowMs() - existing.openedAt)})`,
     );
+    appendTaskLog(taskId, "system", executionSessionStateLog(existing, true));
   }
 
   function getTaskStatusById(taskId: string): string | null {

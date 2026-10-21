@@ -6,10 +6,7 @@ interface RegisterGracefulShutdownHandlersOptions {
   activeProcesses: Map<string, ChildProcess>;
   stopRequestedTasks: Set<string>;
   killPidTree: (pid: number) => void;
-  rollbackTaskWorktree: (taskId: string, reason: string) => void;
   db: DatabaseSync;
-  nowMs: () => number;
-  endTaskExecutionSession: (taskId: string, reason: string) => void;
   wsClients: Set<WsSocket>;
   wss: WebSocketServer;
   server: { close: (callback: () => void) => void };
@@ -20,16 +17,16 @@ export function registerGracefulShutdownHandlers({
   activeProcesses,
   stopRequestedTasks,
   killPidTree,
-  rollbackTaskWorktree,
   db,
-  nowMs,
-  endTaskExecutionSession,
   wsClients,
   wss,
   server,
   onBeforeClose,
 }: RegisterGracefulShutdownHandlersOptions): void {
+  let shuttingDown = false;
   function gracefulShutdown(signal: string): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`\n[Claw-Empire] ${signal} received. Shutting down gracefully...`);
 
     try {
@@ -46,23 +43,18 @@ export function registerGracefulShutdownHandlers({
       }
       activeProcesses.delete(taskId);
 
-      rollbackTaskWorktree(taskId, "server_shutdown");
-
       const task = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(taskId) as
         | {
             assigned_agent_id: string | null;
           }
         | undefined;
       if (task?.assigned_agent_id) {
-        db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ?").run(
-          task.assigned_agent_id,
-        );
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ? AND current_task_id = ?",
+        ).run(task.assigned_agent_id, taskId);
       }
-      db.prepare("UPDATE tasks SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'in_progress'").run(
-        nowMs(),
-        taskId,
-      );
-      endTaskExecutionSession(taskId, "server_shutdown");
+      // Leave the RUN start, task status, session and dirty worktree intact.
+      // Shutdown is an interruption; startup recovery owns the next dispatch.
     }
 
     for (const ws of wsClients) {
@@ -78,7 +70,8 @@ export function registerGracefulShutdownHandlers({
           /* ignore */
         }
         console.log("[Claw-Empire] Shutdown complete.");
-        process.exit(0);
+        if (signal === "SIGUSR2") process.kill(process.pid, "SIGUSR2");
+        else process.exit(0);
       });
     });
 
@@ -91,12 +84,5 @@ export function registerGracefulShutdownHandlers({
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-  process.once("SIGUSR2", () => {
-    try {
-      db.close();
-    } catch {
-      /* ignore */
-    }
-    process.kill(process.pid, "SIGUSR2");
-  });
+  process.once("SIGUSR2", () => gracefulShutdown("SIGUSR2"));
 }

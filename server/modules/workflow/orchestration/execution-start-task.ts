@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { recoverTaskWorktree } from "../core/worktree/lifecycle.ts";
 import { buildAgentCoordinationContext } from "../core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../core/reasoning-effort.ts";
 import path from "node:path";
@@ -14,6 +15,7 @@ import {
 } from "../core/interrupt-injection-tools.ts";
 
 type CreateExecutionStartTaskToolsDeps = {
+  activeProcesses?: RuntimeContext["activeProcesses"];
   nowMs: RuntimeContext["nowMs"];
   db: RuntimeContext["db"];
   logsDir: RuntimeContext["logsDir"];
@@ -47,6 +49,7 @@ type CreateExecutionStartTaskToolsDeps = {
 
 export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskToolsDeps) {
   const {
+    activeProcesses,
     nowMs,
     db,
     logsDir,
@@ -83,7 +86,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     execAgent: any,
     deptId: string | null,
     deptName: string,
-    options?: { reuseWorktree: boolean },
+    options?: { reuseWorktree: boolean; recoveryNote?: string },
   ): void {
     void startTaskExecutionForAgentAsync(taskId, execAgent, deptId, deptName, options).catch((error: unknown) => {
       if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") return;
@@ -107,7 +110,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     execAgent: any,
     deptId: string | null,
     deptName: string,
-    options?: { reuseWorktree: boolean },
+    options?: { reuseWorktree: boolean; recoveryNote?: string },
   ): Promise<void> {
     const execName = execAgent.name_ko || execAgent.name;
     const t = nowMs();
@@ -162,6 +165,10 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     notifyTaskStatus(taskId, taskData.title, "in_progress", taskLang);
 
     const projPath = resolveProjectPath(taskData);
+    if (options?.reuseWorktree && !taskWorktrees?.has(taskId)) {
+      const recovered = recoverTaskWorktree(projPath, taskId, db as any);
+      if (recovered) taskWorktrees?.set(taskId, recovered);
+    }
     const existingWorktree = options?.reuseWorktree ? taskWorktrees?.get(taskId)?.worktreePath : null;
     const worktreePath = options?.reuseWorktree
       ? existingWorktree && fs.existsSync(existingWorktree)
@@ -289,6 +296,7 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         `NOTE: You are working in an isolated Git worktree branch (climpire/${taskId.slice(0, 8)}). Commit your changes normally.`,
         interruptPromptBlock,
         continuationInstruction,
+        options?.recoveryNote ? `[Run Recovery]\n${options.recoveryNote}` : "",
         runInstruction,
       ],
       {
@@ -354,8 +362,14 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         logFilePath,
         modelForProvider,
         reasoningLevel,
+        {
+          executionSession,
+          resumeSessionId: options?.reuseWorktree ? executionSession.nativeSessionId : undefined,
+        },
       );
       child.on("close", (code: number | null) => {
+        const current = activeProcesses?.get(taskId);
+        if (current && current !== child) return;
         handleTaskRunComplete(taskId, code ?? 1);
       });
     }

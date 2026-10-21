@@ -3,6 +3,7 @@ import { createPersistentWait, hasExhaustedWait } from "./persistent-wait.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
+import fs from "node:fs";
 
 const ownerWaits = new WeakMap<object, ReturnType<typeof createPersistentWait>>();
 function ownerWait(deps: any) {
@@ -14,18 +15,22 @@ function ownerWait(deps: any) {
   return waiting;
 }
 
-export function isTaskAutoRecoveryHeld(deps: any, taskId: string): boolean {
+export function isTaskAutoRecoveryHeld(deps: any, taskId: string, seen = new Set<string>()): boolean {
+  if (deps.shuttingDown || seen.has(taskId)) return true;
+  seen.add(taskId);
   if (deps.stopRequestedTasks?.has(taskId) || hasExhaustedWait(deps.db, taskId)) return true;
   const task = deps.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+  if (task && ["done", "cancelled"].includes(task.status)) return true;
   if (task?.planning_attention_reason) return true;
+  if (task?.source_task_id && isTaskAutoRecoveryHeld(deps, task.source_task_id, seen)) return true;
   const control = deps.db
     .prepare(
       `SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system'
-    AND (message LIKE 'PAUSE_BREAK%' OR message LIKE 'RESUME:%' OR message LIKE '%action=apply_review_pick%')
+    AND (message LIKE 'PAUSE_BREAK%' OR message LIKE 'STOP%' OR message LIKE 'RESUME:%' OR message LIKE '%action=apply_review_pick%')
     ORDER BY created_at DESC, id DESC LIMIT 1`,
     )
     .get(taskId);
-  return String(control?.message ?? "").startsWith("PAUSE_BREAK");
+  return /^(PAUSE_BREAK|STOP)/.test(String(control?.message ?? ""));
 }
 
 // Both the HTTP control and recovery sweep use this driver. It deliberately
@@ -34,13 +39,33 @@ export function resumeTaskExecution(
   deps: any,
   taskId: string,
   reason: string,
-  options?: { planning?: boolean },
+  options?: { planning?: boolean; reuseWorktree?: boolean; recoveryNote?: string },
 ): boolean {
   const { db, activeProcesses, startTaskExecutionForAgent, appendTaskLog, getDeptName } = deps;
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
   if (!task || activeProcesses.has(taskId) || !["pending", "planned", "collaborating"].includes(task.status))
     return false;
-  if (deps.stopRequestedTasks?.has(taskId) || hasExhaustedWait(db, taskId)) return false;
+  if (isTaskAutoRecoveryHeld(deps, taskId)) return false;
+  // The ordinary root sweep can win the race with a reconstructed owner wait.
+  // Honor the durable recovery driver regardless of which caller dispatches it.
+  const driver = db
+    .prepare(
+      `SELECT message FROM task_logs WHERE task_id = ?
+    AND (message LIKE 'Run recovery queued: %' OR message LIKE 'RUN start%'
+      OR message LIKE 'RUN completed %' OR message LIKE 'RUN failed %') ORDER BY rowid DESC LIMIT 1`,
+    )
+    .get(taskId);
+  if (String(driver?.message ?? "").startsWith("Run recovery queued: ")) {
+    const worktree = deps.taskWorktrees?.get(taskId)?.worktreePath;
+    if (!worktree || !fs.existsSync(worktree)) return false;
+    options = {
+      ...options,
+      reuseWorktree: true,
+      recoveryNote:
+        options?.recoveryNote ??
+        "The previous run was interrupted. Continue in the existing worktree and branch; previous changes are kept.",
+    };
+  }
   // Retrying a held graph restores dependency dispatch; consolidation must
   // still wait for every child to be approved and integrated.
   if (!options?.planning && deps.processSubtaskDelegations) {
@@ -74,7 +99,7 @@ export function resumeTaskExecution(
         taskId,
         "planning-integration",
         "Planning graph waiting for child approval and integration",
-        () => resumeTaskExecution(deps, taskId, reason),
+        () => resumeTaskExecution(deps, taskId, reason, options),
         { maxWaitMs: 60 * 60_000 },
       );
       return true;
@@ -84,10 +109,17 @@ export function resumeTaskExecution(
   const agent = task.assigned_agent_id
     ? db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id)
     : null;
+  const hasOtherRun = (agentId: string) =>
+    Boolean(
+      db
+        .prepare("SELECT 1 FROM tasks WHERE assigned_agent_id = ? AND id != ? AND status = 'in_progress' LIMIT 1")
+        .get(agentId, taskId),
+    );
   if (
     !agent ||
     !["idle", "break"].includes(agent.status) ||
-    (agent.current_task_id && agent.current_task_id !== taskId)
+    (agent.current_task_id && agent.current_task_id !== taskId) ||
+    hasOtherRun(agent.id)
   ) {
     ownerWait(deps).wait(
       taskId,
@@ -102,20 +134,22 @@ export function resumeTaskExecution(
   const launch = () => {
     const fresh = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
     const owner = db.prepare("SELECT * FROM agents WHERE id = ?").get(agent.id);
-    if (!fresh || fresh.status !== "planned" || activeProcesses.has(taskId) || deps.stopRequestedTasks?.has(taskId))
+    if (!fresh || fresh.status !== "planned" || activeProcesses.has(taskId) || isTaskAutoRecoveryHeld(deps, taskId))
       return;
     if (
       !owner ||
       !["idle", "break"].includes(owner.status) ||
-      (owner.current_task_id && owner.current_task_id !== taskId)
+      (owner.current_task_id && owner.current_task_id !== taskId) ||
+      hasOtherRun(owner.id)
     )
       return;
-    startTaskExecutionForAgent(
-      taskId,
-      owner,
-      deptId,
-      deptId ? getDeptName(deptId, task.workflow_pack_key) : "Unassigned",
-    );
+    const deptName = deptId ? getDeptName(deptId, task.workflow_pack_key) : "Unassigned";
+    if (options?.reuseWorktree)
+      startTaskExecutionForAgent(taskId, owner, deptId, deptName, {
+        reuseWorktree: true,
+        recoveryNote: options.recoveryNote,
+      });
+    else startTaskExecutionForAgent(taskId, owner, deptId, deptName);
   };
   db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run("planned", deps.nowMs(), taskId);
   appendTaskLog(taskId, "system", `Automatic re-queue: ${reason}`);
