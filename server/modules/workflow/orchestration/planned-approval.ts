@@ -1,7 +1,13 @@
+import { implementationIntentFromTask, implementationPlanningRules } from "../agents/implementation-intent.ts";
+import {
+  parsePlanningGraph,
+  validateImplementationCoverage,
+  repairImplementationCoverage,
+} from "../agents/planning-graph.ts";
 import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
 import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 import type { MeetingReviewDecision } from "../core/conversation-types.ts";
-import { mergeOversizedPlanningGraph } from "./planning-graph-size.ts";
+import { mergeOversizedPlanningGraph, PLANNING_ITEM_TARGET } from "./planning-graph-size.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 import { isTimeoutRun } from "../core/meeting-run.ts";
 
@@ -106,11 +112,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
       let leaders: any[] = [];
       try {
         leaders = getTaskReviewLeaders(taskId, departmentId);
-        if (leaders.length === 0) {
-          reviewInFlight.delete(lockKey);
-          onApproved([]);
-          return;
-        }
         const round = (reviewRoundState.get(lockKey) ?? 0) + 1;
         reviewRoundState.set(lockKey, round);
 
@@ -128,6 +129,16 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               assigned_agent_id: string | null;
             }
           | undefined;
+        const implementationIntent = implementationIntentFromTask(taskTitle, taskCtx?.description);
+        if (leaders.length === 0) {
+          if (implementationIntent.requiresImplementation)
+            throw new Error(
+              "Implementation planning blocked: no eligible planning leaders; Development code coverage cannot be approved.",
+            );
+          reviewInFlight.delete(lockKey);
+          onApproved([]);
+          return;
+        }
         const assignedPlanner = taskCtx?.assigned_agent_id
           ? db.prepare("SELECT * FROM agents WHERE id = ?").get(taskCtx.assigned_agent_id)
           : null;
@@ -251,6 +262,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             const draftPrompt = buildMeetingPrompt(leader, {
               meetingType: "planned",
               planningPhase: "draft",
+              ...implementationIntent,
               verdictRequired: true,
               round,
               taskTitle,
@@ -315,6 +327,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
           meetingType: "planned",
           planningPhase: "consolidation",
+          ...implementationIntent,
           verdictRequired: true,
           round,
           taskTitle,
@@ -326,17 +339,78 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             "Keep kickoff moving and show concrete planned next steps. Nonblocking reviewer notes are informational only; never turn them into plan_items or remediation work.",
           lang,
         });
-        const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
+        let summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
         if (abortIfInactive()) return;
         if (summaryRun?.error || isTimeoutRun(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
-        const graph = await mergeOversizedPlanningGraph(
-          String(summaryRun?.text ?? ""),
-          (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
-          (message) => appendTaskLog(taskId, "system", message),
-        );
-        if (abortIfInactive()) return;
+        let graph: ReturnType<typeof parsePlanningGraph> = null;
+        const graphViolations = (items: ReturnType<typeof parsePlanningGraph>): string[] => {
+          const reasons = validateImplementationCoverage(items, implementationIntent);
+          for (const item of items ?? []) {
+            if (!db.prepare("SELECT id FROM departments WHERE id = ?").get(item.department_id))
+              reasons.push(`Unknown department ${item.department_id} for ${item.key}; use an existing department ID.`);
+          }
+          return reasons;
+        };
+        for (let attempt = 0; attempt <= 1; attempt++) {
+          let reasons: string[];
+          try {
+            graph = null;
+            // The trailing verdict block is metadata, not part of the plan.
+            graph = parsePlanningGraph(stripMeetingVerdict(String(summaryRun?.text ?? "")));
+            reasons = graphViolations(graph);
+          } catch (error) {
+            if (!implementationIntent.requiresImplementation) throw error;
+            reasons = [error instanceof Error ? error.message : String(error)];
+          }
+          if (reasons.length === 0) break;
+          appendTaskLog(taskId, "error", `Planning graph rejected (attempt ${attempt + 1}): ${reasons.join(" ")}`);
+          if (attempt === 1) {
+            if (implementationIntent.requiresImplementation && graph) {
+              try {
+                const repaired = repairImplementationCoverage(graph, implementationIntent);
+                graph = parsePlanningGraph(JSON.stringify({ plan_items: repaired }));
+                reasons = graphViolations(graph);
+                if (reasons.length === 0) {
+                  appendTaskLog(
+                    taskId,
+                    "system",
+                    "Planning graph repaired: added missing Development deliverables and implementation prerequisites; revalidation passed.",
+                  );
+                  break;
+                }
+              } catch (error) {
+                reasons = [error instanceof Error ? error.message : String(error)];
+              }
+            }
+            throw new Error(
+              `Implementation coverage blocked after correction attempts and repair: ${reasons.join(" ")}`,
+            );
+          }
+          const repairPrompt = `${summaryPrompt}\n\n[Correct rejected planning graph]\n${reasons.join("\n")}\n${implementationPlanningRules(implementationIntent)}\nPrevious rejected output:\n${String(summaryRun?.text ?? "")}\nReturn a complete corrected graph preserving valid items and real prerequisite keys.`;
+          summaryRun = await runMeetingOneShotWithRetry(planningLeader, repairPrompt, "summary");
+          if (abortIfInactive()) return;
+          if (summaryRun?.error || isTimeoutRun(summaryRun))
+            throw new Error(summaryRun?.error || "Planning correction did not complete");
+        }
+        if (graph && graph.length > PLANNING_ITEM_TARGET) {
+          const validated = graph;
+          const merged = await mergeOversizedPlanningGraph(
+            "```json\n" + JSON.stringify({ plan_items: validated }) + "\n```",
+            (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+            (message) => appendTaskLog(taskId, "system", message),
+          );
+          if (abortIfInactive()) return;
+          const mergedViolations = merged ? graphViolations(merged) : ["merge returned no graph"];
+          if (merged && mergedViolations.length === 0) graph = merged;
+          else
+            appendTaskLog(
+              taskId,
+              "system",
+              `Planning graph merge kept the validated plan: merged graph failed coverage (${mergedViolations.join(" ")})`,
+            );
+        }
         const summaryVerdict = await resolveMeetingVerdict({
           text: String(summaryRun?.text ?? ""),
           lang,
@@ -423,6 +497,9 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         }
         const msg = err?.message ? String(err.message) : String(err);
         appendTaskLog(taskId, "error", `Planned meeting error: ${msg}`);
+        db.prepare(
+          "UPDATE agents SET current_task_id = NULL WHERE current_task_id = ? AND status IN ('idle', 'break')",
+        ).run(taskId);
         if (meetingId) finishMeetingMinutes(meetingId, "failed");
         dismissLeadersFromCeoOffice(taskId, leaders);
         reviewInFlight.delete(lockKey);

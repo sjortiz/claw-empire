@@ -212,6 +212,14 @@ export function createSubtaskRoutingTools(deps: SubtaskRoutingDeps) {
     plannerSubtaskRoutingInFlight.add(lockKey);
 
     try {
+      // Structured graph owners were validated before materialization. A later
+      // keyword/LLM routing pass must not erase that accepted ownership contract.
+      const acceptedGraph = db
+        .prepare(
+          "SELECT 1 FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE 'Planned graph seeded %' LIMIT 1",
+        )
+        .get(taskId);
+      if (acceptedGraph) return;
       const task = db
         .prepare(
           "SELECT title, description, project_path, assigned_agent_id, department_id, project_id, workflow_pack_key FROM tasks WHERE id = ?",

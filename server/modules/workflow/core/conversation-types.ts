@@ -1,3 +1,4 @@
+import type { ImplementationUnit } from "../agents/implementation-intent.ts";
 export interface MeetingTranscriptEntry {
   speaker_agent_id?: string;
   speaker: string;
@@ -42,6 +43,8 @@ export interface OneShotRunResult {
 export interface MeetingPromptOptions {
   meetingType: "planned" | "review";
   planningPhase?: "draft" | "consolidation";
+  requiresImplementation?: boolean;
+  implementationUnits?: ImplementationUnit[];
   verdictRequired?: boolean;
   round: number;
   taskTitle: string;

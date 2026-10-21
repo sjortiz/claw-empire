@@ -35,6 +35,19 @@ and pass key, dependency and cycle validation. If merging fails or still exceeds
 30 items, the validated original graph is retained and the size target is raised
 for that meeting with a logged reason. Size alone never rejects a plan.
 
+## Operational planning review
+
+For code-change directives, Operations uses the
+[directive planning checklist](procedures/directive-planning-checklist.md) to
+record an Implementation Owner, implementation item, code/test deliverables and
+verification prerequisites for every requested code unit. The
+[handling procedure](procedures/code-change-directives.md) covers missing-owner
+flags, correction handoffs and checks after subtasks are created or reassigned.
+These are manual process controls. Production enforcement remains
+Development-owned; supporting documents do not satisfy implementation completion.
+
+## Worktree dependencies
+
 Dependency reuse copies/reflinks compatible pnpm installations into each
 worktree instead of sharing a writable node_modules directory. Manifest, lockfile,
 configuration, local dependency, workspace and script checks reject unsafe reuse.

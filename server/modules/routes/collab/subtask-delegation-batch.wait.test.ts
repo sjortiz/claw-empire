@@ -54,13 +54,26 @@ describe("department agent availability", () => {
         department_id: "planning",
       });
       expect(appendTaskLog).toHaveBeenCalledTimes(1);
-      expect(appendTaskLog).toHaveBeenCalledWith("root", "system", expect.stringContaining("department leader (dev)"));
-      vi.advanceTimersByTime(DEFAULT_WORKFLOW_WAIT_LIMIT_MS);
+      expect(appendTaskLog).toHaveBeenCalledWith(
+        "root",
+        "system",
+        expect.stringContaining(
+          "Department assignment blocked (dev): Waiting for an eligible Development implementation agent",
+        ),
+      );
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(DEFAULT_WORKFLOW_WAIT_LIMIT_MS - 1);
+      expect(appendTaskLog).toHaveBeenCalledTimes(1);
+      expect(notifyCeo).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(1);
       expect(notifyCeo).toHaveBeenCalledTimes(1);
       expect(vi.getTimerCount()).toBe(0);
       expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "pending" });
       expect(db.prepare("SELECT status FROM subtasks WHERE id = 'revision'").get()).toEqual({ status: "blocked" });
       expect(appendTaskLog.mock.calls.filter((call) => call[2].includes('"state":"waiting"'))).toHaveLength(1);
+      vi.advanceTimersByTime(DEFAULT_WORKFLOW_WAIT_LIMIT_MS);
+      expect(notifyCeo).toHaveBeenCalledTimes(1);
     } finally {
       db.close();
     }
