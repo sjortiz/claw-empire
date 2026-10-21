@@ -4,6 +4,7 @@ import * as api from "../api";
 import type { TerminalProgressHint, TerminalProgressHintsPayload } from "../api";
 import AgentAvatar from "./AgentAvatar";
 import TaskBranchReview from "./taskboard/TaskBranchReview";
+import MeetingVerdictSummary from "./terminal-panel/MeetingVerdictSummary";
 import { useI18n } from "../i18n";
 import {
   INTERVENTION_PROMPT_MAX_LENGTH,
@@ -763,6 +764,7 @@ export default function TerminalPanel({
                       >
                         {entry.content}
                       </div>
+                      <MeetingVerdictSummary content={entry.content} />
                     </div>
                   ))}
                 </div>

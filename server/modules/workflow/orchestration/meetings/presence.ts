@@ -127,7 +127,7 @@ export function createMeetingPresenceTools(deps: PresenceDeps) {
     lang?: string,
   ): void {
     const preview = summarizeForMeetingBubble(line, 96, lang as Lang | undefined);
-    const decision = phase === "review" ? classifyMeetingReviewDecision(preview) : undefined;
+    const decision = phase === "review" ? classifyMeetingReviewDecision(line) : undefined;
     if (decision) {
       meetingReviewDecisionByAgent.set(agentId, decision);
     } else {

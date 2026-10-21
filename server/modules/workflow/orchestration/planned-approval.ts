@@ -1,3 +1,5 @@
+import { effectiveMeetingVerdict } from "../../../../shared/meeting-verdict.ts";
+import { resolveMeetingVerdict, type ResolvedMeetingVerdict } from "../core/meeting-verdict.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
@@ -124,11 +126,27 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const lang = resolveLang(taskDescription ?? taskTitle);
         const transcript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
-        const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };
+        const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true, rawOutput: true };
+        const resolvedVerdicts = new Map<string, ResolvedMeetingVerdict>();
+        const nonBlockingNotes = new Set<string>();
         const wantsRevision = (content: string): boolean =>
           /보완|수정|보류|리스크|추가.?필요|hold|revise|revision|required|pending|risk|block|保留|修正|补充|暂缓/i.test(
             content,
           );
+        const resolveReviewer = async (leader: any, text: string) => {
+          const resolved = await resolveMeetingVerdict({
+            text,
+            lang,
+            retry: (prompt) => runAgentOneShot(leader, prompt, oneShotOptions),
+            fallback: wantsRevision,
+            log: (message) =>
+              appendTaskLog(taskId, "system", `Planned round ${round} reviewer ${leader.id}: ${message}`),
+          });
+          for (const note of resolved.verdict.non_blocking_notes)
+            nonBlockingNotes.add(`${getAgentDisplayName(leader, lang)}: ${note}`);
+          resolvedVerdicts.set(leader.id, resolved);
+          return resolved;
+        };
         const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
           const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
           return /timeout after|timed out|request timed out|aborted/i.test(source);
@@ -246,14 +264,11 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               lang,
             });
             const run = await runMeetingOneShotWithRetry(leader, draftPrompt, "feedback");
-            if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
+            if (run?.error || isTimeoutRun(run)) {
               throw new Error(run?.error || "Department planning draft did not complete");
             }
-            return {
-              leader,
-              text: String(run.text).trim(),
-              displayText: chooseSafeReply(run, lang, "feedback", leader),
-            };
+            const resolved = await resolveReviewer(leader, String(run?.text ?? "").trim());
+            return { leader, text: resolved.content, displayText: resolved.content, resolved };
           }),
         );
         if (abortIfInactive()) return;
@@ -267,7 +282,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             draft.value.displayText,
             draft.value.text,
           );
-          if (wantsRevision(draft.value.text)) hasSupplementSignals = true;
+          if (effectiveMeetingVerdict(draft.value.resolved.verdict) === "revise") hasSupplementSignals = true;
         }
 
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
@@ -278,7 +293,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           taskDescription,
           workflowPackKey: taskWorkflowPackKey,
           transcript,
-          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. End with a JSON fenced block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
+          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a preceding JSON fenced block before the final verdict block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
           stanceHint: "Keep kickoff moving and show concrete planned next steps instead of blocking.",
           lang,
         });
@@ -288,9 +303,24 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
         const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
-        const summaryText = chooseSafeReply(summaryRun, lang, "summary", planningLeader);
-        speak(planningLeader, "report", "all", null, summaryText);
-        const planItems = graph ? [JSON.stringify({ plan_items: graph })] : collectPlannedActionItems(transcript, 10);
+        const summaryVerdict = await resolveReviewer(planningLeader, String(summaryRun?.text ?? ""));
+        if (abortIfInactive()) return;
+        speak(planningLeader, "report", "all", null, summaryVerdict.content);
+        if (nonBlockingNotes.size > 0)
+          appendTaskProjectMemo(taskId, "planned", round, [...nonBlockingNotes], lang, "non_blocking");
+        // A structured verdict's notes are never inputs to the legacy action extractor.
+        // Explicit executable plan_items remain the primary plan, independently of approval.
+        const actionTranscript = transcript.flatMap((entry) => {
+          const resolved = resolvedVerdicts.get(entry.speaker_agent_id);
+          if (!resolved) return [entry];
+          if (resolved.source === "fallback") return [{ ...entry, content: resolved.originalText }];
+          return effectiveMeetingVerdict(resolved.verdict) === "revise"
+            ? resolved.verdict.blocking_items.map((content) => ({ ...entry, content }))
+            : [];
+        });
+        const planItems = graph
+          ? [JSON.stringify({ plan_items: graph })]
+          : collectPlannedActionItems(actionTranscript, 10);
         const memoItems = graph
           ? graph.map(
               (item) =>

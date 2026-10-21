@@ -1,3 +1,5 @@
+import { effectiveMeetingVerdict } from "../../../../../shared/meeting-verdict.ts";
+import type { ResolvedMeetingVerdict } from "../../core/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import type { MeetingTranscriptEntry } from "./minutes.ts";
 
@@ -22,6 +24,7 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     onApproved,
     abortIfInactive,
     meetingReviewDecisionByAgent,
+    resolvedVerdicts,
     findLatestTranscriptContentByAgent,
     isDeferrableReviewHold,
     summarizeForMeetingBubble,
@@ -58,9 +61,18 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   const deferredMonitoringNotes: string[] = [];
   const finalHoldDeptCount = new Map<string, number>();
   for (const leader of leaders as any[]) {
-    if (meetingReviewDecisionByAgent.get(leader.id) !== "hold") continue;
+    const resolved = resolvedVerdicts?.get(leader.id) as ResolvedMeetingVerdict | undefined;
+    if (
+      resolved
+        ? effectiveMeetingVerdict(resolved.verdict) !== "revise"
+        : meetingReviewDecisionByAgent.get(leader.id) !== "hold"
+    )
+      continue;
     const latestDecisionLine = findLatestTranscriptContentByAgent(transcript as MeetingTranscriptEntry[], leader.id);
-    if (isDeferrableReviewHold(latestDecisionLine)) {
+    if (
+      (!resolved || resolved.source === "fallback") &&
+      isDeferrableReviewHold(resolved?.originalText ?? latestDecisionLine)
+    ) {
       const clipped = summarizeForMeetingBubble(latestDecisionLine, 160, lang as Lang);
       deferredMonitoringLeaders.push(leader);
       deferredMonitoringNotes.push(
@@ -94,6 +106,9 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     finalHoldDeptCount.set(deptKey, deptCount + 1);
     finalHoldLeaders.push(leader);
   }
+  const nonBlockingNotes = ctx.nonBlockingNotes ?? [];
+  if (nonBlockingNotes.length > 0)
+    appendTaskProjectMemo(taskId, "review", round, nonBlockingNotes, lang, "non_blocking");
   const needsRevision = finalHoldLeaders.length > 0;
   if (!needsRevision && deferredMonitoringNotes.length > 0) {
     appendTaskProjectMemo(taskId, "review", round, deferredMonitoringNotes, lang);
@@ -108,11 +123,23 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   if (abortIfInactive()) return true;
 
   if (needsRevision) {
-    const rawMemoItems = collectRevisionMemoItems(
-      transcript as MeetingTranscriptEntry[],
-      REVIEW_MAX_MEMO_ITEMS_PER_ROUND,
-      REVIEW_MAX_MEMO_ITEMS_PER_DEPT,
-    );
+    const rawMemoItems = resolvedVerdicts
+      ? finalHoldLeaders
+          .flatMap((leader: any) => {
+            const resolved = resolvedVerdicts.get(leader.id) as ResolvedMeetingVerdict | undefined;
+            return (resolved?.verdict.blocking_items ?? [])
+              .slice(0, REVIEW_MAX_MEMO_ITEMS_PER_DEPT)
+              .map(
+                (item) =>
+                  `${getDeptName(leader.department_id ?? "", workflowPackKey)} ${getAgentDisplayName(leader, lang)}: ${item}`,
+              );
+          })
+          .slice(0, REVIEW_MAX_MEMO_ITEMS_PER_ROUND)
+      : collectRevisionMemoItems(
+          transcript as MeetingTranscriptEntry[],
+          REVIEW_MAX_MEMO_ITEMS_PER_ROUND,
+          REVIEW_MAX_MEMO_ITEMS_PER_DEPT,
+        );
     const { freshItems, duplicateCount } = reserveReviewRevisionMemoItems(taskId, round, rawMemoItems);
     const hasFreshMemoItems = freshItems.length > 0;
     const fallbackMemoItem = pickL(
