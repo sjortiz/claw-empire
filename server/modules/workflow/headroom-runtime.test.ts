@@ -135,7 +135,7 @@ for (const mode of ["task", "meeting"] as const) {
       expect(env.ANTHROPIC_BASE_URL).toBe(
         provider === "claude" && enabled && available ? "http://proxy.example:8787/prefix" : undefined,
       );
-      if (provider === "codex") expect(argv).toContain('openai_base_url="https://api.openai.com/v1"');
+      expect(argv.join(" ")).not.toContain("openai_base_url");
       expect(process.env.ANTHROPIC_BASE_URL).toBe("http://inherited.example");
       expect(JSON.stringify(appendTaskLog.mock.calls)).not.toContain("fake-test-secret");
       if (provider !== "claude" || !enabled) expect(fetchMock).not.toHaveBeenCalled();

@@ -75,10 +75,8 @@ describe("Headroom routing policy", () => {
         reason: "upstream_unverified",
       });
     }
-    expect((await prepareHeadroomCli(db, "codex", {})).args).toEqual([
-      "-c",
-      'openai_base_url="https://api.openai.com/v1"',
-    ]);
+    // Codex keeps its own endpoint so ChatGPT sign-in keeps working.
+    expect((await prepareHeadroomCli(db, "codex", {})).args).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
   });
   it("routes only exact official API endpoint URLs", async () => {

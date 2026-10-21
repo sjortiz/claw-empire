@@ -184,9 +184,9 @@ export async function prepareHeadroomCli(
     if (headers.length) env.ANTHROPIC_CUSTOM_HEADERS = headers.join("\n");
     else delete env.ANTHROPIC_CUSTOM_HEADERS;
   }
-  // Override only the built-in provider: never replace a user's selected custom
-  // provider or rewrite global config. Custom provider routing remains unverified.
-  const args = provider === "codex" ? ["-c", 'openai_base_url="https://api.openai.com/v1"'] : [];
+  // Codex is never routed, and its own config decides its endpoint: forcing the OpenAI
+  // API base URL breaks ChatGPT sign-in (401, missing api.responses.write).
+  const args: string[] = [];
   const route =
     provider === "claude" && hasClaudeBackend(env)
       ? { proxyUrl: null, reason: "unsupported_provider" as const }
