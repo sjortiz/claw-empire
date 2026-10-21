@@ -1,3 +1,9 @@
+import {
+  parseMeetingVerdict,
+  parseStoredMeetingVerdict,
+  stripMeetingVerdict,
+  meetingVerdictNeedsRevision,
+} from "../../../../src/lib/meeting-verdict.ts";
 import { isLang, type Lang } from "../../../types/lang.ts";
 import { readNonNegativeIntEnv } from "../../../db/runtime.ts";
 import {
@@ -330,12 +336,17 @@ export function createReplyCoreTools(deps: CreateReplyCoreToolsDeps) {
     maxChars = 96,
     lang: Lang = normalizeMeetingLang(getPreferredLanguage()),
   ): string {
-    const cleaned = normalizeConversationReply(text, maxChars + 24)
+    const verdict = parseStoredMeetingVerdict(text);
+    const prefix = verdict
+      ? `${verdict.verdict === "no_verdict" ? "NO VERDICT" : meetingVerdictNeedsRevision(verdict) ? "REVISE" : "APPROVE"}: `
+      : "";
+    const budget = Math.max(1, maxChars - prefix.length);
+    const cleaned = normalizeConversationReply(verdict ? stripMeetingVerdict(text) : text, budget + 24)
       .replace(/\s+/g, " ")
       .trim();
-    if (!cleaned) return pickL(MEETING_BUBBLE_EMPTY, lang);
-    if (cleaned.length <= maxChars) return cleaned;
-    return `${cleaned.slice(0, maxChars - 1).trimEnd()}…`;
+    if (!cleaned) return prefix.trim() || pickL(MEETING_BUBBLE_EMPTY, lang);
+    if (cleaned.length <= budget) return `${prefix}${cleaned}`;
+    return `${prefix}${cleaned.slice(0, budget - 1).trimEnd()}…`;
   }
 
   function isMvpDeferralSignal(text: string): boolean {
@@ -365,31 +376,8 @@ export function createReplyCoreTools(deps: CreateReplyCoreToolsDeps) {
   }
 
   function classifyMeetingReviewDecision(text: string): MeetingReviewDecision {
-    const cleaned = text.replace(/\s+/g, " ").trim();
-    if (!cleaned) return "reviewing";
-    const hasApprovalAgreement = hasApprovalAgreementSignal(cleaned);
-    const hasMvpDeferral = isMvpDeferralSignal(cleaned);
-    const hasHardBlock = isHardBlockSignal(cleaned);
-    const hasApprovalSignal =
-      /(승인|통과|문제없|진행.?가능|배포.?가능|approve|approved|lgtm|ship\s+it|go\s+ahead|承認|批准|通过|可发布)/i.test(
-        cleaned,
-      );
-    const hasNoRiskSignal =
-      /(리스크\s*(없|없음|없습니다|없는|없이)|위험\s*(없|없음|없습니다|없는|없이)|문제\s*없|이슈\s*없|no\s+risk|without\s+risk|risk[-\s]?free|no\s+issue|no\s+blocker|リスク(は)?(ありません|なし|無し)|問題ありません|无风险|没有风险|無風險|无问题)/i.test(
-        cleaned,
-      );
-    const hasConditionalOrHoldSignal =
-      /(조건부|보완|수정|보류|리스크|미흡|미완|추가.?필요|재검토|중단|불가|hold|revise|revision|changes?\s+requested|required|pending|risk|block|missing|incomplete|not\s+ready|保留|修正|风险|补充|未完成|暂缓|差し戻し)/i.test(
-        cleaned,
-      );
-
-    if (hasApprovalSignal && hasNoRiskSignal) return "approved";
-    if ((hasApprovalAgreement || hasApprovalSignal) && hasMvpDeferral && !hasHardBlock) return "approved";
-    if (hasConditionalOrHoldSignal) {
-      if ((hasApprovalAgreement || hasApprovalSignal) && hasMvpDeferral && !hasHardBlock) return "approved";
-      return "hold";
-    }
-    if (hasApprovalSignal || hasNoRiskSignal || hasApprovalAgreement) return "approved";
+    const verdict = parseMeetingVerdict(text);
+    if (verdict) return meetingVerdictNeedsRevision(verdict) ? "hold" : "approved";
     return "reviewing";
   }
 
