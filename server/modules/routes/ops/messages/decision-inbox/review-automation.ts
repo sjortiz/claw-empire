@@ -1,72 +1,142 @@
 import type { DatabaseSync } from "node:sqlite";
-import { resolveReviewPolicy } from "../../../../workflow/core/review-policy.ts";
-import type { DecisionApplyResult } from "./yolo-mode.ts";
-import type { DecisionInboxRouteItem } from "./types.ts";
+import type { Response } from "express";
+import { REVIEW_AUTO_APPLY_LOG, resolveReviewAutomation } from "../../../../workflow/core/review-automation.ts";
+import { runYoloDecisionAutopilot, type DecisionApplyResult, type YoloDecisionReplyPayload } from "./yolo-mode.ts";
+import type { DecisionInboxRouteItem, DecisionOption, ReviewAutoStartNoticeItem } from "./types.ts";
 
-export function applyAllReviewItemsAutomatically(input: {
+const NOTICE_ID_PREFIX = "review-auto-started:";
+const ACKNOWLEDGE_ACTION = "acknowledge_review_auto_start";
+
+type Localize = (ko: string[], en: string[], ja?: string[], zh?: string[]) => unknown;
+
+export function createReviewAutoStartNoticeItems(deps: {
   db: Pick<DatabaseSync, "prepare">;
-  getDecisionInboxItems: () => DecisionInboxRouteItem[];
-  applyDecisionReply: (id: string, body: Record<string, unknown>) => DecisionApplyResult;
-}): number {
-  const candidates = input.db
-    .prepare(
-      `
-    SELECT DISTINCT t.project_id FROM tasks t JOIN meeting_minutes mm ON mm.task_id = t.id
-    WHERE t.status = 'review' AND t.source_task_id IS NULL AND mm.meeting_type = 'review'
-      AND mm.status = 'revision_requested' AND mm.round IN (1, 2)
-      AND mm.id = (SELECT id FROM meeting_minutes WHERE task_id = t.id AND meeting_type = 'review'
-        ORDER BY started_at DESC, created_at DESC LIMIT 1)
-  `,
-    )
-    .all() as Array<{ project_id: string | null }>;
-  if (!candidates.some((task) => resolveReviewPolicy(input.db, task.project_id, "reviewItemsAutoApply"))) return 0;
-  let applied = 0;
-  for (const item of input.getDecisionInboxItems()) {
-    if (item.kind !== "review_round_pick" || !resolveReviewPolicy(input.db, item.project_id, "reviewItemsAutoApply"))
-      continue;
-    const picks = item.options.filter((option) => option.action === "apply_review_pick").map((option) => option.number);
-    if (picks.length === 0) continue;
-    const result = input.applyDecisionReply(item.id, { option_number: picks[0], selected_option_numbers: picks });
-    if (result.status < 400) applied += 1;
+  getPreferredLanguage: () => string;
+  pickL: (pool: any, lang: any) => string;
+  l: Localize;
+}) {
+  const { db, getPreferredLanguage, pickL, l } = deps;
+
+  // Informational items for review meetings the reviewAutoStart setting started without a CEO decision.
+  function buildReviewAutoStartNoticeItems(): ReviewAutoStartNoticeItem[] {
+    const lang = getPreferredLanguage();
+    const t = (ko: string, en: string, ja: string, zh: string) => pickL(l([ko], [en], [ja], [zh]), lang);
+    const rows = db
+      .prepare(
+        `
+      SELECT n.id, n.project_id, n.task_ids_json, n.created_at, p.name AS project_name, p.project_path
+      FROM review_auto_start_notices n
+      JOIN projects p ON p.id = n.project_id
+      WHERE n.acknowledged_at IS NULL
+      ORDER BY n.created_at DESC
+      LIMIT 50
+    `,
+      )
+      .all() as Array<{
+      id: string;
+      project_id: string;
+      task_ids_json: string;
+      created_at: number;
+      project_name: string | null;
+      project_path: string | null;
+    }>;
+
+    return rows.map((row) => {
+      let taskIds: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(row.task_ids_json);
+        if (Array.isArray(parsed)) taskIds = parsed.filter((id): id is string => typeof id === "string");
+      } catch {
+        // malformed rows still show the project-level notice
+      }
+      const tasks = taskIds
+        .map((id) => db.prepare("SELECT id, title FROM tasks WHERE id = ?").get(id) as { id: string; title: string })
+        .filter(Boolean);
+      const projectName = (row.project_name || row.project_id).trim();
+      const taskList = tasks.map((task) => `- ${task.title}`).join("\n");
+      const summary = t(
+        `프로젝트 '${projectName}'의 팀장 회의가 설정에 따라 자동으로 시작되었습니다 (${tasks.length}건).\n${taskList}\n결정할 사항은 없으며, 진행 상황은 각 작업 로그에서 확인할 수 있습니다.`,
+        `Project '${projectName}': the team-lead review meeting started automatically by setting (${tasks.length} task(s)).\n${taskList}\nNo decision is needed; follow progress in each task's log.`,
+        `プロジェクト'${projectName}'のチームリーダー会議を設定により自動開始しました（${tasks.length}件）。\n${taskList}\n判断は不要です。進行状況は各タスクのログで確認できます。`,
+        `项目'${projectName}'的组长评审会议已按设置自动启动（${tasks.length} 个任务）。\n${taskList}\n无需决策，可在各任务日志中查看进度。`,
+      );
+      const options: DecisionOption[] = [
+        { number: 1, action: ACKNOWLEDGE_ACTION, label: t("확인", "Acknowledge", "確認", "确认") },
+      ];
+      return {
+        id: `${NOTICE_ID_PREFIX}${row.id}`,
+        kind: "review_auto_started",
+        created_at: row.created_at,
+        summary,
+        project_id: row.project_id,
+        project_name: row.project_name,
+        project_path: row.project_path,
+        task_id: tasks[0]?.id ?? null,
+        task_title: tasks[0]?.title ?? null,
+        options,
+      };
+    });
   }
-  return applied;
+
+  return { buildReviewAutoStartNoticeItems };
 }
 
-/** Durable informational cards are independent of readiness and pending revision cards. */
-export function buildAutomaticReviewInfoItems(
-  db: Pick<DatabaseSync, "prepare">,
-  lang: string,
-): DecisionInboxRouteItem[] {
-  const rows = db
-    .prepare(
-      `
-    SELECT t.id AS task_id, t.title AS task_title, t.project_id,
-      p.name AS project_name, p.project_path, MAX(tl.created_at) AS created_at
-    FROM task_logs tl JOIN tasks t ON t.id = tl.task_id JOIN projects p ON p.id = t.project_id
-    WHERE tl.kind = 'system' AND tl.message = 'Review meeting started automatically (setting)'
-    GROUP BY t.id ORDER BY created_at DESC LIMIT 100
-  `,
-    )
-    .all() as Array<{
-    task_id: string;
-    task_title: string;
-    project_id: string;
-    project_name: string;
-    project_path: string;
-    created_at: number;
-  }>;
-  const summary = {
-    ko: "설정에 따라 검토 회의가 자동으로 시작되었습니다. 이 항목은 알림이며 결정이 필요하지 않습니다.",
-    en: "Review meeting started automatically (setting). This is an informational item; no decision is required.",
-    ja: "設定によりレビュー会議が自動的に開始されました。この項目はお知らせであり、決定は不要です。",
-    zh: "评审会议已按设置自动启动。此项仅供知悉，无需决策。",
-  };
-  return rows.map((row) => ({
-    ...row,
-    id: `project-review-auto:${row.task_id}`,
-    kind: "project_review_ready",
-    informational: true,
-    summary: `${summary[lang as keyof typeof summary] ?? summary.en}\n${row.task_title}`,
-    options: [],
-  }));
+export function handleReviewAutoStartNoticeReply(input: {
+  res: Response;
+  currentItem: DecisionInboxRouteItem;
+  selectedOption: DecisionOption;
+  deps: { db: Pick<DatabaseSync, "prepare">; nowMs: () => number };
+}): boolean {
+  const { res, currentItem, selectedOption, deps } = input;
+  if (currentItem.kind !== "review_auto_started") return false;
+  if (selectedOption.action !== ACKNOWLEDGE_ACTION) {
+    res.status(400).json({ error: "unsupported_review_auto_start_action", action: selectedOption.action });
+    return true;
+  }
+  deps.db
+    .prepare("UPDATE review_auto_start_notices SET acknowledged_at = ? WHERE id = ? AND acknowledged_at IS NULL")
+    .run(deps.nowMs(), currentItem.id.slice(NOTICE_ID_PREFIX.length));
+  res.json({ ok: true, resolved: true, kind: "review_auto_started", action: ACKNOWLEDGE_ACTION });
+  return true;
+}
+
+// Picks every review item of a round; skipping to the next round stays a CEO decision.
+export function buildReviewAutoApplyReplyPayload(item: DecisionInboxRouteItem): YoloDecisionReplyPayload | null {
+  if (item.kind !== "review_round_pick") return null;
+  const picks = item.options.filter((option) => option.action === "apply_review_pick").map((option) => option.number);
+  if (picks.length <= 0) return null;
+  return { option_number: picks[0], selected_option_numbers: picks };
+}
+
+export function isReviewAutoApplyConfigured(db: Pick<DatabaseSync, "prepare">): boolean {
+  if (resolveReviewAutomation(db, "reviewAutoApply", null).enabled) return true;
+  return Boolean(db.prepare("SELECT 1 FROM projects WHERE review_auto_apply = 'on' LIMIT 1").get());
+}
+
+export function runReviewAutoApplyAutopilot(input: {
+  db: Pick<DatabaseSync, "prepare">;
+  getReviewRoundItems: () => DecisionInboxRouteItem[];
+  applyDecisionReply: (decisionId: string, body: Record<string, unknown>) => DecisionApplyResult;
+  appendTaskLog: (taskId: string, kind: string, message: string) => void;
+}): number {
+  const { db, appendTaskLog } = input;
+  const taskIdByDecisionId = new Map<string, string | null>();
+  return runYoloDecisionAutopilot({
+    getDecisionInboxItems: () => {
+      const items = input.getReviewRoundItems();
+      for (const item of items) taskIdByDecisionId.set(item.id, item.task_id);
+      return items;
+    },
+    buildReplyPayload: buildReviewAutoApplyReplyPayload,
+    shouldSkipItem: (item) => {
+      if (item.kind !== "review_round_pick") return true;
+      return !resolveReviewAutomation(db, "reviewAutoApply", item.project_id).enabled;
+    },
+    applyDecisionReply: (decisionId, body) => {
+      const result = input.applyDecisionReply(decisionId, body);
+      const taskId = taskIdByDecisionId.get(decisionId);
+      if (result.status < 400 && taskId) appendTaskLog(taskId, "system", REVIEW_AUTO_APPLY_LOG);
+      return result;
+    },
+  });
 }

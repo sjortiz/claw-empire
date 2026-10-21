@@ -115,11 +115,10 @@ CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(sourc
   } catch {
     /* already exists */
   }
-
-  // Null overrides retain global review automation settings for existing projects.
-  for (const column of ["review_meeting_auto_start", "review_items_auto_apply"]) {
+  // Null review automation overrides inherit the global reviewAutoStart/reviewAutoApply settings.
+  for (const column of ["review_auto_start", "review_auto_apply"]) {
     try {
-      db.exec(`ALTER TABLE projects ADD COLUMN ${column} INTEGER CHECK(${column} IS NULL OR ${column} IN (0,1))`);
+      db.exec(`ALTER TABLE projects ADD COLUMN ${column} TEXT CHECK(${column} IS NULL OR ${column} IN ('on','off'))`);
     } catch {
       /* already exists */
     }

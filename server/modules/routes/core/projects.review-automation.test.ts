@@ -45,58 +45,41 @@ describe("project review automation routes", () => {
   function createProject(overrides: Record<string, unknown> = {}) {
     return request(app)
       .post("/api/projects")
-      .send({
-        name: "Review automation project",
-        project_path: process.cwd(),
-        core_goal: "Start review meetings without a CEO click",
-        ...overrides,
-      });
+      .send({ name: "Review project", project_path: process.cwd(), core_goal: "Review", ...overrides });
   }
 
-  it.each([undefined, null, false, true])("round trips project override %s through all responses", async (value) => {
-    const overrides = value === undefined ? {} : { review_meeting_auto_start: value, review_items_auto_apply: value };
-    const created = await createProject(overrides);
+  it("inherits by default and persists explicit overrides on create", async () => {
+    const inherited = await createProject();
+    expect(inherited.body.project).toMatchObject({ review_auto_start: null, review_auto_apply: null });
+    db.exec("DELETE FROM projects");
+
+    const created = await createProject({ review_auto_start: "on", review_auto_apply: "off" });
     expect(created.status).toBe(200);
-    const expected = { review_meeting_auto_start: value ?? null, review_items_auto_apply: value ?? null };
-    expect(created.body.project).toMatchObject(expected);
-    const id = created.body.project.id;
-    const listed = await request(app).get("/api/projects");
-    expect(listed.body.projects[0]).toMatchObject(expected);
-    const detail = await request(app).get(`/api/projects/${id}`);
-    expect(detail.body.project).toMatchObject(expected);
-    const renamed = await request(app).patch(`/api/projects/${id}`).send({ name: "Renamed" });
-    expect(renamed.body.project).toMatchObject(expected);
+    expect(created.body.project).toMatchObject({ review_auto_start: "on", review_auto_apply: "off" });
   });
 
-  it("preserves independent overrides and restores global inheritance", async () => {
-    const created = await createProject({ review_meeting_auto_start: true, review_items_auto_apply: false });
-    const id = created.body.project.id;
-    for (const value of [false, true, null]) {
-      const updated = await request(app).patch(`/api/projects/${id}`).send({ review_meeting_auto_start: value });
-      expect(updated.status).toBe(200);
-      expect(updated.body.project).toMatchObject({ review_meeting_auto_start: value, review_items_auto_apply: false });
-    }
-    const updated = await request(app).patch(`/api/projects/${id}`).send({ review_items_auto_apply: null });
-    expect(updated.body.project.review_items_auto_apply).toBeNull();
+  it("updates each override independently and can return to inheritance", async () => {
+    const id = (await createProject({ review_auto_start: "on" })).body.project.id;
+    const updated = await request(app).patch(`/api/projects/${id}`).send({ review_auto_apply: "on" });
+    expect(updated.body.project).toMatchObject({ review_auto_start: "on", review_auto_apply: "on" });
+    const reset = await request(app).patch(`/api/projects/${id}`).send({ review_auto_start: null });
+    expect(reset.body.project).toMatchObject({ review_auto_start: null, review_auto_apply: "on" });
   });
 
-  describe.each(["review_meeting_auto_start", "review_items_auto_apply"])("%s validation", (field) => {
-    it.each([0, 1, "true", "false", "", {}, []])("rejects invalid override %j without other writes", async (value) => {
-      const invalid = await createProject({ [field]: value });
-      expect(invalid.status).toBe(400);
-      expect(invalid.body.error).toBe(`invalid_${field}`);
-      expect(db.prepare("SELECT COUNT(*) AS count FROM projects").get()).toMatchObject({ count: 0 });
-      const created = await createProject({ [field]: true });
-      const id = created.body.project.id;
-      const updated = await request(app)
-        .patch(`/api/projects/${id}`)
-        .send({ [field]: value, name: "Must not persist" });
-      expect(updated.status).toBe(400);
-      expect(updated.body.error).toBe(`invalid_${field}`);
-      expect(db.prepare(`SELECT name, ${field} FROM projects WHERE id = ?`).get(id)).toMatchObject({
-        name: "Review automation project",
-        [field]: 1,
-      });
+  it.each([true, "true", "inherit", "", 1])("rejects invalid override %j on create and update", async (value) => {
+    const invalid = await createProject({ review_auto_start: value });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe("invalid_review_automation");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM projects").get()).toMatchObject({ count: 0 });
+
+    const id = (await createProject()).body.project.id;
+    const updated = await request(app)
+      .patch(`/api/projects/${id}`)
+      .send({ review_auto_apply: value, name: "Should not persist" });
+    expect(updated.status).toBe(400);
+    expect(db.prepare("SELECT name, review_auto_apply FROM projects").get()).toMatchObject({
+      name: "Review project",
+      review_auto_apply: null,
     });
   });
 });

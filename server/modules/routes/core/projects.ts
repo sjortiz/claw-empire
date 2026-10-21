@@ -6,6 +6,7 @@ import path from "node:path";
 import { getAssignedAgentIdsByProjectIds } from "../shared/project-assignments.ts";
 import { createProjectRouteHelpers } from "./projects/helpers.ts";
 import { DEFAULT_WORKFLOW_PACK_KEY, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
+import { isReviewAutomationOverride } from "../../workflow/core/review-automation.ts";
 
 type FirstQueryValue = (value: unknown) => string | undefined;
 type NormalizeTextField = (value: unknown) => string | null;
@@ -18,17 +19,6 @@ interface RegisterProjectRoutesOptions {
   normalizeTextField: NormalizeTextField;
   runInTransaction: RunInTransaction;
   nowMs: () => number;
-}
-
-const REVIEW_AUTOMATION_FIELDS = ["review_meeting_auto_start", "review_items_auto_apply"] as const;
-
-function serializeProject(project: Record<string, unknown> | undefined): Record<string, unknown> {
-  return {
-    ...project,
-    ...Object.fromEntries(
-      REVIEW_AUTOMATION_FIELDS.map((field) => [field, project?.[field] == null ? null : project[field] === 1]),
-    ),
-  };
 }
 
 export function registerProjectRoutes({
@@ -101,7 +91,7 @@ export function registerProjectRoutes({
       projectRows.map((row) => row.id),
     );
     const projects = projectRows.map((row) => ({
-      ...serializeProject(row),
+      ...row,
       assigned_agent_ids: assignedByProject.get(row.id) ?? [],
     }));
 
@@ -227,9 +217,11 @@ export function registerProjectRoutes({
     if (mergePolicy !== null && mergePolicy !== "auto" && mergePolicy !== "manual") {
       return res.status(400).json({ error: "invalid_merge_policy" });
     }
-    for (const field of REVIEW_AUTOMATION_FIELDS) {
-      if (body[field] != null && typeof body[field] !== "boolean") {
-        return res.status(400).json({ error: `invalid_${field}` });
+    const reviewAutoStart = body.review_auto_start ?? null;
+    const reviewAutoApply = body.review_auto_apply ?? null;
+    for (const value of [reviewAutoStart, reviewAutoApply]) {
+      if (value !== null && !isReviewAutomationOverride(value)) {
+        return res.status(400).json({ error: "invalid_review_automation" });
       }
     }
     if (!isPathInsideAllowedRoots(projectPath)) {
@@ -288,7 +280,8 @@ export function registerProjectRoutes({
       db.prepare(
         `
       INSERT INTO projects (
-        id, name, project_path, core_goal, default_pack_key, assignment_mode, last_used_at, created_at, updated_at, github_repo, merge_policy, review_meeting_auto_start, review_items_auto_apply
+        id, name, project_path, core_goal, default_pack_key, assignment_mode, last_used_at, created_at, updated_at, github_repo, merge_policy,
+        review_auto_start, review_auto_apply
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
@@ -304,8 +297,8 @@ export function registerProjectRoutes({
         t,
         githubRepo,
         mergePolicy,
-        body.review_meeting_auto_start == null ? null : Number(body.review_meeting_auto_start),
-        body.review_items_auto_apply == null ? null : Number(body.review_items_auto_apply),
+        reviewAutoStart,
+        reviewAutoApply,
       );
 
       if (assignmentMode === "manual" && agentIds.length > 0) {
@@ -320,7 +313,7 @@ export function registerProjectRoutes({
     const assignedAgentIds = (
       db.prepare("SELECT agent_id FROM project_agents WHERE project_id = ?").all(id) as Array<{ agent_id: string }>
     ).map((row) => row.agent_id);
-    res.json({ ok: true, project: { ...serializeProject(project), assigned_agent_ids: assignedAgentIds } });
+    res.json({ ok: true, project: { ...project, assigned_agent_ids: assignedAgentIds } });
   });
 
   app.patch("/api/projects/:id", (req, res) => {
@@ -397,14 +390,14 @@ export function registerProjectRoutes({
       updates.push("merge_policy = ?");
       params.push(value);
     }
-    for (const field of REVIEW_AUTOMATION_FIELDS) {
-      if (!Object.hasOwn(body, field)) continue;
-      const value = body[field];
-      if (value !== null && typeof value !== "boolean") {
-        return res.status(400).json({ error: `invalid_${field}` });
+    for (const column of ["review_auto_start", "review_auto_apply"]) {
+      if (!(column in body)) continue;
+      const value = body[column];
+      if (value !== null && !isReviewAutomationOverride(value)) {
+        return res.status(400).json({ error: "invalid_review_automation" });
       }
-      updates.push(`${field} = ?`);
-      params.push(value === null ? null : Number(value));
+      updates.push(`${column} = ?`);
+      params.push(value);
     }
     if ("assignment_mode" in body) {
       const value = body.assignment_mode === "manual" ? "manual" : "auto";
@@ -458,7 +451,7 @@ export function registerProjectRoutes({
     const assignedAgentIds = (
       db.prepare("SELECT agent_id FROM project_agents WHERE project_id = ?").all(id) as Array<{ agent_id: string }>
     ).map((row) => row.agent_id);
-    res.json({ ok: true, project: { ...serializeProject(project), assigned_agent_ids: assignedAgentIds } });
+    res.json({ ok: true, project: { ...project, assigned_agent_ids: assignedAgentIds } });
   });
 
   app.delete("/api/projects/:id", (req, res) => {
@@ -547,7 +540,7 @@ export function registerProjectRoutes({
     const assignedAgentIds = assignedAgents.map((agent: any) => agent.id);
 
     res.json({
-      project: { ...serializeProject(project), assigned_agent_ids: assignedAgentIds },
+      project: { ...project, assigned_agent_ids: assignedAgentIds },
       assigned_agents: assignedAgents,
       tasks,
       reports,

@@ -4,13 +4,12 @@ import type { DecisionOption } from "./decision-request";
 
 export interface DecisionInboxItem {
   id: string;
-  kind: "agent_request" | "project_review_ready" | "task_timeout_resume" | "review_round_pick";
+  kind: "agent_request" | "project_review_ready" | "task_timeout_resume" | "review_round_pick" | "review_auto_started";
   agentId: string | null;
   agentName: string;
   agentNameKo: string;
   agentAvatar?: string | null;
   requestContent: string;
-  informational?: boolean;
   options: DecisionOption[];
   createdAt: number;
   taskId?: string | null;

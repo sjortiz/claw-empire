@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { isApiRequestError, pickProjectPathNative, type ProjectDetailResponse } from "../../api";
-import type { Agent, AssignmentMode, Department, MergePolicy, Project } from "../../types";
+import type { Agent, AssignmentMode, Department, MergePolicy, Project, ProjectReviewAutomation } from "../../types";
 import type {
   FormFeedback,
   ManualAssignmentWarning,
@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import ManualAssignmentSelector from "./ManualAssignmentSelector";
 import ProjectMergePolicySelector from "./ProjectMergePolicySelector";
-import { ProjectReviewAutomationSettings } from "../ReviewAutomationSettings";
+import ProjectReviewAutomationSelector from "./ProjectReviewAutomationSelector";
 
 interface ProjectEditorPanelProps {
   t: ProjectI18nTranslate;
@@ -48,10 +48,8 @@ interface ProjectEditorPanelProps {
   setFormFeedback: Dispatch<SetStateAction<FormFeedback | null>>;
   mergePolicy: MergePolicy | null;
   setMergePolicy: Dispatch<SetStateAction<MergePolicy | null>>;
-  reviewMeetingAutoStart: boolean | null;
-  setReviewMeetingAutoStart: Dispatch<SetStateAction<boolean | null>>;
-  reviewItemsAutoApply: boolean | null;
-  setReviewItemsAutoApply: Dispatch<SetStateAction<boolean | null>>;
+  reviewAutomation: ProjectReviewAutomation;
+  setReviewAutomation: Dispatch<SetStateAction<ProjectReviewAutomation>>;
   assignmentMode: AssignmentMode;
   setAssignmentMode: Dispatch<SetStateAction<AssignmentMode>>;
   setManualAssignmentWarning: Dispatch<SetStateAction<ManualAssignmentWarning | null>>;
@@ -105,10 +103,8 @@ export default function ProjectEditorPanel({
   setFormFeedback,
   mergePolicy,
   setMergePolicy,
-  reviewMeetingAutoStart,
-  setReviewMeetingAutoStart,
-  reviewItemsAutoApply,
-  setReviewItemsAutoApply,
+  reviewAutomation,
+  setReviewAutomation,
   assignmentMode,
   setAssignmentMode,
   setManualAssignmentWarning,
@@ -333,16 +329,11 @@ export default function ProjectEditorPanel({
         disabled={!isCreating && !editingProjectId}
       />
 
-      <ProjectReviewAutomationSettings
+      <ProjectReviewAutomationSelector
         t={t}
-        autoStart={reviewMeetingAutoStart}
-        autoApply={reviewItemsAutoApply}
-        onAutoStartChange={(value) => {
-          setReviewMeetingAutoStart(value);
-          setFormFeedback(null);
-        }}
-        onAutoApplyChange={(value) => {
-          setReviewItemsAutoApply(value);
+        value={reviewAutomation}
+        onChange={(value) => {
+          setReviewAutomation(value);
           setFormFeedback(null);
         }}
         disabled={!isCreating && !editingProjectId}

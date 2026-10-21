@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { checkProjectPath, createProject, isApiRequestError, updateProject } from "../../api";
-import type { AssignmentMode, MergePolicy } from "../../types";
+import type { AssignmentMode, MergePolicy, ProjectReviewAutomation } from "../../types";
 import type { ManualAssignmentWarning, ProjectI18nTranslate } from "./types";
 import type { ProjectManagerPathTools } from "./useProjectManagerPathTools";
 
@@ -10,8 +10,7 @@ interface UseProjectSaveHandlerParams {
   setSaving: Dispatch<SetStateAction<boolean>>;
   assignmentMode: AssignmentMode;
   mergePolicy: MergePolicy | null;
-  reviewMeetingAutoStart: boolean | null;
-  reviewItemsAutoApply: boolean | null;
+  reviewAutomation: ProjectReviewAutomation;
   getManualAssignmentWarning: () => ManualAssignmentWarning["reason"] | null;
   setManualAssignmentWarning: Dispatch<SetStateAction<ManualAssignmentWarning | null>>;
   projectPath: string;
@@ -35,8 +34,7 @@ export function useProjectSaveHandler({
   setSaving,
   assignmentMode,
   mergePolicy,
-  reviewMeetingAutoStart,
-  reviewItemsAutoApply,
+  reviewAutomation,
   getManualAssignmentWarning,
   setManualAssignmentWarning,
   projectPath,
@@ -126,8 +124,7 @@ export function useProjectSaveHandler({
             create_path_if_missing: createPathIfMissing,
             assignment_mode: assignmentMode,
             merge_policy: mergePolicy,
-            review_meeting_auto_start: reviewMeetingAutoStart,
-            review_items_auto_apply: reviewItemsAutoApply,
+            ...reviewAutomation,
             agent_ids: assignmentMode === "manual" ? Array.from(selectedAgentIds) : [],
           });
           setSelectedProjectId(updated.id);
@@ -139,8 +136,7 @@ export function useProjectSaveHandler({
             create_path_if_missing: createPathIfMissing,
             assignment_mode: assignmentMode,
             merge_policy: mergePolicy,
-            review_meeting_auto_start: reviewMeetingAutoStart,
-            review_items_auto_apply: reviewItemsAutoApply,
+            ...reviewAutomation,
             agent_ids: assignmentMode === "manual" ? Array.from(selectedAgentIds) : [],
           });
           setSelectedProjectId(created.id);
@@ -217,10 +213,9 @@ export function useProjectSaveHandler({
       getManualAssignmentWarning,
       loadProjects,
       mergePolicy,
-      reviewMeetingAutoStart,
-      reviewItemsAutoApply,
       name,
       pathTools,
+      reviewAutomation,
       projectPath,
       saving,
       search,
