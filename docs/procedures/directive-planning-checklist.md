@@ -1,6 +1,6 @@
 # Directive planning checklist
 
-Process owner: Operations. Revision 1, 2026-10-21.
+Process owner: Operations. Revision 2, 2026-10-21.
 
 Use this checklist during draft review, after consolidation or repair, and after
 subtasks are created or reassigned. Attach the completed record to the directive's
@@ -40,6 +40,22 @@ For a docs-only or meeting-only directive, record Implementation Owner as
 work to fill this table. For mixed work, map the code units and track the
 non-code deliverables alongside them.
 
+## Supporting-work handoff
+
+For each support item, record its named support owner and either the explicit
+directive requirement that requests it or the implementation key/unit and named
+Development owner it supports. When both apply, record both. A bare reference to
+"the implementation owner" is incomplete until it resolves through this map.
+
+| Support item / owner  | Requested requirement        | Supported implementation key / unit  | Named Development owner                        | Handoff / required prerequisite                                 |
+| --------------------- | ---------------------------- | ------------------------------------ | ---------------------------------------------- | --------------------------------------------------------------- |
+| `<key / named owner>` | `<directive excerpt or N/A>` | `<key / unit or N/A with rationale>` | `<name or N/A for independent non-code scope>` | `<artifact / consumer; dependency only when actually required>` |
+
+Reconcile these links with the accepted graph and created assignments after
+repair or reassignment. Independent support work may stay parallel; a support
+relationship alone does not require a `depends_on` edge. Verification of completed
+code must depend on the relevant implementation items.
+
 ## Manual validation
 
 - [ ] Read the intended outcome in the directive's language. Fixing issues,
@@ -60,6 +76,9 @@ non-code deliverables alongside them.
 - [ ] Include process work only when requested or when it supports an identified
       implementation item. Record the supported item; do not add a dependency
       solely to show this relationship.
+- [ ] Resolve each supporting-work handoff to its named Development owner or
+      record why it is independently requested non-code work. Confirm that the
+      support owner can identify the code item receiving the handoff.
 - [ ] Check that verification needing implemented behavior depends on the
       relevant implementation items. Keep independent documentation, test
       planning and readiness work parallel; do not serialize unrelated work.
@@ -73,6 +92,24 @@ non-code deliverables alongside them.
 - [ ] At completion review, require implementation evidence and verification
       results for every unit. Supporting documents alone cannot close a
       code-change directive.
+
+## Sign-off record
+
+Record planning coverage, assignment preservation and implementation completion
+separately. A planning PASS does not establish code delivery. For conditional
+approval, list every outstanding condition, its accountable owner, expected
+evidence and recheck result; keep the affected gate on HOLD until the evidence
+is present. Do not change a task's live status from this manual record.
+
+| Gate                                          | PASS / HOLD / N/A | Reviewed revision / evidence                   | Remaining condition / correction owner |
+| --------------------------------------------- | ----------------- | ---------------------------------------------- | -------------------------------------- |
+| Planning coverage, including support handoffs | `<state>`         | `<accepted graph and coverage map>`            | `<gap / owner or none>`                |
+| Created assignment and execution ownership    | `<state>`         | `<subtask/child IDs and coding executor>`      | `<gap / owner or none>`                |
+| Implementation completion                     | `<state>`         | `<code diff and actual per-unit test results>` | `<gap / owner or none>`                |
+
+Record whether evidence is a test fixture, an owner-reported result or a real
+task assignment. Fixture agents and retained branch instructions cannot establish
+real implementer assignments or actual issue-branch creation.
 
 ## Missing coverage response
 
