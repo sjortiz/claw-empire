@@ -1,5 +1,10 @@
 # Operations review: directive implementation owners
 
+Historical review: the evidence-gap findings below reflect the earlier planning
+snapshot. The [Operations review revision](2026-10-21-operations-review-revision.md)
+reconciles them against integrated Development artifacts and new local checks;
+use its scoped disposition for the current review.
+
 Review date: 2026-10-21. Reviewer: Turbo, Operations; review accountability:
 Atlas, per delegated Operations item. Review item:
 `82df85c6-752a-4084-a109-075c8900fa67`; execution task:
