@@ -1,73 +1,84 @@
-# Structured meeting verdicts: continuation review
+# Structured meeting verdicts: consolidated review
 
-Review date: 2026-10-21. Owner: Planning. Decision: **REVISE**.
+Review date: 2026-10-21. Owner: Planning.
 
-This is a review of completed Development and Design work, not a separate implementation specification. Planning made no production changes and ran no tests.
+**Current disposition: the latest scoped Development correction is accepted on source review and present on the system integration branch. Release approval remains unconfirmed because four required full checks have no corrected-revision results.**
 
-## Exact revisions reviewed
+This document consolidates existing review work; it is not a separate implementation specification. Planning changed no production code and ran no tests. No new remediation task or round was created.
 
-- Current checkout: `1895de8`, following `6afa3e0`. These contain the original structured-verdict implementation and the approved-planning-draft correction reviewed in the previous run.
-- Development revision candidate: `302cd3da8c9831c1603ea40978fe492c0cbbbb2f`, following `0376573` on `climpire/ef780638`. Inspected through this repository's Git objects; it is **not integrated into this checkout**.
-- Design reference: `fbabd97`, `docs/design/meeting-verdicts-ui.md`.
-- Inbox notes reviewed: 193, 203, 207, 208. Their completion claims are evidence of the owners' work, not authority to change the CEO directive.
+## Latest CEO scope and ownership
 
-No merge, rebase, cherry-pick, push, PR, or GitHub comment was performed. The live checkout and database were not accessed.
+The authorized reference for existing Development task `b80dbdb8-839c-425d-8eb7-e4460176f4ca` contains a narrower CEO decision than the historical review concerns:
 
-## HIGH: retry exhaustion changes the authorized decision policy
+- If consolidation omits `plan_items`, preserve department draft prose through `planningWorkFromVerdict` so approved drafts still seed executable subtasks.
+- Exclude informational notes and duplicate summary work from fallback planning input.
+- Pass shared `classifyMeetingReviewDecision` through dependencies instead of using a local planned-meeting regex.
+- Add regressions for approved draft seeding, notes exclusion, and duplicates. No other remediation in this round.
 
-The CEO explicitly requires a missing/unparseable verdict to retry once, then fall back to the current classifier with a log. The CEO also requires existing final-round rules to remain unchanged. Note 203 explicitly says Development intentionally superseded that fallback based on reviewer notes. Those notes cannot override the CEO directive.
+Planning's initial note 210 restated the historical broader fallback finding. After reading the active task reference, note 212 immediately limited the handoff to the CEO's current checklist. Development notes 209/211/213/214 confirm that scope. Other original-contract discrepancies remain residual review context, not unfinished items in this narrow implementation checklist.
 
-In candidate `302cd3d`:
+## Exact source and integration evidence
 
-- `server/modules/workflow/meeting-verdict.ts`, `resolveMeetingVerdict`, replaces retry exhaustion with `{ verdict: "no_verdict", ... }`. Its log requests clarification instead of recording classifier fallback.
-- `server/modules/workflow/core/reply-core-tools.ts`, `classifyMeetingReviewDecision`, removes the existing keyword classifier and returns `reviewing` for replies without the final verdict line.
-- `server/modules/workflow/orchestration/meetings/review-consensus-outcome.ts`, `missingVerdicts` handling, marks minutes failed and returns before the final-round decision path.
-- `server/modules/workflow/orchestration/planned-approval.ts:340` likewise marks minutes failed and exits without completing planning when a verdict remains missing.
-- `server/modules/workflow/orchestration/meetings/review-consensus.ts:94` introduces a same-round clarification restart. The numerical round limit remains, but missing-verdict finalization behavior has changed.
-- The candidate's integration tests deliberately assert these changes: `does not force approval for no verdict in the final round or consume a round on clarification`, and `does not infer approval from prose after retry exhaustion`.
+- Planning checkout before this documentation update: `083dd3b`, based on `1895de8` and `6afa3e0`. Its production source is the earlier implementation.
+- Previous system integration: `a77fbd63c627a4a62ef0ad93050a4a9811309c23`. Its production files match prior candidate `302cd3d`; only the Design document differs.
+- Corrected Development commit: `be45d88f586cd0c10509f8d4c36b4bbb413233da`, directly based on `a77fbd6`.
+- At the final source inspection, `climpire/d-670157a5-a43f-4006-8baa-e535094aa1ed` resolves to **`be45d88`**. The system integration branch therefore includes the correction. This Planning checkout has not incorporated that production tree, and Planning performed no merge, rebase, or cherry-pick.
 
-Required Development correction: retain explicit final-line decisions for valid replies; invoke the original phase-specific classifier only after the one verdict retry fails; log and preserve the fallback source so a guess is distinguishable in minutes; keep the original final-round rules. Update the contrary assertions and repeat the five required checks on the resulting candidate. Preserve the existing approved-draft and solo-planner fixes.
+The correction touches four scoped files: orchestration dependency wiring, planned approval, the parallel planning fixture, and planned-verdict integration tests. It changes no UI component, review resolver, or round-limit policy.
 
-An independent read-only audit confirmed this finding: resolver lines 38–57, classifier lines 378–381, review outcome lines 60–75 (before finalization at 240–273), and planned outcome lines 340–349. It also confirmed the ordinary/solo approved-draft regressions at `planned-verdict.integration.test.ts:92` and `:114`. The auditor changed no files and ran no tests.
+## Scoped acceptance review
 
-Planning attempted to route this finding to the original Development revision task through the authorized task inbox. Delivery returned HTTP 409, `recipient_unavailable`; the task is closed. The finding remains open and must be routed when Development is resumed. No successful handoff is claimed.
+| Owned requirement                                  | Evidence in `be45d88`                                                                                                                                  | Disposition                                  |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| Approved drafts survive missing `plan_items`       | Existing separate `workTranscript` receives only department drafts sanitized by `planningWorkFromVerdict`; fallback collector consumes that transcript | Retained and verified in source              |
+| Drafts actually seed executable work               | Regression invokes real `createSubtaskSeedingTools` and asserts `[Plan Item] Implement API` exists                                                     | Covered; Development reports API pass        |
+| Informational notes do not become work             | Notes-only regression expects an empty callback item list and no seeded plan items while keeping the note in the project memo                          | Covered; Development reports API pass        |
+| Repeated consolidation does not duplicate work     | Repeated-draft summary regression expects one fallback item and one seeded subtask; summary is never appended to `workTranscript`                      | Covered; Development reports API pass        |
+| Planning uses the shared decision classifier       | `orchestration.ts` injects `classifyMeetingReviewDecision`; draft and consolidation decisions call it on resolved verdict content                      | Implemented; no local planned revision regex |
+| A verdict-only retry preserves original draft work | Regression asserts one seeded item and two shared-classifier calls returning `approved`                                                                | Covered; Development reports API pass        |
+| Solo planner keeps its original draft              | Existing solo-planner regression remains; consolidation does not replace the draft's work input                                                        | Retained                                     |
 
-## Outstanding checklist reconciliation
+No additional CRITICAL/HIGH defect was identified in this scoped correction by Planning's source review. Development reports that the draft-preservation path already existed in the integrated base; this commit strengthens end-to-end coverage and completes shared classifier wiring rather than claiming to newly implement that entire path.
 
-| Review concern                                                        | Evidence in `302cd3d`                                                                                                            | Status                                                      |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Only final APPROVE/REVISE controls valid live replies                 | Shared `src/lib/meeting-verdict.ts`, `parseMeetingVerdict`; historical JSON is handled separately by `parseStoredMeetingVerdict` | Implemented in candidate; pending system integration        |
-| Risk/block prose cannot override explicit approval                    | Shared parser plus review/planning integration assertions using `#47 blocks downstream work` and `risk`                          | Implemented in candidate; Development reports checks passed |
-| REVISE requires at least one blocking item                            | Shared `meetingVerdictNeedsRevision`; both meeting integration suites cover zero blockers                                        | Implemented in candidate                                    |
-| Missing/invalid verdict retries once with the CEO-required fallback   | Retry exists; fallback was removed and meetings instead stop                                                                     | **Open HIGH requirement conflict**                          |
-| Approval notes remain informational                                   | Work text removes explicitly listed notes; minutes retain metadata; memo uses informational heading                              | Implemented in candidate                                    |
-| Approved executable planning drafts survive a prose-only summary      | Separate `workTranscript`; normal and solo-planner regression cases in `planned-verdict.integration.test.ts`                     | Previous HIGH fix retained in candidate                     |
-| Explicit decisions appear in review/planned transcripts and summaries | Shared badge/body in minutes and chat; latest-speaker header counts; planned/review office handling                              | Core display implemented; medium gaps below                 |
-| Review round limit and final-round behavior remain unchanged          | Explicit REVISE still has a finalization test; missing verdict exits earlier                                                     | **Partially unmet; same HIGH finding**                      |
+## Verdict summary reconciliation
 
-## Medium warnings: report only
+On exact integrated revision `be45d88`, backend `classifyMeetingReviewDecision` and UI `MeetingVerdictBadge`/`MeetingVerdictCounts` use the same shared verdict parser and `meetingVerdictNeedsRevision` predicate. Valid explicit approval remains approval despite risk/block prose; REVISE requires at least one blocker. Counts use each speaker's latest stored verdict, and historical JSON-only metadata remains readable. The backend persists resolved verdict metadata, which the minutes UI reads separately from rationale. These source relationships remain intact after the scoped classifier change.
 
-These do not authorize production edits under the MVP review policy, but prevent claiming that every Design acceptance detail is complete:
+This establishes source consistency for valid resolved verdicts. It does **not** constitute renewed browser or full web-suite acceptance against `be45d88`. Earlier screenshots and web 192/192 belonged to `302cd3d`; no new UI artifacts or corrected-revision web result were supplied. Design's broader visual sign-off remains unconfirmed.
 
-- `MeetingVerdictView.tsx` explains REVISE-without-blockers only in `title`; Design requests a visible downgrade suffix for touch and keyboard users.
-- Retry/legacy provenance is not included in the stored `MeetingVerdict` contract. Historical synthesized classifier decisions remain indistinguishable from explicit historical JSON decisions. Logs alone do not solve the minutes display issue.
-- `collectRevisionMemoItems` still emits `Department Speaker: item` rather than a verdict-prefixed summary. Informational memo entries likewise lack verdict labels.
-- `MessageContent.tsx` renders the entire verdict component, including blocker/note lists, before rationale. Design specifies chip, rationale, blockers, then notes.
-- Minutes show NO VERDICT badges for entries with no stored verdict, including historical entries; the Design reference requests unchanged presentation for historical entries without verdict metadata.
+## Corrected-revision verification
 
-The prior malformed-fence display warning was reported against the current checkout. The candidate rejects odd fence counts for live parsing; repaired stored-content display still requires exact-candidate verification before declaring that warning resolved.
+Development note 213 explicitly attributes these runs to the corrected tree committed as `be45d88`:
 
-## Verification provenance
+| Required command        | Corrected-revision result supplied             |
+| ----------------------- | ---------------------------------------------- |
+| `pnpm run format:check` | Not supplied; targeted Prettier passed instead |
+| `pnpm run lint`         | Not supplied; targeted ESLint passed instead   |
+| `pnpm run build`        | Not supplied; `tsc -b` passed instead          |
+| `pnpm run test:web`     | Not supplied                                   |
+| `pnpm run test:api`     | **Passed: 84 files, 528/528 tests**            |
 
-| Revision                   | Verification owner                             | Reported results                                                                                                                    |
-| -------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Current checkout `1895de8` | Development, recorded in previous continuation | Format passed; lint passed with 0 errors / 40 existing warnings; build passed with chunk-size warning; web 185 tests; API 532 tests |
-| Candidate `302cd3d`        | Development, notes 207/208                     | Format passed; lint passed with 0 errors / 40 existing warnings; build passed with bundle-size warning; web 192/192; API 525/525    |
+Development also reports focused 27/27 tests and `git diff --check` passed. Targeted checks and TypeScript compilation do not replace the four missing required full-command results. Planning requested those results through the same Development task after receiving completion, but delivery returned HTTP 409 `recipient_unavailable`; no successful follow-up or rerun is claimed.
 
-Required commands are `pnpm run format:check`, `pnpm run lint`, `pnpm run build`, `pnpm run test:web`, and `pnpm run test:api`. These are owner-reported runs, not Planning reruns. The counts belong to different source revisions and must not be represented as one integrated verification run. Candidate screenshots were reported in note 207 but are not tracked in `302cd3d`; Planning did not inspect another worktree's filesystem and does not claim visual acceptance from those screenshots.
+Historical verification is preserved strictly as provenance: `1895de8` had reported format/lint/build passes, web 185, API 532; `302cd3d` had reported format/lint/build passes, web 192/192, API 525/525. The historical lint count was 0 errors / 40 existing warnings, and builds reported a bundle-size warning. Those results do not verify `be45d88` and are not combined with its API count.
 
-The original classifier's keyword failure is confirmed in source and regression coverage. The supplied live statistics (63/70 approvals, eight directives, timing ranges) remain unverified because no authorized local export was provided. No live database access was used to fill that gap.
+## Residual review context outside this remediation
 
-## Release disposition
+The original directive required one retry followed by logged legacy classifier fallback and unchanged final-round rules. The earlier revision `302cd3d` instead introduced `no_verdict` and clarification stops. The latest scoped correction deliberately leaves that behavior unchanged:
 
-Do not mark the parent implementation or all review checklist items complete yet. Development must resolve the HIGH conflict, then the system may integrate the approved work and collect verification for that exact integrated revision. Planning's continuation deliverable is this consolidated review and the documented handoff failure; it does not claim the Development candidate has been incorporated into the parent branch.
+- `server/modules/workflow/meeting-verdict.ts` emits `no_verdict` after retry exhaustion.
+- The shared classifier returns `reviewing` for missing explicit verdicts; injecting it into planning does not restore the old keyword fallback.
+- Review consensus outcome still exits before finalization for missing verdicts, and planned approval still exits for clarification.
+- Existing integration assertions still expect those clarification outcomes, including the changed missing-verdict final-round behavior.
+
+This original-contract discrepancy remains explicit for the CEO's release decision. It is not silently waived by accepting the newer, narrower planning correction, and no additional remediation was requested this round.
+
+Previously reported medium UI warnings remain report-only: the zero-blocker downgrade explanation is tooltip-only; retry/legacy provenance is absent from the stored contract; memo entries lack verdict prefixes; chat places blocker/note lists before rationale; historical entries lacking metadata receive a NO VERDICT badge. The malformed-fence display warning also lacks corrected-revision visual verification. None authorizes extra production edits under the current CEO scope.
+
+## Coordination and final readiness
+
+The scoped handoff succeeded (notes 210/212), Development completed and reported the correction (213/214), and the system integration branch now contains `be45d88`. Initial general task API discovery returned HTTP 401 and a prior-agent attempt returned HTTP 403; neither was treated as successful delivery. Inbox notes through 214 were reviewed; handled notes are acknowledged through the local task capability.
+
+The current narrow Development checklist is satisfied on source review, supported by corrected-tree API results. Overall release readiness remains unconfirmed until the four missing required full checks and any required Design acceptance are supplied. Carry the remaining original-contract discrepancy and medium UI limitations as documented residual context, without creating another remediation round. Planning does not recommend unconditional merge approval from the available evidence.
+
+The live checkout and database were not accessed. The keyword failure is supported by historical source and regressions, but the supplied live metrics (63/70 approvals, eight directives, timing ranges) remain unverified because no authorized local export was provided. Nothing was pushed, published, or posted to GitHub.
