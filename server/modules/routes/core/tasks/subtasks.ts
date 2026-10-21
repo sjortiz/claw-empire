@@ -165,7 +165,8 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
 
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id);
     broadcast("subtask_update", subtask);
-    if (body.status === "done") deps.maybeNotifyAllSubtasksComplete?.(String(existing.task_id));
+    if (body.status === "done" || body.status === "cancelled")
+      deps.maybeNotifyAllSubtasksComplete?.(String(existing.task_id));
     else deps.processSubtaskDelegations?.(String(existing.task_id));
     res.json(subtask);
   });

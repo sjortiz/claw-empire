@@ -1,9 +1,11 @@
+import { ensureSubtaskCancellation } from "./subtask-cancellation.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_WORKFLOW_PACK_KEY, WORKFLOW_PACK_KEYS, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
 
 type DbLike = Pick<DatabaseSync, "exec" | "prepare">;
 
 export function applyTaskSchemaMigrations(db: DbLike): void {
+  ensureSubtaskCancellation(db);
   // Subtask cross-department delegation columns
   try {
     db.exec("ALTER TABLE subtasks ADD COLUMN target_department_id TEXT");
@@ -175,6 +177,15 @@ CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(sourc
   migrateLegacyTasksStatusSchema(db);
   repairLegacyTaskForeignKeys(db);
   ensureMessagesIdempotencySchema(db);
+  // Add after legacy table rebuilds so they cannot drop recovery state columns.
+  // Preserve planning failures across restarts; only an explicit retry clears attention.
+  for (const definition of ["planning_attention_reason TEXT", "planning_meeting_failures INTEGER NOT NULL DEFAULT 0"]) {
+    try {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${definition}`);
+    } catch {
+      /* already exists */
+    }
+  }
 }
 
 function safeJsonParse(raw: string): unknown {
@@ -571,7 +582,7 @@ function repairLegacyTaskForeignKeys(db: DbLike): void {
           title TEXT NOT NULL,
           description TEXT,
           status TEXT NOT NULL DEFAULT 'pending'
-            CHECK(status IN ('pending','in_progress','done','blocked')),
+            CHECK(status IN ('pending','in_progress','done','blocked','cancelled')),
           assigned_agent_id TEXT REFERENCES agents(id),
           blocked_reason TEXT,
           cli_tool_use_id TEXT,

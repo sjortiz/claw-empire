@@ -127,6 +127,18 @@ export default function TaskCard({
         </p>
       ) : null}
 
+      {task.planning_attention_reason && (
+        <div
+          role="status"
+          className="mb-3 rounded-lg border border-amber-700/60 bg-amber-950/40 p-2 text-xs text-amber-200"
+        >
+          <p className="font-medium">
+            {t({ ko: "계획 확인 필요", en: "Planning needs attention", ja: "計画の確認が必要", zh: "规划需要关注" })}
+          </p>
+          <p className="mt-1 break-words">{task.planning_attention_reason}</p>
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeBadge.color}`}>{typeBadge.label}</span>
         {isHiddenTask && (
@@ -365,10 +377,23 @@ export default function TaskCard({
         {canResume && (
           <button
             onClick={() => onResumeTask!(task.id)}
-            title={t({ ko: "작업 재개", en: "Resume task", ja: "タスク再開", zh: "恢复任务" })}
+            title={
+              task.planning_attention_reason
+                ? t({
+                    ko: "계획 회의 재시도",
+                    en: "Retry planning meeting",
+                    ja: "計画会議を再試行",
+                    zh: "重试规划会议",
+                  })
+                : t({ ko: "작업 재개", en: "Resume task", ja: "タスク再開", zh: "恢复任务" })
+            }
             className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-blue-700 px-2 py-1.5 text-xs font-medium text-white transition hover:bg-blue-600"
           >
-            ↩ {t({ ko: "재개", en: "Resume", ja: "再開", zh: "恢复" })}
+            {task.planning_attention_reason ? (
+              t({ ko: "계획 회의 재시도", en: "Retry planning meeting", ja: "計画会議を再試行", zh: "重试规划会议" })
+            ) : (
+              <>↩ {t({ ko: "재개", en: "Resume", ja: "再開", zh: "恢复" })}</>
+            )}
           </button>
         )}
         {(task.status === "in_progress" ||

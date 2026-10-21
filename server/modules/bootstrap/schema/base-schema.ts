@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   output_format TEXT,
   project_path TEXT,
   result TEXT,
+  planning_attention_reason TEXT,
+  planning_meeting_failures INTEGER NOT NULL DEFAULT 0,
   started_at INTEGER,
   completed_at INTEGER,
   created_at INTEGER DEFAULT (unixepoch()*1000),
@@ -274,7 +276,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
   title TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('pending','in_progress','done','blocked')),
+    CHECK(status IN ('pending','in_progress','done','blocked','cancelled')),
   assigned_agent_id TEXT REFERENCES agents(id),
   blocked_reason TEXT,
   depends_on TEXT NOT NULL DEFAULT '[]',
