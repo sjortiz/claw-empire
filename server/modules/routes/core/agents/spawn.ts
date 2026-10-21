@@ -36,7 +36,7 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
     ctx.buildAvailableSkillsPromptBlock ||
     ((provider: string) => `[Available Skills][provider=${provider || "unknown"}][unavailable]`);
 
-  app.post("/api/agents/:id/spawn", (req, res) => {
+  app.post("/api/agents/:id/spawn", async (req, res) => {
     const id = String(req.params.id);
     let agent:
       | {
@@ -286,7 +286,15 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
       return res.json({ ok: true, pid: fakePid, logPath, cwd: agentCwd });
     }
 
-    const child = spawnCliAgent(taskId, provider, prompt, agentCwd, logPath, spawnModel, spawnReasoningLevel);
+    let child;
+    try {
+      child = await spawnCliAgent(taskId, provider, prompt, agentCwd, logPath, spawnModel, spawnReasoningLevel);
+    } catch (error) {
+      if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") {
+        return res.status(409).json({ error: "cli_launch_cancelled" });
+      }
+      throw error;
+    }
     child.on("close", (code: number | null) => {
       handleTaskRunComplete(taskId, code ?? 1);
     });

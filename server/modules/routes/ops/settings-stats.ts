@@ -9,6 +9,8 @@ import {
   syncDefaultAgentPersonalities,
 } from "../../bootstrap/schema/default-agent-personalities.ts";
 import { syncOfficePackAgentsForPack } from "../collab/office-pack-agent-hydration.ts";
+import { getHeadroomStatus, readHeadroomSettings } from "../../headroom.ts";
+import { normalizeHeadroomSettings } from "../../../../src/lib/headroom.ts";
 
 const MESSENGER_SETTINGS_KEY = "messengerChannels";
 const OFFICE_PACK_PROFILES_KEY = "officePackProfiles";
@@ -136,13 +138,27 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
         settings[row.key] = row.value;
       }
     }
+    settings.headroom = readHeadroomSettings(db);
     res.json({ settings });
+  });
+
+  app.get("/api/headroom/status", async (_req, res) => {
+    res.json(await getHeadroomStatus(db));
   });
 
   app.put("/api/settings", (req, res) => {
     const body = req.body ?? {};
     if (Object.hasOwn(body, "mergePolicy") && !isMergePolicy(body.mergePolicy)) {
       return res.status(400).json({ ok: false, error: "invalid_merge_policy" });
+    }
+    // Validate before any setting is written, including unrelated keys.
+    let headroom;
+    if (Object.hasOwn(body, "headroom")) {
+      try {
+        headroom = normalizeHeadroomSettings(body.headroom);
+      } catch {
+        return res.status(400).json({ ok: false, error: "invalid_headroom" });
+      }
     }
     for (const key of ["reviewAutoStart", "reviewAutoApply"]) {
       if (Object.hasOwn(body, key) && typeof body[key] !== "boolean") {
@@ -158,6 +174,10 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
 
     try {
       for (const [key, value] of Object.entries(body)) {
+        if (key === "headroom") {
+          upsert.run(key, JSON.stringify(headroom));
+          continue;
+        }
         if (key === MESSENGER_SETTINGS_KEY) {
           const parsedValue = typeof value === "string" ? safeJsonParse(value) : value;
           const encrypted = encryptMessengerChannelsForStorage(parsedValue);

@@ -3,6 +3,7 @@ import type { CliModelInfo, CliStatusMap, CompanySettings } from "../types";
 import * as api from "../api";
 import type { DeviceCodeStart, OAuthConnectProvider, OAuthStatus } from "../api";
 import type { OAuthCallbackResult } from "../App";
+import { normalizeHeadroomSettings } from "../lib/headroom";
 import { LANGUAGE_STORAGE_KEY, normalizeLanguage, useI18n } from "../i18n";
 import ApiSettingsTab from "./settings/ApiSettingsTab";
 import CliSettingsTab from "./settings/CliSettingsTab";
@@ -172,7 +173,13 @@ export default function SettingsPanel({
     const nextLocale = normalizeLanguage(form.language);
     window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLocale);
     window.dispatchEvent(new Event("climpire-language-change"));
-    persistSettings(form);
+    let headroom;
+    try {
+      headroom = normalizeHeadroomSettings(form.headroom ?? {});
+    } catch {
+      return;
+    }
+    persistSettings({ ...form, headroom });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
@@ -402,7 +409,14 @@ export default function SettingsPanel({
       <SettingsTabNav tab={tab} setTab={setTab} t={t} />
 
       {tab === "general" && (
-        <GeneralSettingsTab t={t} form={form} setForm={setForm} saved={saved} onSave={handleSave} />
+        <GeneralSettingsTab
+          t={t}
+          form={form}
+          setForm={setForm}
+          saved={saved}
+          onSave={handleSave}
+          savedHeadroom={settings.headroom}
+        />
       )}
 
       {tab === "cli" && (

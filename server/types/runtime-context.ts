@@ -236,7 +236,15 @@ export interface WorkflowAgentExports {
   seedApprovedPlanSubtasks: (...args: any[]) => any;
   seedReviewRevisionSubtasks: (...args: any[]) => any;
   codexThreadToSubtask: Map<string, string>;
-  spawnCliAgent: (...args: any[]) => any;
+  spawnCliAgent: (
+    taskId: string,
+    provider: string,
+    prompt: string,
+    cwd: string,
+    logFilePath: string,
+    model?: string,
+    reasoningLevel?: string,
+  ) => Promise<ChildProcess>;
   normalizeOAuthProvider: (...args: any[]) => any;
   getNextOAuthLabel: (...args: any[]) => any;
   getOAuthAccounts: (...args: any[]) => any;

@@ -1,4 +1,10 @@
+import { useState } from "react";
+import { DEFAULT_HEADROOM, type HeadroomSettings } from "../../lib/headroom";
 import type { CliProvider, MergePolicy } from "../../types";
+import HeadroomSettingsSection from "./HeadroomSettingsSection";
+import { ToggleSettingCard } from "./ToggleSettingCard";
+import { HEADROOM_COPY } from "./headroom-copy";
+import { validateProxyUrl } from "./headroom-settings";
 import type { LocalSettings, SetLocalSettings, TFunction } from "./types";
 
 interface GeneralSettingsTabProps {
@@ -7,43 +13,25 @@ interface GeneralSettingsTabProps {
   setForm: SetLocalSettings;
   saved: boolean;
   onSave: () => void;
+  savedHeadroom?: HeadroomSettings;
 }
 
-interface ToggleSettingCardProps {
-  label: string;
-  checked: boolean;
-  onToggle: () => void;
-  title?: string;
-}
-
-function ToggleSettingCard({ label, checked, onToggle, title }: ToggleSettingCardProps) {
-  return (
-    <div
-      className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 sm:px-4"
-      style={{ borderColor: "var(--th-card-border)", background: "var(--th-input-bg)" }}
-    >
-      <label className="text-sm" style={{ color: "var(--th-text-secondary)" }}>
-        {label}
-      </label>
-      <button
-        type="button"
-        aria-pressed={checked}
-        aria-label={label}
-        onClick={onToggle}
-        className={`relative h-6 w-11 rounded-full transition-colors ${checked ? "bg-blue-500" : "bg-slate-600"}`}
-        title={title}
-      >
-        <div
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
-            checked ? "left-[22px]" : "left-0.5"
-          }`}
-        />
-      </button>
-    </div>
-  );
-}
-
-export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: GeneralSettingsTabProps) {
+export default function GeneralSettingsTab({
+  t,
+  form,
+  setForm,
+  saved,
+  onSave,
+  savedHeadroom = DEFAULT_HEADROOM,
+}: GeneralSettingsTabProps) {
+  const headroom = form.headroom ?? DEFAULT_HEADROOM;
+  const invalidUrl = validateProxyUrl(headroom.proxyUrl).error !== null;
+  const [savedHeadroomChanged, setSavedHeadroomChanged] = useState(false);
+  function save() {
+    if (invalidUrl) return;
+    setSavedHeadroomChanged(JSON.stringify(headroom) !== JSON.stringify(savedHeadroom));
+    onSave();
+  }
   return (
     <>
       <section
@@ -271,15 +259,27 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
         </div>
       </section>
 
+      <HeadroomSettingsSection
+        t={t}
+        value={headroom}
+        savedValue={savedHeadroom}
+        locale={form.language}
+        onChange={(headroom) => setForm((previous) => ({ ...previous, headroom }))}
+      />
+
       <div className="flex justify-end gap-3">
         {saved && (
           <span className="text-green-400 text-sm self-center">
-            ✅ {t({ ko: "저장 완료", en: "Saved", ja: "保存完了", zh: "已保存" })}
+            {savedHeadroomChanged
+              ? t(HEADROOM_COPY["Saved variant"])
+              : t({ ko: "저장 완료", en: "Saved", ja: "保存完了", zh: "已保存" })}
           </span>
         )}
         <button
-          onClick={onSave}
-          className="px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30"
+          onClick={save}
+          disabled={invalidUrl}
+          title={invalidUrl ? t(HEADROOM_COPY["Save blocked"]) : undefined}
+          className="disabled:opacity-50 disabled:cursor-not-allowed px-8 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30"
         >
           {t({ ko: "저장", en: "Save", ja: "保存", zh: "保存" })}
         </button>
