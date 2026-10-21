@@ -450,6 +450,9 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
     getDeptName,
     isTaskWorkflowInterrupted,
     startTaskExecutionForAgent,
+    startPlannedApprovalMeeting,
+    seedApprovedPlanSubtasks: __ctx.seedApprovedPlanSubtasks,
+    processSubtaskDelegations,
     randomDelay,
   });
 

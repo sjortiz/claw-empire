@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
 import { initializeSubtaskDelegation } from "../../routes/collab/subtask-delegation.ts";
-import { recoverReadyRoot, sweepReadyRoots } from "./task-recovery.ts";
+import { recoverReadyRoot, resumeTaskExecution, sweepReadyRoots } from "./task-recovery.ts";
 
 let db: DatabaseSync;
 let deps: any;
@@ -43,6 +43,22 @@ function finishRevision() {
 }
 
 describe("persistent directive recovery", () => {
+  it("migrates existing subtask records to allow cancellation without losing prerequisites", () => {
+    db.close();
+    db = new DatabaseSync(":memory:");
+    applyBaseSchema({ exec: (sql: string) => db.exec(sql.replace("'blocked','cancelled'", "'blocked'")) });
+    db.exec(`INSERT INTO tasks (id,title) VALUES ('legacy','Legacy');
+      INSERT INTO subtasks (id,task_id,title,depends_on) VALUES ('prior','legacy','Prior','[]'), ('next','legacy','Next','["prior"]');`);
+    applyTaskSchemaMigrations(db);
+    db.exec("UPDATE subtasks SET status='cancelled' WHERE id='prior'");
+    applyTaskSchemaMigrations(db);
+    expect(db.prepare("SELECT title,depends_on FROM subtasks WHERE id='next'").get()).toEqual({
+      title: "Next",
+      depends_on: '["prior"]',
+    });
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+
   it("resumes immediately when the last revision finishes, before completion-notice deduplication", () => {
     const tools = initializeSubtaskDelegation({
       ...deps,
@@ -109,6 +125,48 @@ describe("persistent directive recovery", () => {
     );
     expect(recoverReadyRoot(deps, "root", "startup")).toBe(false);
     expect(deps.finishReview).not.toHaveBeenCalled();
+  });
+  it("keeps failed planning in attention until Resume explicitly retries the meeting", () => {
+    db.exec(`DELETE FROM subtasks; UPDATE tasks SET status='pending';
+      INSERT INTO meeting_minutes (id,task_id,meeting_type,round,status,started_at,title) VALUES ('failed','root','planned',1,'failed',1,'Planning');
+      INSERT INTO task_logs (task_id,kind,message) VALUES ('root','system','Workflow attention required: planning meeting failed');`);
+    sweepReadyRoots(deps, "startup");
+    expect(deps.startPlannedApprovalMeeting).not.toHaveBeenCalled();
+    expect(resumeTaskExecution(deps, "root", "CEO resume requested")).toBe(true);
+    expect(deps.startPlannedApprovalMeeting).toHaveBeenCalledOnce();
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+  });
+  it("logs busy root waiting once and escalates after a persistent budget on restart", () => {
+    finishRevision();
+    db.exec("UPDATE agents SET status='working', current_task_id='other'");
+    let time = Date.now();
+    deps.nowMs = () => time;
+    sweepReadyRoots(deps, "startup");
+    sweepReadyRoots(deps, "interval");
+    expect(
+      deps.appendTaskLog.mock.calls.filter((call: any[]) => String(call[2]).includes("Delegation wait")),
+    ).toHaveLength(1);
+    time += 10 * 60_000;
+    sweepReadyRoots({ ...deps, activeProcesses: new Map() }, "startup");
+    expect(deps.notifyCeo).toHaveBeenCalledOnce();
+    expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "pending" });
+  });
+  it("recovers explicitly resumed children after their busy agent becomes available", () => {
+    db.exec(`UPDATE tasks SET source_task_id='parent', status='planned';
+      INSERT INTO task_logs (task_id,kind,message) VALUES ('root','system','RESUME: pending → planned');
+      UPDATE agents SET status='working',current_task_id='other';`);
+    sweepReadyRoots(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+    db.exec("UPDATE agents SET status='idle',current_task_id=NULL");
+    sweepReadyRoots({ ...deps, activeProcesses: new Map() }, "interval");
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+  });
+  it("preserves a recorded CEO skip-meeting decision after restart", () => {
+    db.exec(`DELETE FROM subtasks; UPDATE tasks SET status='planned';
+      INSERT INTO task_creation_audits (id,task_id,task_title,trigger,trigger_detail,actor_type) VALUES ('audit','root','Root','workflow.delegation.ceo_message','skip_planned_meeting=true; skip_plan_subtasks=true','agent');`);
+    sweepReadyRoots(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    expect(deps.startPlannedApprovalMeeting).not.toHaveBeenCalled();
   });
   it("restores collaborating root consolidation only after all graph children integrate", () => {
     db.exec(

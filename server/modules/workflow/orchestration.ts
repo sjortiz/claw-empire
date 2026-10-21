@@ -517,6 +517,8 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   } = workflowMeetingTools;
 
   const { startPlannedApprovalMeeting } = createPlannedApprovalTools({
+    broadcast,
+    nowMs,
     classifyMeetingReviewDecision,
     reviewInFlight,
     reviewRoundState,

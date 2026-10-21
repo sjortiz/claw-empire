@@ -482,7 +482,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
           // --- Step 2: Delegate to subordinate (2~3 sec) ---
           const delegateDelay = 2000 + Math.random() * 1000;
           setTimeout(() => {
-            if (isTaskWorkflowInterrupted(taskId)) return;
+            if (isTaskWorkflowInterrupted(taskId) || !isStillPlanned()) return;
             const t2 = nowMs();
             db.prepare("UPDATE tasks SET assigned_agent_id = ?, status = 'planned', updated_at = ? WHERE id = ?").run(
               subordinate.id,
@@ -501,7 +501,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
             // --- Step 3: Subordinate acknowledges (1~2 sec) ---
             const subAckDelay = 1000 + Math.random() * 1000;
             setTimeout(() => {
-              if (isTaskWorkflowInterrupted(taskId)) return;
+              if (isTaskWorkflowInterrupted(taskId) || !isStillPlanned()) return;
               const leaderRole = getRoleLabel(teamLeader.role, lang);
               const subAckMsg = buildSubordinateAckMessage({ l, pickL, lang, leaderRole, leaderName });
               sendAgentMessage(subordinate, subAckMsg, "chat", "agent", null, taskId);

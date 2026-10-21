@@ -1,4 +1,4 @@
-import { createDelegationWait } from "./delegation-wait.ts";
+import { createDelegationWait, isDelegationSuspended } from "./delegation-wait.ts";
 import { buildAgentCoordinationContext } from "../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../workflow/core/reasoning-effort.ts";
 import fs from "node:fs";
@@ -207,6 +207,10 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     parentTask: ParentTaskRow,
     onBatchDone?: () => void,
   ): void {
+    if (isDelegationSuspended(db, parentTask.id)) {
+      onBatchDone?.();
+      return;
+    }
     const lang = resolveLang(parentTask.description ?? parentTask.title);
     if (subtasks.length === 0) {
       onBatchDone?.();
@@ -306,6 +310,10 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
 
     const ackDelay = 1500 + Math.random() * 1000;
     setTimeout(() => {
+      if (isDelegationSuspended(db, parentTask.id)) {
+        onBatchDone?.();
+        return;
+      }
       const latestParent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(parentTask.id) as
         | { status?: string }
         | undefined;

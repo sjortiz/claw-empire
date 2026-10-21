@@ -71,11 +71,13 @@ async function runPlanning(
     }).classifyMeetingReviewDecision,
   );
   const buildMeetingPrompt = vi.fn((_agent: any, context: any) => context.planningPhase);
+  const reviewInFlight = new Set<string>();
+  const notifyCeo = vi.fn();
   createPlannedApprovalTools({
     ...deps,
     ...minutes,
     classifyMeetingReviewDecision,
-    reviewInFlight: new Set(),
+    reviewInFlight,
     reviewRoundState: new Map(),
     getTaskReviewLeaders: () => db.prepare("SELECT * FROM agents ORDER BY id").all(),
     resolveProjectPath: () => "/workspace/project",
@@ -87,31 +89,63 @@ async function runPlanning(
     sendAgentMessage: vi.fn(),
     emitMeetingSpeech: vi.fn(),
     callLeadersToCeoOffice: vi.fn(),
-    notifyCeo: vi.fn(),
+    notifyCeo,
     buildMeetingPrompt,
     runAgentOneShot,
     chooseSafeReply: (run: any) => run.text,
     sleepMs: async () => {},
     randomDelay: () => 0,
   }).startPlannedApprovalMeeting("task", "Plan", "planning", onApproved);
-  await vi.waitFor(() =>
-    expect(db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get()).not.toEqual({
-      status: "in_progress",
-    }),
-  );
+  await vi.waitFor(() => expect(reviewInFlight.size).toBe(0));
   return {
     onApproved,
+    notifyCeo,
     appendTaskLog,
     runAgentOneShot,
     buildMeetingPrompt,
     classifyMeetingReviewDecision,
     seededPlanItems: db.prepare("SELECT title, description FROM subtasks WHERE title LIKE '[Plan Item] %'").all(),
-    status: (db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get() as any).status,
+    status: (
+      db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task' ORDER BY round DESC LIMIT 1").get() as any
+    ).status,
     description: (db.prepare("SELECT description FROM tasks WHERE id = 'task'").get() as any).description as string,
   };
 }
 
 describe("planned meeting verdicts", () => {
+  it("retries a thrown planning failure once and proceeds after recovery", async () => {
+    const result = await runPlanning(
+      formatMeetingVerdict(approve),
+      formatMeetingVerdict(approve),
+      "invalid",
+      false,
+      (_prompt, text, call) => {
+        if (call === 1) throw new Error("provider unavailable");
+        return { text };
+      },
+    );
+    expect(result.status).toBe("completed");
+    expect(result.onApproved).toHaveBeenCalledOnce();
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
+    expect(result.appendTaskLog).toHaveBeenCalledWith(
+      "task",
+      "system",
+      expect.stringContaining("retrying the meeting once"),
+    );
+  });
+  it("stops after a second failure, releases the lock, and exposes task-card retry", async () => {
+    const result = await runPlanning("", "", "invalid", false, () => {
+      throw new Error("provider unavailable");
+    });
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(2);
+    expect(result.onApproved).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT status FROM tasks WHERE id = 'task'").get()).toEqual({ status: "pending" });
+    expect(result.notifyCeo).toHaveBeenCalledWith(expect.stringContaining("use Resume on the task card"), "task");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM meeting_minutes WHERE status = 'failed'").get()).toEqual({
+      count: 2,
+    });
+  });
+
   const oversized = Array.from({ length: 32 }, (_, index) => ({
     key: `item${index}`,
     title: `Work ${index}`,

@@ -1,3 +1,4 @@
+import { resetDelegationWaits } from "../../collab/delegation-wait.ts";
 import { resumeTaskExecution } from "../../../workflow/orchestration/task-recovery.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
@@ -45,7 +46,10 @@ export type TaskExecutionControlRouteDeps = Pick<
   | "isTaskWorkflowInterrupted"
   | "startTaskExecutionForAgent"
   | "randomDelay"
->;
+> &
+  Partial<
+    Pick<RuntimeContext, "startPlannedApprovalMeeting" | "seedApprovedPlanSubtasks" | "processSubtaskDelegations">
+  >;
 
 export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRouteDeps): void {
   const {
@@ -501,6 +505,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       return res.status(400).json({ error: "invalid_status", message: `Cannot resume from '${task.status}'` });
     }
 
+    resetDelegationWaits(deps, id);
     const wasPaused = task.status === "pending";
     const targetStatus = task.assigned_agent_id ? "planned" : "inbox";
     const t = nowMs();

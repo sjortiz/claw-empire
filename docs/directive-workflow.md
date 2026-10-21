@@ -43,6 +43,25 @@ Unsupported projects use their normal install. Automatic commits respect Git
 ignore rules and skip known untracked tool/cache directories while retaining
 restricted-file checks. No existing task data or branches are rewritten.
 
+## Recovery and attention
+
+Ready directive roots are re-queued on startup and every subtask-sweep interval.
+Finishing or cancelling the last department revision triggers the same execution
+path as task-card Resume immediately. Approval and integration remain prerequisites;
+root-local revision consolidation runs on the resumed root. Explicit pauses and
+unresolved review decisions stay under CEO control.
+
+Resource waits record their start in task logs and survive restart. After ten
+minutes they stop and notify the CEO; waiting tasks become pending so the task
+card exposes Resume. Resume clears exhausted wait budgets and attention-blocked
+department work, then retries delegation or planning. Live parent runs continue
+while a blocked department awaits attention.
+
+A planning meeting that throws retries once, with its reason logged. A second
+failure moves the directive to pending and notifies the CEO to use Resume to
+retry the meeting. Missing structured verdicts retain their clarification limit
+and also require explicit attention rather than silently starting execution.
+
 ## Testing
 
 Regression coverage exercises base selection, worktree recovery, successful and

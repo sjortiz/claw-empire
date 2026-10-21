@@ -37,11 +37,12 @@ export function createDelegationWait(deps: WaitDeps) {
       }
       if (!expired) return true;
       record(taskId, key, "escalated", startedAt, waitingFor);
-      // Inbox makes attention visible without interrupting an already running
+      deps.appendTaskLog(taskId, "system", `Workflow attention required: delegation wait exhausted for ${waitingFor}`);
+      // Pending exposes the task-card Resume action without interrupting a running
       // parent CLI while one of its departments is still waiting.
       const moved = deps.db
         .prepare(
-          "UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ? AND status IN ('planned', 'pending', 'collaborating')",
+          "UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status IN ('planned', 'pending', 'collaborating')",
         )
         .run(deps.nowMs(), taskId);
       if (moved.changes) {
@@ -67,4 +68,47 @@ export function createDelegationWait(deps: WaitDeps) {
       if (previous && previous.state !== "resolved") record(taskId, key, "resolved", previous.startedAt, "available");
     },
   };
+}
+
+// Only explicit task-card Resume resets an exhausted resource wait.
+export function resetDelegationWaits(deps: Pick<WaitDeps, "db" | "appendTaskLog" | "broadcast">, taskId: string): void {
+  const rows = deps.db
+    .prepare("SELECT message FROM task_logs WHERE task_id = ? AND message LIKE 'Delegation wait %' ORDER BY id DESC")
+    .all(taskId) as { message: string }[];
+  const seen = new Set<string>();
+  for (const { message } of rows) {
+    const split = message.indexOf(": ");
+    if (split < 0) continue;
+    const prefix = message.slice(0, split + 2);
+    if (seen.has(prefix)) continue;
+    seen.add(prefix);
+    const state = JSON.parse(message.slice(split + 2));
+    if (state.state === "resolved") continue;
+    deps.appendTaskLog(
+      taskId,
+      "system",
+      prefix + JSON.stringify({ ...state, state: "resolved", waitingFor: "CEO requested retry" }),
+    );
+  }
+  if (!seen.size) return;
+  const blocked = deps.db
+    .prepare("SELECT id FROM subtasks WHERE task_id = ? AND blocked_reason LIKE 'Needs CEO attention:%'")
+    .all(taskId) as { id: string }[];
+  for (const { id } of blocked) {
+    deps.db.prepare("UPDATE subtasks SET status = 'pending', blocked_reason = NULL WHERE id = ?").run(id);
+    deps.broadcast("subtask_update", deps.db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id));
+  }
+}
+
+// A queued callback may outlive its parent entering attention or a manual pause.
+export function isDelegationSuspended(db: Pick<DatabaseSync, "prepare">, taskId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT message FROM task_logs WHERE task_id = ? AND
+    (message LIKE 'Workflow attention%' OR message LIKE 'RESUME:%' OR message LIKE 'PAUSE%'
+      OR message LIKE 'STOP%' OR message LIKE '%supplement round opened (review -> pending)%')
+    ORDER BY id DESC LIMIT 1`,
+    )
+    .get(taskId) as { message: string } | undefined;
+  return /^(Workflow attention required|PAUSE|STOP)/.test(row?.message ?? "");
 }

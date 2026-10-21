@@ -1,4 +1,4 @@
-import { createDelegationWait } from "../delegation-wait.ts";
+import { createDelegationWait, isDelegationSuspended } from "../delegation-wait.ts";
 import { buildAgentCoordinationContext } from "../../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
@@ -270,6 +270,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
     ctx: CrossDeptContext,
     onAllDone?: () => void,
   ): void {
+    if (isDelegationSuspended(db, ctx.taskId)) return;
     if (index >= deptIds.length) {
       onAllDone?.();
       return;
@@ -381,6 +382,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
     // Cross-department leader acknowledges AND creates a real task
     const crossAckDelay = 1500 + Math.random() * 1000;
     setTimeout(() => {
+      if (isDelegationSuspended(db, taskId)) return;
       const parent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string } | undefined;
       if (!parent || !["planned", "pending", "collaborating", "in_progress", "review"].includes(parent.status)) return;
       const crossSubAtRun = manualScoped

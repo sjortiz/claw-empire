@@ -1,3 +1,4 @@
+import { isDelegationSuspended } from "./delegation-wait.ts";
 import { recoverReadyRoot } from "../../workflow/orchestration/task-recovery.ts";
 import { hasUnfinishedDependencies } from "./subtask-dependencies.ts";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
@@ -106,6 +107,7 @@ interface SubtaskDelegationDeps {
   startProgressTimer: (taskId: string, taskTitle: string, departmentId: string | null) => void;
   startTaskExecutionForAgent: (taskId: string, agent: AgentRow, deptId: string | null, deptName: string) => void;
   activeProcesses: Map<string, unknown>;
+  reviewInFlight?: Set<string>;
 }
 
 export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
@@ -149,13 +151,9 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     launchApiProviderAgent,
     launchHttpAgent,
     startProgressTimer,
-    startTaskExecutionForAgent,
-    activeProcesses,
   } = deps;
   const scheduledSubtaskIds = new Set<string>();
   const pendingDelegationOptionsByTask = new Map<string, { includeRender?: boolean }>();
-  const autoResumeRetryTimers = new Map<string, NodeJS.Timeout>();
-  const autoResumeRetryAttempts = new Map<string, number>();
 
   // ---------------------------------------------------------------------------
   // Independent departments start together; only explicit prerequisites defer.
@@ -175,33 +173,6 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     buildTaskExecutionPrompt,
     hasExplicitWarningFixRequest,
   });
-
-  function clearAutoResumeRetry(taskId: string): void {
-    const timer = autoResumeRetryTimers.get(taskId);
-    if (timer) {
-      clearTimeout(timer);
-      autoResumeRetryTimers.delete(taskId);
-    }
-    autoResumeRetryAttempts.delete(taskId);
-  }
-
-  function scheduleAutoResumeRetry(taskId: string, reason: string): void {
-    if (autoResumeRetryTimers.has(taskId)) return;
-    const nextAttempt = (autoResumeRetryAttempts.get(taskId) ?? 0) + 1;
-    autoResumeRetryAttempts.set(taskId, nextAttempt);
-    const delayMs = Math.min(15_000 * nextAttempt, 120_000);
-    appendTaskLog(
-      taskId,
-      "system",
-      `Auto-resume retry scheduled in ${Math.round(delayMs / 1000)}s (attempt ${nextAttempt}; reason=${reason})`,
-    );
-    const timer = setTimeout(() => {
-      autoResumeRetryTimers.delete(taskId);
-      maybeNotifyAllSubtasksComplete(taskId);
-    }, delayMs);
-    timer.unref?.();
-    autoResumeRetryTimers.set(taskId, timer);
-  }
 
   function hasOpenForeignSubtasks(taskId: string, targetDeptIds: string[] = []): boolean {
     const uniqueDeptIds = [...new Set(targetDeptIds.filter(Boolean))];
@@ -241,6 +212,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   }
 
   function processSubtaskDelegations(taskId: string, opts?: { includeRender?: boolean }): void {
+    if (isDelegationSuspended(db, taskId)) return;
     if (subtaskDelegationDispatchInFlight.has(taskId)) {
       const previous = pendingDelegationOptionsByTask.get(taskId);
       pendingDelegationOptionsByTask.set(taskId, {
@@ -258,7 +230,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
 
     const foreignSubtasks = db
       .prepare(
-        "SELECT * FROM subtasks WHERE task_id = ? AND target_department_id IS NOT NULL AND status NOT IN ('done', 'cancelled') AND (delegated_task_id IS NULL OR delegated_task_id = '') ORDER BY created_at",
+        "SELECT * FROM subtasks WHERE task_id = ? AND target_department_id IS NOT NULL AND status NOT IN ('done', 'cancelled') AND (delegated_task_id IS NULL OR delegated_task_id = '') AND COALESCE(blocked_reason, '') NOT LIKE 'Needs CEO attention:%' ORDER BY created_at",
       )
       .all(taskId) as unknown as SubtaskRow[];
 
@@ -421,75 +393,11 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       | undefined;
     if (!parentTask) return;
 
-    if (recoverReadyRoot(deps, parentTaskId, "subtask completion")) return;
-
-    // Auto-resume retry should continue even after completion notice was already sent.
-    if (remaining.cnt === 0) {
-      if (
-        !(
-          parentTask.status === "pending" &&
-          parentTask.workflow_pack_key === "video_preprod" &&
-          !parentTask.source_task_id &&
-          parentTask.assigned_agent_id
-        )
-      ) {
-        clearAutoResumeRetry(parentTaskId);
-      } else {
-        const recentLogs = db
-          .prepare(
-            `
-            SELECT message
-            FROM task_logs
-            WHERE task_id = ?
-              AND kind = 'system'
-            ORDER BY created_at DESC
-            LIMIT 12
-          `,
-          )
-          .all(parentTaskId) as Array<{ message: string | null }>;
-        const heldForRenderOrdering = recentLogs.some((row) =>
-          String(row.message ?? "").includes(
-            "Video render hold: waiting for documentation/planning completion before final render",
-          ),
-        );
-        if (!heldForRenderOrdering) {
-          clearAutoResumeRetry(parentTaskId);
-        } else {
-          const assignedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(parentTask.assigned_agent_id) as
-            | AgentRow
-            | undefined;
-          if (!assignedAgent) {
-            appendTaskLog(parentTaskId, "system", "Auto-resume skipped: assigned agent not found");
-            clearAutoResumeRetry(parentTaskId);
-          } else if (activeProcesses.has(parentTaskId)) {
-            appendTaskLog(parentTaskId, "system", "Auto-resume skipped: task process already active");
-            clearAutoResumeRetry(parentTaskId);
-          } else if (
-            assignedAgent.status === "working" &&
-            assignedAgent.current_task_id &&
-            assignedAgent.current_task_id !== parentTaskId &&
-            activeProcesses.has(assignedAgent.current_task_id)
-          ) {
-            appendTaskLog(
-              parentTaskId,
-              "system",
-              `Auto-resume deferred: assigned agent busy on ${assignedAgent.current_task_id}`,
-            );
-            scheduleAutoResumeRetry(parentTaskId, `agent_busy:${assignedAgent.current_task_id}`);
-          } else {
-            const deptId = assignedAgent.department_id ?? parentTask.department_id ?? null;
-            const deptName = deptId ? getDeptName(deptId, parentTask.workflow_pack_key ?? null) : "Unassigned";
-            appendTaskLog(
-              parentTaskId,
-              "system",
-              "Video render hold cleared: all subtasks completed. Auto-resuming final render run.",
-            );
-            startTaskExecutionForAgent(parentTaskId, assignedAgent, deptId, deptName);
-            clearAutoResumeRetry(parentTaskId);
-          }
-        }
-      }
-    }
+    if (
+      ["pending", "collaborating"].includes(parentTask.status) &&
+      recoverReadyRoot(deps, parentTaskId, "subtask completion")
+    )
+      return;
 
     if (remaining.cnt !== 0 || subtaskDelegationCompletionNoticeSent.has(parentTaskId)) return;
 
