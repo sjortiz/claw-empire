@@ -267,15 +267,15 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
 
       const implementationIntent = detectImplementationIntent(ceoMessage, projectContextHint ?? "");
-      const mentionedDepts = includeImplementationDepartment(
-        detectTargetDepartments(ceoMessage),
-        implementationIntent,
-      ).filter((d) => d !== leaderDeptId);
+      const inferredDepartments = detectTargetDepartments(ceoMessage);
+      const mentionedDepts = includeImplementationDepartment(inferredDepartments, implementationIntent).filter(
+        (d) => d !== leaderDeptId,
+      );
       if (implementationIntent.requiresImplementation) {
         appendTaskLog(
           taskId,
           "system",
-          `Planning coverage: Development required by code-change intent; units=${implementationIntent.implementationUnits.map((unit) => unit.key).join(", ")}`,
+          `Planning coverage: Development required by code-change intent; units=${implementationIntent.implementationUnits.map((unit) => unit.key).join(", ")}${!inferredDepartments.includes("dev") ? `; override=added dev; inferred=${inferredDepartments.join(", ") || "none"}` : ""}`,
         );
       }
 

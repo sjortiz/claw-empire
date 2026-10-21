@@ -1,5 +1,9 @@
 import { implementationIntentFromTask, implementationPlanningRules } from "../agents/implementation-intent.ts";
-import { parsePlanningGraph, validateImplementationCoverage } from "../agents/planning-graph.ts";
+import {
+  parsePlanningGraph,
+  validateImplementationCoverage,
+  repairImplementationCoverage,
+} from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
 type CreatePlannedApprovalToolsDeps = {
@@ -296,27 +300,48 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
         let graph: ReturnType<typeof parsePlanningGraph> = null;
-        for (let attempt = 0; attempt <= 2; attempt++) {
+        const graphViolations = (items: ReturnType<typeof parsePlanningGraph>): string[] => {
+          const reasons = validateImplementationCoverage(items, implementationIntent);
+          for (const item of items ?? []) {
+            if (!db.prepare("SELECT id FROM departments WHERE id = ?").get(item.department_id))
+              reasons.push(`Unknown department ${item.department_id} for ${item.key}; use an existing department ID.`);
+          }
+          return reasons;
+        };
+        for (let attempt = 0; attempt <= 1; attempt++) {
           let reasons: string[];
           try {
+            graph = null;
             graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
-            reasons = validateImplementationCoverage(graph, implementationIntent);
-            if (graph) {
-              for (const item of graph) {
-                if (!db.prepare("SELECT id FROM departments WHERE id = ?").get(item.department_id))
-                  reasons.push(
-                    `Unknown department ${item.department_id} for ${item.key}; use an existing department ID.`,
-                  );
-              }
-            }
+            reasons = graphViolations(graph);
           } catch (error) {
             if (!implementationIntent.requiresImplementation) throw error;
             reasons = [error instanceof Error ? error.message : String(error)];
           }
           if (reasons.length === 0) break;
           appendTaskLog(taskId, "error", `Planning graph rejected (attempt ${attempt + 1}): ${reasons.join(" ")}`);
-          if (attempt === 2)
-            throw new Error(`Implementation coverage blocked after correction attempts: ${reasons.join(" ")}`);
+          if (attempt === 1) {
+            if (implementationIntent.requiresImplementation && graph) {
+              try {
+                const repaired = repairImplementationCoverage(graph, implementationIntent);
+                graph = parsePlanningGraph(JSON.stringify({ plan_items: repaired }));
+                reasons = graphViolations(graph);
+                if (reasons.length === 0) {
+                  appendTaskLog(
+                    taskId,
+                    "system",
+                    "Planning graph repaired: added missing Development deliverables and implementation prerequisites; revalidation passed.",
+                  );
+                  break;
+                }
+              } catch (error) {
+                reasons = [error instanceof Error ? error.message : String(error)];
+              }
+            }
+            throw new Error(
+              `Implementation coverage blocked after correction attempts and repair: ${reasons.join(" ")}`,
+            );
+          }
           const repairPrompt = `${summaryPrompt}\n\n[Correct rejected planning graph]\n${reasons.join("\n")}\n${implementationPlanningRules(implementationIntent)}\nPrevious rejected output:\n${String(summaryRun?.text ?? "")}\nReturn a complete corrected graph preserving valid items and real prerequisite keys.`;
           summaryRun = await runMeetingOneShotWithRetry(planningLeader, repairPrompt, "summary");
           if (abortIfInactive()) return;

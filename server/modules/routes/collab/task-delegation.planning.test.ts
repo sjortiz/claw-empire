@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
+import { nexoDirective } from "../../../test/implementation-planning-fixture.ts";
 import { createTaskDelegationHandler } from "./task-delegation.ts";
 
 let db: DatabaseSync;
@@ -100,7 +101,7 @@ describe("directive planner assignment", () => {
     expect(start).toHaveBeenCalledTimes(4);
     expect(start.mock.calls[3][0]).toBe(root.id);
     db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL").run();
-    handler(leader, "Fix the first two open issues on Nexo, #84 and #85. Add tests, one branch per issue.", "");
+    handler(leader, nexoDirective, "");
     vi.advanceTimersByTime(1000);
     expect(
       logs.mock.calls.some((call) =>
@@ -112,6 +113,9 @@ describe("directive planner assignment", () => {
         String(call[2]).includes("Development required by code-change intent; units=issue-84, issue-85"),
       ),
     ).toBe(true);
+    expect(logs.mock.calls.some((call) => String(call[2]).includes("override=added dev; inferred=operations"))).toBe(
+      true,
+    );
     expect(logs.mock.calls.some((call) => String(call[2]).includes("Implementation planning blocked:"))).toBe(true);
     expect(start).toHaveBeenCalledTimes(4);
   });

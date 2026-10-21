@@ -1,3 +1,5 @@
+import type { ImplementationIntent, ImplementationUnit } from "./implementation-intent.ts";
+
 export interface PlanningItem {
   key: string;
   title: string;
@@ -16,7 +18,7 @@ export function parsePlanningGraph(text: string): PlanningItem[] | null {
   if (!source.startsWith("{") || !source.includes('"plan_items"')) return null;
   const parsed = JSON.parse(source) as { plan_items?: unknown };
   if (!Array.isArray(parsed.plan_items) || parsed.plan_items.length === 0 || parsed.plan_items.length > 30) {
-    throw new Error("Invalid planning graph items");
+    throw new Error("Invalid planning graph items: provide between 1 and 30 plan_items.");
   }
   const keys = new Set<string>();
   const items = parsed.plan_items.map((raw: unknown): PlanningItem => {
@@ -35,7 +37,9 @@ export function parsePlanningGraph(text: string): PlanningItem[] | null {
       !Array.isArray(item.depends_on) ||
       item.depends_on.some((key) => typeof key !== "string")
     ) {
-      throw new Error("Invalid planning graph item");
+      throw new Error(
+        `Invalid planning graph item ${item?.key ?? "(missing key)"}: use a unique alphanumeric key, a title, an existing department_id and a depends_on array of keys.`,
+      );
     }
     keys.add(item.key);
     return { ...item, title: item.title.trim(), depends_on: [...new Set(item.depends_on)] } as PlanningItem;
@@ -46,9 +50,18 @@ export function parsePlanningGraph(text: string): PlanningItem[] | null {
   const visit = (key: string) => {
     if (complete.has(key)) return;
     const item = byKey.get(key);
-    if (!item || visiting.has(key)) throw new Error("Invalid planning graph dependency");
+    if (!item)
+      throw new Error(`Missing planning prerequisite ${key}; add its owning item or correct the dependency key.`);
+    if (visiting.has(key))
+      throw new Error(
+        `Planning dependency cycle: ${[...visiting, key].join(" -> ")}; remove the circular prerequisite.`,
+      );
     visiting.add(key);
-    item.depends_on.forEach(visit);
+    item.depends_on.forEach((dependency) => {
+      if (!byKey.has(dependency))
+        throw new Error(`${item.key}: missing prerequisite ${dependency}; add its owning item or correct depends_on.`);
+      visit(dependency);
+    });
     visiting.delete(key);
     complete.add(key);
   };
@@ -56,18 +69,7 @@ export function parsePlanningGraph(text: string): PlanningItem[] | null {
   return items;
 }
 
-/** Validate semantics separately from graph syntax. A department label alone is
- * not evidence that the plan actually delivers the requested code changes. */
-export function validateImplementationCoverage(
-  graph: PlanningItem[] | null,
-  intent: import("./implementation-intent.ts").ImplementationIntent,
-): string[] {
-  if (!intent.requiresImplementation) return [];
-  if (!graph)
-    return [
-      "Code-change directive requires a structured plan_items graph with Development-owned production code and regression tests; prose alone cannot be accepted.",
-    ];
-  const errors: string[] = [];
+function implementationItemsByUnit(graph: PlanningItem[], intent: ImplementationIntent): Map<string, PlanningItem> {
   const candidates = graph.filter((item) => {
     if (item.department_id !== "dev") return false;
     const title = item.title.replace(/^Development\s*[:—-]\s*/i, "");
@@ -115,35 +117,96 @@ export function validateImplementationCoverage(
     );
   });
   const used = new Set<string>();
+  const items = new Map<string, PlanningItem>();
   for (const unit of intent.implementationUnits) {
     const matches = candidates.filter((item) => {
       const text = `${item.title} ${item.description ?? ""}`;
-      return (
-        item.implementation_unit === unit.key ||
-        (unit.reference
+      return item.implementation_unit
+        ? item.implementation_unit === unit.key
+        : unit.reference
           ? new RegExp(`${unit.reference}\\b`).test(text)
-          : intent.implementationUnits.length === 1 || text.includes(unit.key))
-      );
+          : intent.implementationUnits.length === 1 || text.includes(unit.key);
     });
     // A single item mentioning both issues cannot cover two distinct units.
     const item = matches.find(
       (candidate) =>
         !used.has(candidate.key) &&
         (intent.implementationUnits.length === 1 ||
-          intent.implementationUnits.filter(
-            (other) =>
-              candidate.implementation_unit === other.key ||
-              (other.reference &&
-                new RegExp(`${other.reference}\\b`).test(`${candidate.title} ${candidate.description ?? ""}`)),
+          intent.implementationUnits.filter((other) =>
+            candidate.implementation_unit
+              ? candidate.implementation_unit === other.key
+              : other.reference &&
+                new RegExp(`${other.reference}\\b`).test(`${candidate.title} ${candidate.description ?? ""}`),
           ).length <= 1),
     );
+    if (item) {
+      used.add(item.key);
+      items.set(unit.key, item);
+    }
+  }
+  return items;
+}
+
+function referencedUnits(item: PlanningItem, intent: ImplementationIntent): ImplementationUnit[] {
+  const text = `${item.title} ${item.description ?? ""}`;
+  const explicit = intent.implementationUnits.filter(
+    (unit) =>
+      item.implementation_unit === unit.key ||
+      (unit.reference ? new RegExp(`${unit.reference}\\b`).test(text) : text.includes(unit.key)),
+  );
+  return explicit.length ? explicit : intent.implementationUnits;
+}
+
+function consumesImplementation(item: PlanningItem): boolean {
+  const text = `${item.title} ${item.description ?? ""}`;
+  // Setup, specifications and readiness may prepare for a later fix without
+  // consuming its output. Explicit execution against completed code still waits.
+  const completedCode =
+    /\b(?:after|against|using|consume[sd]?)\b.{0,55}\b(?:implemented|completed|merged|fixed|changed)\b|\b(?:completed|merged|implemented)\s+(?:code|fix|implementation|changes?)\b|\b(?:after|once|following)\s+(?:the\s+)?implementation\b(?!\s+(?:planning|specification))|\b(?:after|once|following)\b.{0,35}\b(?:fix|code|changes?)\b.{0,35}\b(?:lands?|merges?|completes?)\b|(?:구현|수정)\s*후|(?:実装|修正)後|(?:实现|修复)后/i.test(
+      text,
+    );
+  if (
+    /\b(?:prepare|plan(?:ning)?|draft|setup|set up|configure|assess|design|readiness|specif(?:y|ications?))\b|준비|계획|설정|명세|準備|計画|設定|仕様|准备|计划|配置|规范/i.test(
+      item.title,
+    ) &&
+    !completedCode
+  )
+    return false;
+  return (
+    completedCode ||
+    /\b(?:verify|validate|test|deploy|release)\b|\brun\b.{0,25}\b(?:tests?|regressions?|lint|typecheck)\b|\b(?:review|inspect)\b.{0,40}\b(?:code|fix(?:es)?|implementation|changes?|diff|PR)\b|\bconsolidate\b.{0,40}\b(?:completion|test|implementation|fix)\b.{0,25}\bevidence\b|검증|테스트\s*실행|배포|완료.*증거|検証|テスト実行|デプロイ|完了.*証拠|验证|执行测试|部署|完成.*证据/i.test(
+      item.title,
+    )
+  );
+}
+
+function hasPrerequisite(graph: PlanningItem[], item: PlanningItem, key: string, seen = new Set<string>()): boolean {
+  if (seen.has(item.key)) return false;
+  seen.add(item.key);
+  return item.depends_on.some((dependency) => {
+    if (dependency === key) return true;
+    const prerequisite = graph.find((candidate) => candidate.key === dependency);
+    return !!prerequisite && hasPrerequisite(graph, prerequisite, key, seen);
+  });
+}
+
+/** A department label alone does not establish implementation coverage. */
+export function validateImplementationCoverage(graph: PlanningItem[] | null, intent: ImplementationIntent): string[] {
+  if (!intent.requiresImplementation) return [];
+  if (!graph)
+    return [
+      "Code-change directive requires a structured plan_items graph with Development-owned production code and regression tests; prose alone cannot be accepted.",
+    ];
+  const errors: string[] = [];
+  const implementations = implementationItemsByUnit(graph, intent);
+  for (const unit of intent.implementationUnits) {
+    const item = implementations.get(unit.key);
     if (!item) {
       errors.push(
         `Missing Development implementation for ${unit.key}${unit.reference ? ` (${unit.reference})` : ""}: add a distinct dev item that changes production behavior, delivers code + regression tests, and owns this unit. Specifications, readiness and evidence do not qualify.`,
       );
       continue;
     }
-    used.add(item.key);
     const text = `${item.title} ${item.description ?? ""}`;
     if (
       unit.requiresTests &&
@@ -160,5 +223,75 @@ export function validateImplementationCoverage(
     )
       errors.push(`${item.key}: preserve the requested separate branch for ${unit.key}.`);
   }
+  const implementationKeys = new Set([...implementations.values()].map((item) => item.key));
+  for (const item of graph) {
+    if (implementationKeys.has(item.key)) continue;
+    const units = referencedUnits(item, intent);
+    if (
+      /\b(?:left to|handoff to|hand off to|implementation by)\s+(?:the\s+)?implementation owner\b/i.test(
+        `${item.title} ${item.description ?? ""}`,
+      ) &&
+      units.some((unit) => !implementations.has(unit.key))
+    ) {
+      errors.push(
+        `${item.key}: dangling implementation-owner handoff; add a concrete dev code-change item for ${units
+          .filter((unit) => !implementations.has(unit.key))
+          .map((unit) => unit.key)
+          .join(", ")}.`,
+      );
+    }
+    if (!consumesImplementation(item)) continue;
+    for (const unit of units) {
+      const implementation = implementations.get(unit.key);
+      if (implementation && !hasPrerequisite(graph, item, implementation.key))
+        errors.push(
+          `${item.key}: add implementation prerequisite ${implementation.key} for ${unit.key}; this work consumes the completed code change.`,
+        );
+    }
+  }
   return errors;
+}
+
+/** Bounded deterministic fallback after one model correction. Preserve existing
+ * work and edges; callers must re-parse and validate, including cycle checks. */
+export function repairImplementationCoverage(
+  graph: PlanningItem[] | null,
+  intent: ImplementationIntent,
+): PlanningItem[] | null {
+  if (!graph || !intent.requiresImplementation) return graph;
+  const repaired = graph.map((item) => ({ ...item, depends_on: [...item.depends_on] }));
+  const implementations = implementationItemsByUnit(repaired, intent);
+  for (const unit of intent.implementationUnits) {
+    let item = implementations.get(unit.key);
+    if (!item) {
+      let key = `implement_${unit.key}`;
+      while (repaired.some((candidate) => candidate.key === key)) key += "_dev";
+      item = {
+        key,
+        title: `Implement code change for ${unit.reference ?? unit.description}`,
+        description: `Change production code for ${unit.reference ?? unit.key}: ${unit.description}. Deliver regression tests${unit.separateBranch ? " on a separate branch for this issue" : ""}.`,
+        implementation_unit: unit.key,
+        department_id: "dev",
+        depends_on: [],
+      };
+      repaired.push(item);
+      implementations.set(unit.key, item);
+    }
+    // Strengthen incomplete deliverables without silently undoing explicit
+    // instructions such as "no tests" or "shared branch"; those stay rejected.
+    const text = `${item.title} ${item.description ?? ""}`;
+    if (unit.requiresTests && !/\b(?:tests?|regression)\b|테스트|テスト|测试/i.test(text))
+      item.description = `${item.description ?? ""} Deliver regression tests.`.trim();
+    if (unit.separateBranch && !/\bbranch\b|브랜치|ブランチ|分支/i.test(text))
+      item.description = `${item.description ?? ""} Use a separate branch for this issue.`.trim();
+  }
+  const implementationKeys = new Set([...implementations.values()].map((item) => item.key));
+  for (const item of repaired) {
+    if (implementationKeys.has(item.key) || !consumesImplementation(item)) continue;
+    for (const unit of referencedUnits(item, intent)) {
+      const implementation = implementations.get(unit.key)!;
+      if (!hasPrerequisite(repaired, item, implementation.key)) item.depends_on.push(implementation.key);
+    }
+  }
+  return repaired;
 }

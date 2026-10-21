@@ -5,6 +5,7 @@ import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-mi
 import { createSubtaskDelegationBatch } from "./subtask-delegation-batch.ts";
 import { createSubtaskRoutingTools } from "../../workflow/agents/subtask-routing.ts";
 import { selectAutoAssignableAgentForTask } from "../core/tasks/execution-run-auto-assign.ts";
+import { nexoDirective, nexoImplementation } from "../../../test/implementation-planning-fixture.ts";
 import { registerTaskRunRoute } from "../core/tasks/execution-run.ts";
 
 vi.mock("../../workflow/core/agent-coordination.ts", () => ({ buildAgentCoordinationContext: () => "" }));
@@ -30,6 +31,15 @@ beforeEach(() => {
       ('issue85', 'root', 'Fix #85 in code', 'Implement second fix and regression tests', 'dev', 'lead', 'pending');
     INSERT INTO task_logs (task_id, kind, message) VALUES ('root', 'system', 'Planned graph seeded 2 subtasks with explicit dependencies');
   `);
+  db.prepare("UPDATE tasks SET description = ? WHERE id = 'root'").run(`[CEO] ${nexoDirective}`);
+  for (const issue of [84, 85]) {
+    const implementation = nexoImplementation(issue);
+    db.prepare("UPDATE subtasks SET title = ?, description = ? WHERE id = ?").run(
+      implementation.title,
+      implementation.description!,
+      `issue${issue}`,
+    );
+  }
 });
 afterEach(() => {
   vi.clearAllTimers();
@@ -38,7 +48,10 @@ afterEach(() => {
 });
 
 function fixture() {
-  const spawn = vi.fn((_taskId: string) => ({ on: vi.fn() }));
+  const spawn = vi.fn((_taskId: string, _provider?: string, _prompt?: string) => ({ on: vi.fn() }));
+  const prompt = vi.fn((_parent: unknown, subtasks: Array<{ title: string; description: string }>) =>
+    subtasks.map((subtask) => `${subtask.title}: ${subtask.description}`).join("\n"),
+  );
   const logs = vi.fn();
   const done = vi.fn();
   const tools = createSubtaskDelegationBatch({
@@ -76,7 +89,7 @@ function fixture() {
     delegatedTaskToSubtask: new Map(),
     finalizeDelegatedSubtasks: vi.fn(),
     maybeNotifyAllSubtasksComplete: vi.fn(),
-    buildSubtaskDelegationPrompt: () => "Implement assigned fixes",
+    buildSubtaskDelegationPrompt: prompt,
   } as any);
   const launch = () =>
     tools.delegateSubtaskBatch(
@@ -86,7 +99,7 @@ function fixture() {
       db.prepare("SELECT * FROM tasks WHERE id = 'root'").get() as any,
       done,
     );
-  return { launch, spawn, logs, done };
+  return { launch, spawn, logs, done, prompt };
 }
 function makeChild() {
   db.exec(`INSERT INTO tasks (id, title, department_id, project_id, status, source_task_id)
@@ -96,15 +109,32 @@ function makeChild() {
 
 describe("Development implementation ownership", () => {
   it("persists Development ownership in both child tasks and actual execution assignments", async () => {
-    const { launch, spawn } = fixture();
+    const { launch, spawn, prompt } = fixture();
     launch();
     await vi.advanceTimersByTimeAsync(2500);
     const child = db
-      .prepare("SELECT id, department_id, assigned_agent_id, status FROM tasks WHERE source_task_id = 'root'")
+      .prepare(
+        "SELECT id, description, department_id, assigned_agent_id, status FROM tasks WHERE source_task_id = 'root'",
+      )
       .get() as any;
     expect(child).toMatchObject({ department_id: "dev", assigned_agent_id: "developer", status: "in_progress" });
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(spawn.mock.calls[0]?.[0]).toBe(child.id);
+    for (const issue of [84, 85]) {
+      expect(child.description).toContain(`Fix Nexo #${issue}`);
+      expect(child.description).toContain(nexoImplementation(issue).description);
+      expect(spawn.mock.calls[0]?.[2]).toContain(nexoImplementation(issue).description);
+    }
+    expect(prompt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.arrayContaining([
+        expect.objectContaining({ target_department_id: "dev", title: "Fix Nexo #84" }),
+        expect.objectContaining({ target_department_id: "dev", title: "Fix Nexo #85" }),
+      ]),
+      expect.objectContaining({ id: "developer", department_id: "dev" }),
+      "dev",
+      "dev",
+    );
     expect(
       db
         .prepare("SELECT target_department_id, assigned_agent_id, delegated_task_id, status FROM subtasks ORDER BY id")
