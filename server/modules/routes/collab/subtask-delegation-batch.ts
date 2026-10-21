@@ -1,3 +1,4 @@
+import { resolveCliReasoningLevel } from "../../workflow/core/reasoning-effort.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -92,6 +93,8 @@ interface BatchDeps {
     logFilePath: string,
     controller: AbortController,
     fakePid: number,
+    onComplete?: (exitCode: number) => void,
+    reasoningLevel?: string | null,
   ) => void;
   launchHttpAgent: (
     taskId: string,
@@ -598,6 +601,8 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
                 logFilePath,
                 controller,
                 fakePid,
+                undefined,
+                execAgent.cli_reasoning_level,
               );
               delegatedProcessStarted = true;
             } catch (error) {
@@ -627,10 +632,11 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
           } else {
             const delegateModelConfig = getProviderModelConfig();
             const delegateModel = execAgent.cli_model || delegateModelConfig[execProvider]?.model || undefined;
-            const delegateReasoningLevel =
-              execProvider === "codex"
-                ? execAgent.cli_reasoning_level || delegateModelConfig[execProvider]?.reasoningLevel || undefined
-                : delegateModelConfig[execProvider]?.reasoningLevel || undefined;
+            const delegateReasoningLevel = resolveCliReasoningLevel(
+              execProvider,
+              execAgent.cli_reasoning_level,
+              delegateModelConfig[execProvider]?.reasoningLevel,
+            );
             let child: {
               on: (event: "close", listener: (code: number | null) => void) => void;
             } | null = null;

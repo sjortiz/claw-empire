@@ -1,3 +1,4 @@
+import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Lang } from "../../../../types/lang.ts";
@@ -585,6 +586,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               controller,
               fakePid,
               finalizeCrossDeptRun,
+              execAgent.cli_reasoning_level,
             );
           } else if (execProvider === "copilot" || execProvider === "antigravity") {
             const controller = new AbortController();
@@ -603,10 +605,11 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
           } else {
             const crossModelConfig = getProviderModelConfig();
             const crossModel = execAgent.cli_model || crossModelConfig[execProvider]?.model || undefined;
-            const crossReasoningLevel =
-              execProvider === "codex"
-                ? execAgent.cli_reasoning_level || crossModelConfig[execProvider]?.reasoningLevel || undefined
-                : crossModelConfig[execProvider]?.reasoningLevel || undefined;
+            const crossReasoningLevel = resolveCliReasoningLevel(
+              execProvider,
+              execAgent.cli_reasoning_level,
+              crossModelConfig[execProvider]?.reasoningLevel,
+            );
             const child = spawnCliAgent(
               crossTaskId,
               execProvider,

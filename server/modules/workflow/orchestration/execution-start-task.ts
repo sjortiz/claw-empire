@@ -1,3 +1,4 @@
+import { resolveCliReasoningLevel } from "../core/reasoning-effort.ts";
 import path from "node:path";
 import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import { getDepartmentPromptForPack } from "../packs/department-scope.ts";
@@ -272,6 +273,8 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
         logFilePath,
         controller,
         fakePid,
+        undefined,
+        execAgent.cli_reasoning_level,
       );
     } else if (provider === "copilot" || provider === "antigravity") {
       const controller = new AbortController();
@@ -289,10 +292,11 @@ export function createExecutionStartTaskTools(deps: CreateExecutionStartTaskTool
     } else {
       const modelConfig = getProviderModelConfig();
       const modelForProvider = execAgent.cli_model || modelConfig[provider]?.model || undefined;
-      const reasoningLevel =
-        provider === "codex"
-          ? execAgent.cli_reasoning_level || modelConfig[provider]?.reasoningLevel || undefined
-          : modelConfig[provider]?.reasoningLevel || undefined;
+      const reasoningLevel = resolveCliReasoningLevel(
+        provider,
+        execAgent.cli_reasoning_level,
+        modelConfig[provider]?.reasoningLevel,
+      );
       const child = spawnCliAgent(
         taskId,
         provider,

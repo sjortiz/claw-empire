@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { normalizeClaudeEffort } from "./reasoning-effort.ts";
 
 export type CliOutputStream = "stdout" | "stderr";
 
@@ -75,6 +76,8 @@ export function createCliTools(deps: CreateCliToolsDeps) {
           "200",
         ];
         if (model) args.push("--model", model);
+        const effort = normalizeClaudeEffort(reasoningLevel);
+        if (effort) args.push("--effort", effort);
         // Keep no-tools as a single argv token so empty value is preserved across shells.
         if (noTools) args.push("--tools=");
         return args;

@@ -1,3 +1,4 @@
+import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
 import { notifyTaskStatus } from "../../../../gateway/client.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
@@ -230,10 +231,11 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
 
     const spawnModelConfig = getProviderModelConfig();
     const spawnModel = agent.cli_model || spawnModelConfig[provider]?.model || undefined;
-    const spawnReasoningLevel =
-      provider === "codex"
-        ? agent.cli_reasoning_level || spawnModelConfig[provider]?.reasoningLevel || undefined
-        : spawnModelConfig[provider]?.reasoningLevel || undefined;
+    const spawnReasoningLevel = resolveCliReasoningLevel(
+      provider,
+      agent.cli_reasoning_level,
+      spawnModelConfig[provider]?.reasoningLevel,
+    );
 
     if (provider === "api") {
       const controller = new AbortController();
@@ -257,6 +259,8 @@ export function registerAgentSpawnRoute(ctx: RuntimeContext): void {
         logPath,
         controller,
         fakePid,
+        undefined,
+        agent.cli_reasoning_level,
       );
       return res.json({ ok: true, pid: fakePid, logPath, cwd: agentCwd });
     }

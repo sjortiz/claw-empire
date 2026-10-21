@@ -11,6 +11,25 @@ describe("initializeOAuthRuntime", () => {
     db = null;
   });
 
+  it("adds a nullable effort to legacy agents and preserves overrides across repeated startup", () => {
+    db = new DatabaseSync(":memory:");
+    applyBaseSchema(db);
+    db.exec("ALTER TABLE agents DROP COLUMN cli_reasoning_level");
+    db.prepare(
+      "INSERT INTO agents (id, name, role, cli_provider) VALUES ('legacy-effort', 'Legacy', 'junior', 'claude')",
+    ).run();
+    const initialize = () => initializeOAuthRuntime({ db: db!, nowMs: () => 0, runInTransaction: (fn) => fn() });
+    initialize();
+    expect(db.prepare("SELECT cli_reasoning_level FROM agents WHERE id = 'legacy-effort'").get()).toEqual({
+      cli_reasoning_level: null,
+    });
+    db.prepare("UPDATE agents SET cli_reasoning_level = 'max' WHERE id = 'legacy-effort'").run();
+    initialize();
+    expect(db.prepare("SELECT cli_reasoning_level FROM agents WHERE id = 'legacy-effort'").get()).toEqual({
+      cli_reasoning_level: "max",
+    });
+  });
+
   it("upgrades legacy provider checks to include kimi for agents and skill history", () => {
     db = new DatabaseSync(":memory:");
     db.exec(`

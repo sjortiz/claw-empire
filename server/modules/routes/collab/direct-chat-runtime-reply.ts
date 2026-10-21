@@ -320,6 +320,7 @@ export function createDirectReplyRuntime(deps: DirectReplyRuntimeDeps) {
                     });
                     return true;
                   },
+                  agent.cli_reasoning_level ?? undefined,
                 );
               } finally {
                 clearTimeout(timeout);

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { resolveCliReasoningLevel } from "../core/reasoning-effort.ts";
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -234,7 +235,10 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     const args = buildAgentArgs(provider, model, reasoningLevel);
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
-    safeWrite(`\n===== task run start ${new Date().toISOString()} | provider=${provider} =====\n`);
+    const effectiveEffort = resolveCliReasoningLevel(provider, reasoningLevel, undefined);
+    safeWrite(
+      `\n===== task run start ${new Date().toISOString()} | provider=${provider}${effectiveEffort ? `${model ? ` | model=${model}` : ""} | effort=${effectiveEffort}` : ""} =====\n`,
+    );
 
     // Remove CLAUDECODE env var to prevent "nested session" detection
     const cleanEnv = { ...process.env };

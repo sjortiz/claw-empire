@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { resolveCliReasoningLevel } from "./reasoning-effort.ts";
 import type { AgentRow, OneShotRunOptions, OneShotRunResult } from "./conversation-types.ts";
 
 type CreateOneShotRunnerDeps = {
@@ -154,6 +155,7 @@ export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
               rawOutput += text;
               return safeWrite(text);
             },
+            agent.cli_reasoning_level ?? undefined,
           );
         } finally {
           clearTimeout(timeout);
@@ -194,11 +196,16 @@ export function createOneShotRunner(deps: CreateOneShotRunnerDeps) {
       } else {
         const modelConfig = getProviderModelConfig();
         const model = agent.cli_model || modelConfig[provider]?.model || undefined;
-        const reasoningLevel =
-          provider === "codex"
-            ? agent.cli_reasoning_level || modelConfig[provider]?.reasoningLevel || undefined
-            : modelConfig[provider]?.reasoningLevel || undefined;
+        const reasoningLevel = resolveCliReasoningLevel(
+          provider,
+          agent.cli_reasoning_level,
+          modelConfig[provider]?.reasoningLevel,
+        );
         const args = buildAgentArgs(provider, model, reasoningLevel, { noTools });
+        if ((provider === "claude" || provider === "codex") && reasoningLevel)
+          safeWrite(
+            `===== one-shot run start | provider=${provider}${model ? ` | model=${model}` : ""}${reasoningLevel ? ` | effort=${reasoningLevel}` : ""} =====\n`,
+          );
 
         await new Promise<void>((resolve, reject) => {
           const cleanEnv = { ...process.env };

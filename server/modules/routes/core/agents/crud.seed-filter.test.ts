@@ -258,3 +258,46 @@ describe("agent CRUD seed filter", () => {
     }
   });
 });
+
+describe("agent reasoning effort persistence", () => {
+  it("saves Claude/API overrides and preserves them when providers and models change", () => {
+    const { db, routes } = createHarness();
+    try {
+      db.prepare(
+        "INSERT INTO agents (id, name, role, cli_provider, cli_reasoning_level) VALUES ('effort-agent', 'Effort Agent', 'junior', 'claude', NULL)",
+      ).run();
+      const patch = (body: Record<string, unknown>) => {
+        const response = createFakeResponse();
+        routes.get("PATCH /api/agents/:id")?.({ params: { id: "effort-agent" }, body, query: {} }, response);
+        expect(response.statusCode).toBe(200);
+        return db.prepare("SELECT cli_reasoning_level FROM agents WHERE id = 'effort-agent'").get();
+      };
+      expect(patch({ cli_reasoning_level: "max" })).toEqual({ cli_reasoning_level: "max" });
+      expect(patch({ cli_model: "claude-next" })).toEqual({ cli_reasoning_level: "max" });
+      expect(patch({ cli_provider: "gemini" })).toEqual({ cli_reasoning_level: "max" });
+      expect(patch({ cli_provider: "api", cli_reasoning_level: "none" })).toEqual({ cli_reasoning_level: "none" });
+      expect(patch({ cli_provider: "claude" })).toEqual({ cli_reasoning_level: "none" });
+      expect(patch({ cli_reasoning_level: "" })).toEqual({ cli_reasoning_level: null });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects non-text effort without altering the saved override", () => {
+    const { db, routes } = createHarness();
+    try {
+      db.prepare(
+        "INSERT INTO agents (id, name, role, cli_provider, cli_reasoning_level) VALUES ('effort-agent', 'Effort Agent', 'junior', 'claude', 'high')",
+      ).run();
+      const response = createFakeResponse();
+      routes.get("PATCH /api/agents/:id")?.(
+        { params: { id: "effort-agent" }, body: { cli_reasoning_level: 1 }, query: {} },
+        response,
+      );
+      expect(response.statusCode).toBe(400);
+      expect(db.prepare("SELECT cli_reasoning_level FROM agents").get()).toEqual({ cli_reasoning_level: "high" });
+    } finally {
+      db.close();
+    }
+  });
+});

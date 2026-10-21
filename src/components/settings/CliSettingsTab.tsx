@@ -1,6 +1,28 @@
 import { CLI_INFO } from "./constants";
 import type { CliSettingsTabProps } from "./types";
 
+const CLAUDE_REASONING_LEVELS = [
+  {
+    effort: "low",
+    description: { ko: "빠른 응답, 낮은 깊이", en: "Faster, lower depth", ja: "高速、浅い推論", zh: "更快、较浅推理" },
+  },
+  { effort: "medium", description: { ko: "균형", en: "Balanced", ja: "バランス", zh: "均衡" } },
+  { effort: "high", description: { ko: "높은 깊이", en: "Higher depth", ja: "深い推論", zh: "更深入推理" } },
+  {
+    effort: "xhigh",
+    description: { ko: "매우 높은 깊이", en: "Very high depth", ja: "非常に深い推論", zh: "极深入推理" },
+  },
+  {
+    effort: "max",
+    description: {
+      ko: "최대 깊이, 가장 느림",
+      en: "Maximum depth, slowest",
+      ja: "最大の深さ、最も低速",
+      zh: "最大深度、最慢",
+    },
+  },
+];
+
 export default function CliSettingsTab({
   t,
   cliStatus,
@@ -108,7 +130,9 @@ export default function CliSettingsTab({
                                 [provider]: {
                                   ...prev,
                                   model: newSlug,
-                                  reasoningLevel: newModel?.defaultReasoningLevel || undefined,
+                                  ...(provider === "codex"
+                                    ? { reasoningLevel: newModel?.defaultReasoningLevel || undefined }
+                                    : {}),
                                 },
                               };
                               const newForm = { ...form, providerModelConfig: newConfig };
@@ -131,13 +155,26 @@ export default function CliSettingsTab({
                         )}
                       </div>
 
-                      {provider === "codex" && reasoningLevels && reasoningLevels.length > 0 && (
+                      {(provider === "claude" ||
+                        (provider === "codex" && reasoningLevels && reasoningLevels.length > 0)) && (
                         <div className="flex min-w-0 flex-col items-stretch gap-1.5 sm:flex-row sm:items-center sm:gap-2">
                           <span className="w-auto shrink-0 text-xs text-slate-400 sm:w-20">
                             {t({ ko: "추론 레벨:", en: "Reasoning:", ja: "推論レベル:", zh: "推理级别:" })}
                           </span>
                           <select
-                            value={currentReasoningLevel || defaultReasoning}
+                            aria-label={
+                              provider === "claude"
+                                ? t({
+                                    ko: "Claude 추론 레벨",
+                                    en: "Claude reasoning effort",
+                                    ja: "Claude 推論レベル",
+                                    zh: "Claude 推理级别",
+                                  })
+                                : undefined
+                            }
+                            value={
+                              provider === "claude" ? currentReasoningLevel : currentReasoningLevel || defaultReasoning
+                            }
                             onChange={(e) => {
                               const prev = form.providerModelConfig?.[provider] || { model: "" };
                               const newConfig = {
@@ -150,11 +187,36 @@ export default function CliSettingsTab({
                             }}
                             className="w-full min-w-0 rounded border border-slate-600 bg-slate-700/50 px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none sm:flex-1"
                           >
-                            {reasoningLevels.map((rl) => (
-                              <option key={rl.effort} value={rl.effort}>
-                                {rl.effort} ({rl.description})
-                              </option>
-                            ))}
+                            {provider === "claude" ? (
+                              <>
+                                <option value="">
+                                  {t({
+                                    ko: "CLI 기본값 (--effort 생략)",
+                                    en: "CLI default (no --effort)",
+                                    ja: "CLI デフォルト (--effort なし)",
+                                    zh: "CLI 默认（不传 --effort）",
+                                  })}
+                                </option>
+                                {currentReasoningLevel &&
+                                  !CLAUDE_REASONING_LEVELS.some((rl) => rl.effort === currentReasoningLevel) && (
+                                    <option value={currentReasoningLevel}>
+                                      {currentReasoningLevel} (
+                                      {t({ ko: "사용자 지정", en: "custom", ja: "カスタム", zh: "自定义" })})
+                                    </option>
+                                  )}
+                                {CLAUDE_REASONING_LEVELS.map((rl) => (
+                                  <option key={rl.effort} value={rl.effort}>
+                                    {rl.effort} ({t(rl.description)})
+                                  </option>
+                                ))}
+                              </>
+                            ) : (
+                              reasoningLevels?.map((rl) => (
+                                <option key={rl.effort} value={rl.effort}>
+                                  {rl.effort} ({rl.description})
+                                </option>
+                              ))
+                            )}
                           </select>
                         </div>
                       )}
@@ -186,7 +248,9 @@ export default function CliSettingsTab({
                                     [provider]: {
                                       ...prev,
                                       subModel: newSlug,
-                                      subModelReasoningLevel: newSubModel?.defaultReasoningLevel || undefined,
+                                      ...(provider === "codex"
+                                        ? { subModelReasoningLevel: newSubModel?.defaultReasoningLevel || undefined }
+                                        : {}),
                                     },
                                   };
                                   const newForm = { ...form, providerModelConfig: newConfig };

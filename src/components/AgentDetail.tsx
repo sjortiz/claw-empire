@@ -13,6 +13,7 @@ import type {
   WorkflowPackKey,
 } from "../types";
 import AgentAvatar from "./AgentAvatar";
+import AgentReasoningControl from "./agent-detail/AgentReasoningControl";
 import AgentDetailTabContent from "./agent-detail/AgentDetailTabContent";
 import { CLI_LABELS, oauthAccountLabel, roleLabel, STATUS_CONFIG, statusLabel } from "./agent-detail/constants";
 
@@ -65,6 +66,8 @@ export default function AgentDetail({
   const [selectedCliModel, setSelectedCliModel] = useState(agent.cli_model ?? "");
   const [selectedCliReasoningLevel, setSelectedCliReasoningLevel] = useState(agent.cli_reasoning_level ?? "");
   const [savingCli, setSavingCli] = useState(false);
+  const [globalEffort, setGlobalEffort] = useState<string>();
+  const [apiProviders, setApiProviders] = useState<api.ApiProvider[]>([]);
   const [oauthStatus, setOauthStatus] = useState<OAuthStatus | null>(null);
   const [oauthLoading, setOauthLoading] = useState(false);
   const [cliModels, setCliModels] = useState<Record<string, CliModelInfo[]>>({});
@@ -107,7 +110,9 @@ export default function AgentDetail({
     }
     return CODEX_REASONING_FALLBACK_OPTIONS;
   }, [selectedCli, selectedCliModelMeta]);
-  const canSaveCli = requiresApiProvider ? false : !requiresOAuthAccount || Boolean(selectedOAuthAccountId);
+  const canSaveCli = requiresApiProvider
+    ? Boolean(selectedApiProviderId && selectedApiModel)
+    : !requiresOAuthAccount || Boolean(selectedOAuthAccountId);
   const getReasoningDescription = useCallback(
     (effort: string, fallback?: string) => {
       switch (effort) {
@@ -200,15 +205,24 @@ export default function AgentDetail({
   }, [supportsCliModelOverride, selectedCliModel]);
 
   useEffect(() => {
-    if (selectedCli !== "codex" && selectedCliReasoningLevel) {
-      setSelectedCliReasoningLevel("");
-      return;
-    }
-    if (selectedCli === "codex" && selectedCliReasoningLevel) {
-      const isValid = codexReasoningOptions.some((level) => level.effort === selectedCliReasoningLevel);
-      if (!isValid) setSelectedCliReasoningLevel("");
-    }
-  }, [selectedCli, selectedCliReasoningLevel, codexReasoningOptions]);
+    if (!editingCli) return;
+    let cancelled = false;
+    api
+      .getSettings()
+      .then((settings) => {
+        if (!cancelled) setGlobalEffort(settings.providerModelConfig?.claude?.reasoningLevel ?? "");
+      })
+      .catch((error) => console.error("Failed to load effort defaults:", error));
+    api
+      .getApiProviders()
+      .then((providers) => {
+        if (!cancelled) setApiProviders(providers);
+      })
+      .catch((error) => console.error("Failed to load API providers:", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [editingCli]);
 
   const handleSaveCli = useCallback(async () => {
     setSavingCli(true);
@@ -219,7 +233,7 @@ export default function AgentDetail({
         api_provider_id: requiresApiProvider ? selectedApiProviderId || null : null,
         api_model: requiresApiProvider ? selectedApiModel || null : null,
         cli_model: supportsCliModelOverride ? selectedCliModel || null : null,
-        cli_reasoning_level: selectedCli === "codex" ? selectedCliReasoningLevel || null : null,
+        cli_reasoning_level: selectedCliReasoningLevel || null,
       });
       onAgentUpdated?.();
       setEditingCli(false);
@@ -438,7 +452,6 @@ export default function AgentDetail({
                           onChange={(event) => {
                             setSelectedCli(event.target.value as Agent["cli_provider"]);
                             setSelectedCliModel("");
-                            setSelectedCliReasoningLevel("");
                           }}
                           className="w-[94px] shrink-0 bg-slate-700 text-slate-200 text-xs rounded px-1 py-0.5 border border-slate-600 focus:outline-none focus:border-blue-500"
                         >
@@ -464,8 +477,6 @@ export default function AgentDetail({
                               onChange={(event) => {
                                 const nextModel = event.target.value;
                                 setSelectedCliModel(nextModel);
-                                const nextMeta = selectedCliModelOptions.find((model) => model.slug === nextModel);
-                                setSelectedCliReasoningLevel(nextMeta?.defaultReasoningLevel || "");
                               }}
                               className="w-0 min-w-0 flex-1 bg-slate-700 text-slate-200 text-xs rounded px-1 py-0.5 border border-slate-600 focus:outline-none focus:border-blue-500"
                             >
@@ -497,6 +508,10 @@ export default function AgentDetail({
                                     zh: "默认（设置中的推理）",
                                   })}
                                 </option>
+                                {selectedCliReasoningLevel &&
+                                  !codexReasoningOptions.some(
+                                    (level) => level.effort === selectedCliReasoningLevel,
+                                  ) && <option value={selectedCliReasoningLevel}>{selectedCliReasoningLevel}</option>}
                                 {codexReasoningOptions.map((level) => (
                                   <option key={level.effort} value={level.effort}>
                                     {level.effort}
@@ -553,7 +568,6 @@ export default function AgentDetail({
                         onChange={(event) => {
                           setSelectedCli(event.target.value as Agent["cli_provider"]);
                           setSelectedCliModel("");
-                          setSelectedCliReasoningLevel("");
                         }}
                         className="bg-slate-700 text-slate-200 text-xs rounded px-1.5 py-0.5 border border-slate-600 focus:outline-none focus:border-blue-500"
                       >
@@ -595,6 +609,9 @@ export default function AgentDetail({
                             })}
                           </span>
                         ))}
+                      {requiresApiProvider && selectedApiModel && (
+                        <span className="text-xs text-slate-300">API: {selectedApiModel}</span>
+                      )}
                       {requiresApiProvider && (
                         <span className="text-[10px] text-amber-300">
                           {t({
@@ -658,6 +675,16 @@ export default function AgentDetail({
                             })}
                           </span>
                         ))}
+                      {(selectedCli === "claude" || requiresApiProvider) && (
+                        <AgentReasoningControl
+                          provider={selectedCli}
+                          apiType={apiProviders.find((provider) => provider.id === selectedApiProviderId)?.type}
+                          value={selectedCliReasoningLevel}
+                          globalEffort={globalEffort}
+                          onChange={setSelectedCliReasoningLevel}
+                          t={t}
+                        />
+                      )}
                       <button
                         disabled={savingCli || !canSaveCli}
                         onClick={() => {
@@ -688,12 +715,12 @@ export default function AgentDetail({
                   >
                     🔧{" "}
                     {agent.cli_provider === "api" && agent.api_model
-                      ? `API: ${agent.api_model}`
+                      ? `API: ${agent.api_model}${agent.cli_reasoning_level ? ` (${agent.cli_reasoning_level === "none" ? t({ ko: "사고 끄기", en: "thinking off", ja: "思考オフ", zh: "思考关闭" }) : agent.cli_reasoning_level})` : ""}`
                       : agent.cli_model &&
                           CLI_MODEL_OVERRIDE_PROVIDERS.includes(agent.cli_provider) &&
                           agent.cli_provider !== "api"
-                        ? `${CLI_LABELS[agent.cli_provider] ?? agent.cli_provider} · ${agent.cli_model}${agent.cli_provider === "codex" && agent.cli_reasoning_level ? ` (${agent.cli_reasoning_level})` : ""}`
-                        : agent.cli_provider === "codex" && agent.cli_reasoning_level
+                        ? `${CLI_LABELS[agent.cli_provider] ?? agent.cli_provider} · ${agent.cli_model}${["codex", "claude"].includes(agent.cli_provider) && agent.cli_reasoning_level ? ` (${agent.cli_reasoning_level})` : ""}`
+                        : ["codex", "claude"].includes(agent.cli_provider) && agent.cli_reasoning_level
                           ? `${CLI_LABELS[agent.cli_provider] ?? agent.cli_provider} · (${agent.cli_reasoning_level})`
                           : (CLI_LABELS[agent.cli_provider] ?? agent.cli_provider)}
                     <span className="text-[9px] text-slate-600 ml-0.5">✏️</span>

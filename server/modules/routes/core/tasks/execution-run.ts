@@ -1,3 +1,4 @@
+import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
 import { notifyTaskStatus } from "../../../../gateway/client.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
@@ -416,10 +417,11 @@ Whenever you complete a subtask, report it in this format:
     const modelConfig = getProviderModelConfig();
     const mainModel = agent.cli_model || modelConfig[provider]?.model || undefined;
     const subModel = modelConfig[provider]?.subModel || undefined;
-    const mainReasoningLevel =
-      provider === "codex"
-        ? agent.cli_reasoning_level || modelConfig[provider]?.reasoningLevel || undefined
-        : modelConfig[provider]?.reasoningLevel || undefined;
+    const mainReasoningLevel = resolveCliReasoningLevel(
+      provider,
+      agent.cli_reasoning_level,
+      modelConfig[provider]?.reasoningLevel,
+    );
     const subReasoningLevel = modelConfig[provider]?.subModelReasoningLevel || undefined;
     const subModelHint =
       subModel && (provider === "claude" || provider === "codex")
@@ -555,6 +557,8 @@ Whenever you complete a subtask, report it in this format:
         logPath,
         controller,
         fakePid,
+        undefined,
+        agent.cli_reasoning_level,
       );
       return res.json({ ok: true, pid: fakePid, logPath, cwd: agentCwd, worktree: !!worktreePath });
     }

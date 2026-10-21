@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { decryptSecret } from "../../../../oauth/helpers.ts";
+import { resolveApiReasoningEffort, supportsApiReasoningEffort } from "../../../../../src/lib/api-reasoning-effort.ts";
 import type { ApiProviderRow } from "./types.ts";
 
 type DbLike = {
@@ -121,6 +122,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
     model: string,
     prompt: string,
     projectPath: string,
+    reasoningLevel?: string | null,
   ): { url: string; headers: Record<string, string>; body: string } {
     const apiKey = provider.api_key_enc ? decryptSecret(provider.api_key_enc) : "";
     const baseUrl = normalizeApiBaseUrl(provider.base_url);
@@ -171,6 +173,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
       headers["X-Title"] = "Claw-Empire";
     }
 
+    const effort = resolveApiReasoningEffort(provider.type, reasoningLevel);
     return {
       url: chatUrl,
       headers,
@@ -181,6 +184,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
           { role: "user", content: prompt },
         ],
         stream: true,
+        ...(effort ? { reasoning_effort: effort } : {}),
       }),
     };
   }
@@ -194,6 +198,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
     apiProviderId?: string | null,
     apiModel?: string | null,
     safeWriteOverride?: (text: string) => boolean,
+    reasoningLevel?: string | null,
   ): Promise<void> {
     const safeWrite = safeWriteOverride ?? createSafeLogStreamOps(logStream).safeWrite;
 
@@ -210,11 +215,17 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
     }
 
     const model = resolveApiProviderModel(provider, apiModel ?? null);
-    const header = `[api:${provider.type}] Provider: ${provider.name}, Model: ${model}\n---\n`;
+    const effort = resolveApiReasoningEffort(provider.type, reasoningLevel);
+    const effortDetail = effort
+      ? `, Effort: ${effort} (${effort === "none" ? "thinking off, " : ""}agent)`
+      : reasoningLevel
+        ? `, Effort: ${reasoningLevel} (not sent: ${supportsApiReasoningEffort(provider.type) ? "invalid level" : `unsupported for ${provider.type}`})`
+        : "";
+    const header = `[api:${provider.type}] Provider: ${provider.name}, Model: ${model}${effortDetail}\n---\n`;
     safeWrite(header);
     if (taskId) broadcast("cli_output", { task_id: taskId, stream: "stderr", data: header });
 
-    const req = buildApiProviderRequest(provider, model, prompt, projectPath);
+    const req = buildApiProviderRequest(provider, model, prompt, projectPath, effort);
 
     const resp = await fetch(req.url, {
       method: "POST",
@@ -252,6 +263,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
     controller: AbortController,
     fakePid: number,
     onComplete?: (exitCode: number) => void,
+    reasoningLevel?: string | null,
   ): void {
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
@@ -281,6 +293,7 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
           apiProviderId,
           apiModel,
           safeWrite,
+          reasoningLevel,
         );
       } catch (err: any) {
         exitCode = 1;
