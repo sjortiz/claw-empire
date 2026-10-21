@@ -147,6 +147,8 @@ export interface Project {
   default_pack_key?: WorkflowPackKey;
   assignment_mode: AssignmentMode;
   merge_policy?: MergePolicy | null;
+  review_meeting_auto_start?: boolean | null;
+  review_items_auto_apply?: boolean | null;
   assigned_agent_ids?: string[];
   last_used_at: number | null;
   created_at: number;
@@ -372,6 +374,8 @@ export interface CompanySettings {
   autoAssign: boolean;
   yoloMode?: boolean;
   mergePolicy?: MergePolicy;
+  reviewMeetingAutoStart?: boolean;
+  reviewItemsAutoApply?: boolean;
   autoUpdateEnabled: boolean;
   autoUpdateNoticePending?: boolean;
   oauthAutoSwap?: boolean;
@@ -392,6 +396,8 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   autoAssign: true,
   yoloMode: false,
   mergePolicy: "auto",
+  reviewMeetingAutoStart: false,
+  reviewItemsAutoApply: false,
   autoUpdateEnabled: false,
   autoUpdateNoticePending: false,
   oauthAutoSwap: true,

@@ -10,6 +10,8 @@ interface UseProjectSaveHandlerParams {
   setSaving: Dispatch<SetStateAction<boolean>>;
   assignmentMode: AssignmentMode;
   mergePolicy: MergePolicy | null;
+  reviewMeetingAutoStart: boolean | null;
+  reviewItemsAutoApply: boolean | null;
   getManualAssignmentWarning: () => ManualAssignmentWarning["reason"] | null;
   setManualAssignmentWarning: Dispatch<SetStateAction<ManualAssignmentWarning | null>>;
   projectPath: string;
@@ -33,6 +35,8 @@ export function useProjectSaveHandler({
   setSaving,
   assignmentMode,
   mergePolicy,
+  reviewMeetingAutoStart,
+  reviewItemsAutoApply,
   getManualAssignmentWarning,
   setManualAssignmentWarning,
   projectPath,
@@ -122,6 +126,8 @@ export function useProjectSaveHandler({
             create_path_if_missing: createPathIfMissing,
             assignment_mode: assignmentMode,
             merge_policy: mergePolicy,
+            review_meeting_auto_start: reviewMeetingAutoStart,
+            review_items_auto_apply: reviewItemsAutoApply,
             agent_ids: assignmentMode === "manual" ? Array.from(selectedAgentIds) : [],
           });
           setSelectedProjectId(updated.id);
@@ -133,6 +139,8 @@ export function useProjectSaveHandler({
             create_path_if_missing: createPathIfMissing,
             assignment_mode: assignmentMode,
             merge_policy: mergePolicy,
+            review_meeting_auto_start: reviewMeetingAutoStart,
+            review_items_auto_apply: reviewItemsAutoApply,
             agent_ids: assignmentMode === "manual" ? Array.from(selectedAgentIds) : [],
           });
           setSelectedProjectId(created.id);
@@ -209,6 +217,8 @@ export function useProjectSaveHandler({
       getManualAssignmentWarning,
       loadProjects,
       mergePolicy,
+      reviewMeetingAutoStart,
+      reviewItemsAutoApply,
       name,
       pathTools,
       projectPath,

@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import { resolveReviewPolicy } from "../core/review-policy.ts";
+import { startReadyProjectReviewMeetings } from "./review-automation.ts";
 import { execFileSync } from "node:child_process";
 import { resolveTaskMergePolicy } from "../core/worktree/merge-policy.ts";
 import path from "node:path";
@@ -171,6 +173,10 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
 
     if (!options?.bypassProjectDecisionGate && !currentTask.source_task_id && currentTask.project_id) {
       const gateSnapshot = getProjectReviewGateSnapshot(currentTask.project_id);
+      if (gateSnapshot.ready && resolveReviewPolicy(db, currentTask.project_id, "reviewMeetingAutoStart")) {
+        startReadyProjectReviewMeetings(db, finishReview, currentTask.project_id, { forceRetry: true });
+        return;
+      }
       appendTaskLog(
         taskId,
         "system",
@@ -820,6 +826,10 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
       return;
     }
 
+    if (reviewInFlight.has(taskId)) return;
+    if (options?.trigger === "review_auto_start_setting") {
+      appendTaskLog(taskId, "system", "Review meeting started automatically (setting)");
+    }
     startReviewConsensusMeeting(taskId, taskTitle, currentTask.department_id, finalizeApprovedReview);
   }
 

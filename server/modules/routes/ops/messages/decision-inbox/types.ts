@@ -12,6 +12,7 @@ export interface DecisionInboxRouteItem {
   id: string;
   kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick";
   created_at: number;
+  informational?: boolean;
   summary: string;
   agent_id?: string | null;
   agent_name?: string | null;

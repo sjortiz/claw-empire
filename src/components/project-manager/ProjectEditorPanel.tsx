@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import ManualAssignmentSelector from "./ManualAssignmentSelector";
 import ProjectMergePolicySelector from "./ProjectMergePolicySelector";
+import ProjectReviewAutomationSelectors from "./ProjectReviewAutomationSelectors";
 
 interface ProjectEditorPanelProps {
   t: ProjectI18nTranslate;
@@ -47,6 +48,10 @@ interface ProjectEditorPanelProps {
   setFormFeedback: Dispatch<SetStateAction<FormFeedback | null>>;
   mergePolicy: MergePolicy | null;
   setMergePolicy: Dispatch<SetStateAction<MergePolicy | null>>;
+  reviewMeetingAutoStart: boolean | null;
+  setReviewMeetingAutoStart: Dispatch<SetStateAction<boolean | null>>;
+  reviewItemsAutoApply: boolean | null;
+  setReviewItemsAutoApply: Dispatch<SetStateAction<boolean | null>>;
   assignmentMode: AssignmentMode;
   setAssignmentMode: Dispatch<SetStateAction<AssignmentMode>>;
   setManualAssignmentWarning: Dispatch<SetStateAction<ManualAssignmentWarning | null>>;
@@ -100,6 +105,10 @@ export default function ProjectEditorPanel({
   setFormFeedback,
   mergePolicy,
   setMergePolicy,
+  reviewMeetingAutoStart,
+  setReviewMeetingAutoStart,
+  reviewItemsAutoApply,
+  setReviewItemsAutoApply,
   assignmentMode,
   setAssignmentMode,
   setManualAssignmentWarning,
@@ -319,6 +328,18 @@ export default function ProjectEditorPanel({
         value={mergePolicy}
         onChange={(value) => {
           setMergePolicy(value);
+          setFormFeedback(null);
+        }}
+        disabled={!isCreating && !editingProjectId}
+      />
+
+      <ProjectReviewAutomationSelectors
+        t={t}
+        reviewMeetingAutoStart={reviewMeetingAutoStart}
+        reviewItemsAutoApply={reviewItemsAutoApply}
+        onChange={(key, value) => {
+          if (key === "reviewMeetingAutoStart") setReviewMeetingAutoStart(value);
+          else setReviewItemsAutoApply(value);
           setFormFeedback(null);
         }}
         disabled={!isCreating && !editingProjectId}
