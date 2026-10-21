@@ -572,7 +572,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
     const afterRun = db.prepare("SELECT status FROM tasks WHERE id = ?").get(delegatedTaskId) as
       | { status: string }
       | undefined;
-    if (afterRun && ["in_progress", "pending", "planned"].includes(afterRun.status)) return;
+    if (afterRun?.status === "in_progress" || afterRun?.status === "pending") return;
     if (exitCode === 0) {
       appendTaskLog(delegatedTaskId, "system", "Delegated work awaits approval and directive integration");
       return;

@@ -289,6 +289,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
     provider: string;
     openedAt: number;
     lastTouchedAt: number;
+    nativeSessionId?: string;
   }
 
   const taskExecutionSessions = new Map<string, TaskExecutionSessionState>();
@@ -442,6 +443,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   }
 
   const { startTaskExecutionForAgent } = createExecutionStartTaskTools({
+    activeProcesses,
     taskWorktrees,
     nowMs,
     db,
@@ -615,6 +617,9 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   // Run completion handler — enhanced with review flow + CEO reporting
   // ---------------------------------------------------------------------------
   const runCompleteHandler = createRunCompleteHandler({
+    get shuttingDown() {
+      return __ctx.shuttingDown;
+    },
     taskExecutionSessions,
     startTaskExecutionForAgent,
     getDeptName,

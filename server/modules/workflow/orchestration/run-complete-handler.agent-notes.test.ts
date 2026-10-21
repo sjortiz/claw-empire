@@ -1,4 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { coordinationLocalizers, createCoordinationDb } from "../../../test/agent-coordination-fixture.ts";
 import { createRunCompleteHandler } from "./run-complete-handler.ts";
@@ -11,6 +13,7 @@ interface Session {
 }
 
 const databases: DatabaseSync[] = [];
+const directories: string[] = [];
 
 function createHarness(session: Session = { sessionId: "source-session", agentId: "alpha" }) {
   const db = createCoordinationDb();
@@ -19,8 +22,10 @@ function createHarness(session: Session = { sessionId: "source-session", agentId
     ALTER TABLE subtasks ADD COLUMN target_department_id TEXT;
     UPDATE agents SET status = 'working', current_task_id = 'source' WHERE id = 'alpha';
   `);
+  const worktreePath = fs.mkdtempSync(path.join(process.env.LOGS_DIR!, "run-retry-"));
+  directories.push(worktreePath);
   const worktree = {
-    worktreePath: "/missing/test-repo/.climpire-worktrees/source",
+    worktreePath,
     projectPath: "/missing/test-repo",
     branchName: "climpire/source",
   };
@@ -31,7 +36,14 @@ function createHarness(session: Session = { sessionId: "source-session", agentId
     stopProgressTimer: vi.fn(),
     stopRequestedTasks: new Set<string>(),
     stopRequestModeByTask: new Map<string, "pause" | "cancel">(),
-    appendTaskLog: vi.fn(),
+    appendTaskLog: vi.fn((taskId: string, kind: string, message: string) => {
+      db.prepare("INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)").run(
+        taskId,
+        kind,
+        message,
+        1700000000000,
+      );
+    }),
     clearTaskWorkflowState: vi.fn(),
     codexThreadToSubtask: new Map<string, string>(),
     nowMs: () => 1700000000000,
@@ -65,7 +77,12 @@ function createHarness(session: Session = { sessionId: "source-session", agentId
     getWorktreeDiffSummary: vi.fn(() => ""),
     hasVisibleDiffSummary: vi.fn(() => false),
     taskExecutionSessions: new Map([["source", session]]),
-    startTaskExecutionForAgent: vi.fn(),
+    startTaskExecutionForAgent: vi.fn(
+      (taskId: string, agent: { id: string }, _deptId?: string | null, _deptName?: string, _options?: any) => {
+        db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(taskId);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ? WHERE id = ?").run(taskId, agent.id);
+      },
+    ),
     getDeptName: vi.fn(() => "Development"),
   };
   return { db, deps, worktree, session, ...createRunCompleteHandler(deps) };
@@ -91,6 +108,7 @@ function addNote(
 
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
+  for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
 describe("run complete handler - agent notes", () => {
@@ -136,9 +154,7 @@ describe("run complete handler - agent notes", () => {
     const previouslyHandledId = addNote(db, "handled-in-earlier-run", 90);
     const otherTaskId = addNote(db, "other-task-note", 80, "target");
     session.coordinationNoteIds = [deliveredId, otherTaskId];
-    db.prepare(
-      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES ('source','system','Automatic run retry: 1/1',1)",
-    ).run();
+    deps.appendTaskLog("source", "system", "Run automatic retry: 1/1 (exit code: 1); worktree preserved");
 
     handleTaskRunComplete("source", 1);
 
@@ -159,19 +175,64 @@ describe("run complete handler - agent notes", () => {
     expect(deps.finishReview).not.toHaveBeenCalled();
   });
 
-  it("preserves the worktree after an exhausted process retry outside note continuations", () => {
+  it("retries a real process failure once in its worktree before notifying or releasing delegated work", () => {
     const { db, deps, worktree, handleTaskRunComplete } = createHarness();
     addNote(db, "unread-after-normal-failure");
-    db.prepare(
-      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES ('source','system','Automatic run retry: 1/1',1)",
-    ).run();
 
     handleTaskRunComplete("source", 1);
 
-    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
-    expect(deps.cleanupWorktree).not.toHaveBeenCalled();
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    expect(deps.startTaskExecutionForAgent.mock.calls[0][4]).toEqual(expect.objectContaining({ reuseWorktree: true }));
     expect(deps.taskWorktrees.get("source")).toBe(worktree);
-    expect(deps.reconcileDelegatedSubtasksAfterRun).toHaveBeenCalledExactlyOnceWith("source", 1);
+    expect(deps.cleanupWorktree).not.toHaveBeenCalled();
+    expect(deps.reconcileDelegatedSubtasksAfterRun).not.toHaveBeenCalled();
+    expect(deps.notifyCeo).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT status FROM tasks WHERE id = 'source'").get()).toEqual({ status: "in_progress" });
+
+    // Reconstruct the handler with empty runtime state, preserving only the DB.
+    // Its durable reservation must prevent a second automatic retry.
+    const snapshotPath = path.join(worktree.worktreePath, "restart.sqlite");
+    db.prepare("VACUUM INTO ?").run(snapshotPath);
+    const reopened = new DatabaseSync(snapshotPath);
+    databases.push(reopened);
+    const restarted = createRunCompleteHandler({
+      ...deps,
+      db: reopened,
+      activeProcesses: new Map(),
+      taskExecutionSessions: new Map(),
+      appendTaskLog: (id: string, kind: string, message: string) =>
+        reopened.prepare("INSERT INTO task_logs(task_id,kind,message) VALUES (?,?,?)").run(id, kind, message),
+    });
+    restarted.handleTaskRunComplete("source", 2);
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    expect(reopened.prepare("SELECT status FROM tasks WHERE id = 'source'").get()).toEqual({ status: "inbox" });
+    expect(deps.notifyCeo).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("failed after its one automatic retry"),
+      "source",
+    );
+    expect(deps.cleanupWorktree).not.toHaveBeenCalled();
+    expect(deps.reconcileDelegatedSubtasksAfterRun).toHaveBeenCalledExactlyOnceWith("source", 2);
+  });
+
+  it("waits for an occupied agent before retrying without stealing its other task", () => {
+    vi.useFakeTimers();
+    try {
+      const { db, deps, handleTaskRunComplete } = createHarness();
+      db.exec("UPDATE agents SET current_task_id = 'target', status = 'working' WHERE id = 'alpha'");
+      handleTaskRunComplete("source", 1);
+      expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+      expect(db.prepare("SELECT status FROM tasks WHERE id = 'source'").get()).toEqual({ status: "planned" });
+      expect(db.prepare("SELECT current_task_id FROM agents WHERE id = 'alpha'").get()).toEqual({
+        current_task_id: "target",
+      });
+      expect(deps.notifyCeo).not.toHaveBeenCalled();
+      db.exec("UPDATE agents SET current_task_id = NULL, status = 'idle' WHERE id = 'alpha'");
+      vi.advanceTimersByTime(5_000);
+      expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the usual review transition when no note is unread", () => {

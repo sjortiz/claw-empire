@@ -1,5 +1,5 @@
+import { recoverOrphanInProgressTasks } from "./workflow/core/run-recovery.ts";
 import { sweepExpiredWorkflowWaits } from "./workflow/core/persistent-wait.ts";
-import { recoverOrphanInProgressTasks } from "./lifecycle/recover-orphan-runs.ts";
 import { sweepReadyRoots } from "./workflow/core/task-resume.ts";
 import { resumeReviewsOnStartup } from "./workflow/core/review-startup.ts";
 import type { RuntimeContext } from "../types/runtime-context.ts";
@@ -25,21 +25,18 @@ export function startLifecycle(ctx: RuntimeContext): void {
     dbPath,
     detectAllCli,
     distDir,
-    endTaskExecutionSession,
     express,
     finishReview,
     getDecryptedOAuthToken,
     isAgentInMeeting,
     isIncomingMessageAuthenticated,
     isIncomingMessageOriginTrusted,
-    isPidAlive,
     isProduction,
     killPidTree,
     nowMs,
     processSubtaskDelegations,
     reconcileCrossDeptSubtasks,
     refreshGoogleToken,
-    rollbackTaskWorktree,
     runInTransaction,
     stopRequestedTasks,
     wsClients,
@@ -373,14 +370,12 @@ export function startLifecycle(ctx: RuntimeContext): void {
     activeProcesses,
     stopRequestedTasks,
     killPidTree,
-    rollbackTaskWorktree,
     db,
-    nowMs,
-    endTaskExecutionSession,
     wsClients,
     wss,
     server,
     onBeforeClose: () => {
+      (ctx as any).shuttingDown = true;
       telegramReceiver.stop();
       discordReceiver.stop();
     },

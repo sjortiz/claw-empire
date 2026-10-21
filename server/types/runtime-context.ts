@@ -93,6 +93,7 @@ export type TaskCreationAuditInput = {
 // ---------------------------------------------------------------------------
 
 export interface BaseRuntimeContext {
+  shuttingDown?: boolean;
   app: Express;
   db: DatabaseSync;
   dbPath: string;

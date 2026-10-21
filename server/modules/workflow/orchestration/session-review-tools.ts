@@ -1,4 +1,5 @@
 import type { Lang } from "../../../types/lang.ts";
+import { executionSessionStateLog, loadTaskExecutionSession } from "../core/execution-session.ts";
 
 type CreateSessionReviewToolsDeps = Record<string, any>;
 
@@ -27,26 +28,9 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
     startPlannedApprovalMeeting,
   } = deps;
 
-  function readSavedSession(taskId: string): any {
-    const saved = db
-      .prepare(
-        "SELECT message FROM task_logs WHERE task_id = ? AND (message LIKE 'Execution session state: %' OR message LIKE 'Execution session closed:%') ORDER BY rowid DESC LIMIT 1",
-      )
-      .get(taskId);
-    if (saved?.message.startsWith("Execution session state: ")) {
-      try {
-        const session = JSON.parse(saved.message.slice("Execution session state: ".length));
-        if (session.taskId === taskId && typeof session.sessionId === "string") return session;
-      } catch {
-        // Ignore malformed legacy records and create a fresh identity.
-      }
-    }
-    return null;
-  }
-
   function ensureTaskExecutionSession(taskId: string, agentId: string, provider: string): any {
     const now = nowMs();
-    const existing = taskExecutionSessions.get(taskId) ?? readSavedSession(taskId);
+    const existing = taskExecutionSessions.get(taskId) ?? loadTaskExecutionSession(db, taskId);
     if (existing && existing.agentId === agentId && existing.provider === provider) {
       existing.lastTouchedAt = now;
       taskExecutionSessions.set(taskId, existing);
@@ -62,7 +46,6 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
       lastTouchedAt: now,
     };
     taskExecutionSessions.set(taskId, nextSession);
-    appendTaskLog(taskId, "system", "Execution session state: " + JSON.stringify(nextSession));
     appendTaskLog(
       taskId,
       "system",
@@ -70,11 +53,12 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
         ? `Execution session rotated: ${existing.sessionId} -> ${nextSession.sessionId} (agent=${agentId}, provider=${provider})`
         : `Execution session opened: ${nextSession.sessionId} (agent=${agentId}, provider=${provider})`,
     );
+    appendTaskLog(taskId, "system", executionSessionStateLog(nextSession));
     return nextSession;
   }
 
   function endTaskExecutionSession(taskId: string, reason: string): void {
-    const existing = taskExecutionSessions.get(taskId) ?? readSavedSession(taskId);
+    const existing = taskExecutionSessions.get(taskId) ?? loadTaskExecutionSession(db, taskId);
     if (!existing) return;
     taskExecutionSessions.delete(taskId);
     appendTaskLog(
@@ -82,6 +66,7 @@ export function createSessionReviewTools(deps: CreateSessionReviewToolsDeps) {
       "system",
       `Execution session closed: ${existing.sessionId} (reason=${reason}, duration_ms=${Math.max(0, nowMs() - existing.openedAt)})`,
     );
+    appendTaskLog(taskId, "system", executionSessionStateLog(existing, true));
   }
 
   function getTaskStatusById(taskId: string): string | null {

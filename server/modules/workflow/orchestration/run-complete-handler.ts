@@ -1,5 +1,6 @@
-import { hasAutomaticRunRetry, queueTaskRunRecovery, resumeQueuedTaskRun } from "../core/run-recovery.ts";
 import { continueTaskForAgentNotes } from "../core/agent-coordination.ts";
+import { queueTaskRunRecovery } from "../core/run-recovery.ts";
+import { isTaskAutoRecoveryHeld } from "../core/task-resume.ts";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -26,7 +27,6 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     broadcast,
     processSubtaskDelegations,
     taskWorktrees,
-    cleanupWorktree,
     findTeamLeader,
     getAgentDisplayName,
     pickL,
@@ -287,17 +287,6 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     )
       return;
 
-    if (
-      exitCode !== 0 &&
-      finalExitCode !== 0 &&
-      queueTaskRunRecovery(deps, taskId, "Automatic retry after agent process failure", finalExitCode)
-    ) {
-      // The durable queue is claimed before scheduling. A second close event or
-      // server restart sees planned, not another failed run.
-      setTimeout(() => resumeQueuedTaskRun(deps, taskId), 0).unref();
-      return;
-    }
-
     // Auto-complete own-department subtasks on CLI success; foreign ones get delegated
     if (finalExitCode === 0) {
       const pendingSubtasks = db
@@ -322,7 +311,10 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
 
     // Update agent status back to idle
     if (task?.assigned_agent_id) {
-      db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ?").run(task.assigned_agent_id);
+      db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ? AND current_task_id = ?").run(
+        task.assigned_agent_id,
+        taskId,
+      );
 
       if (finalExitCode === 0) {
         db.prepare(
@@ -334,6 +326,39 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         | Record<string, unknown>
         | undefined;
       broadcast("agent_status", agent);
+    }
+
+    // Reserve the only automatic retry durably before dispatch. The log survives
+    // both a restart during the retry and loss of an in-memory owner-wait timer.
+    // Artifact/review gates that turn an exit-zero run into failure retain their
+    // existing handling; this budget belongs to actual process failures.
+    const automaticRetryUsed =
+      finalExitCode !== 0 && startTaskExecutionForAgent
+        ? Boolean(
+            db
+              .prepare(
+                "SELECT 1 FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE 'Run automatic retry: 1/1%' LIMIT 1",
+              )
+              .get(taskId),
+          )
+        : false;
+    if (
+      exitCode !== 0 &&
+      finalExitCode !== 0 &&
+      startTaskExecutionForAgent &&
+      !automaticRetryUsed &&
+      !isTaskAutoRecoveryHeld(deps, taskId)
+    ) {
+      appendTaskLog(taskId, "system", `Run automatic retry: 1/1 (exit code: ${finalExitCode}); worktree preserved`);
+      const failedSession = taskExecutionSessions?.get(taskId);
+      for (const noteId of failedSession?.coordinationNoteIds ?? []) {
+        db.prepare("UPDATE task_agent_notes SET delivered_at = NULL WHERE target_task_id = ? AND id = ?").run(
+          taskId,
+          noteId,
+        );
+      }
+      queueTaskRunRecovery(deps, taskId, "automatic retry after non-zero process exit");
+      return;
     }
 
     if (finalExitCode === 0 && task) {
@@ -643,24 +668,6 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
         }, 2500);
       }, 2500);
     } else {
-      const retryExhausted = exitCode !== 0 && hasAutomaticRunRetry(db, taskId);
-      if (retryExhausted) {
-        const lang = resolveLang(task.description ?? task.title);
-        notifyCeo(
-          pickL(
-            l(
-              [`'${task.title}' 자동 재시도도 실패했습니다. Inbox로 이동합니다 (exit code: ${finalExitCode}).`],
-              [
-                `Task '${task.title}' failed again after its one automatic retry; moved to Inbox (exit code: ${finalExitCode}).`,
-              ],
-              [`'${task.title}' は自動再試行も失敗したため Inbox に移動しました (exit code: ${finalExitCode})。`],
-              [`任务 '${task.title}' 自动重试后仍失败，已移至 Inbox（exit code: ${finalExitCode}）。`],
-            ),
-            lang,
-          ),
-          taskId,
-        );
-      }
       // ── FAILURE: Reset to inbox, team leader reports failure ──
       db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(t, taskId);
 
@@ -671,7 +678,8 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
       const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
       broadcast("task_update", updatedTask);
 
-      // Clean up worktree on failure — failed work shouldn't persist
+      // Failed runs may contain useful edits, including a previous successful
+      // continuation. Keep the same branch available for manual recovery too.
       const failWtInfo = taskWorktrees.get(taskId);
       const failedSession = taskExecutionSessions?.get(taskId);
       const wasNoteContinuation = (failedSession?.coordinationContinuations ?? 0) > 0;
@@ -688,12 +696,8 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           "Agent note continuation failed; prior worktree/branch preserved and notes returned to inbox.",
         );
       }
-      if (failWtInfo && !wasNoteContinuation && exitCode === 0) {
-        cleanupWorktree(failWtInfo.projectPath, taskId);
-        appendTaskLog(taskId, "system", "Worktree cleaned up (task failed)");
-      }
-
-      if (exitCode !== 0) appendTaskLog(taskId, "system", "Failed run worktree/branch preserved for manual recovery");
+      if (failWtInfo && !wasNoteContinuation)
+        appendTaskLog(taskId, "system", "Worktree preserved (task failed; manual recovery available)");
 
       if (task) {
         const leader = findTeamLeader(task.department_id);
@@ -753,19 +757,34 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
           }, 1500);
         }
         const failLang = resolveLang(task.description ?? task.title);
-        if (!retryExhausted)
-          notifyCeo(
-            pickL(
-              l(
-                [`'${task.title}' 작업 실패 (exit code: ${finalExitCode}).`],
-                [`Task '${task.title}' failed (exit code: ${finalExitCode}).`],
-                [`'${task.title}' のタスクが失敗しました (exit code: ${finalExitCode})。`],
-                [`任务 '${task.title}' 失败（exit code: ${finalExitCode}）。`],
-              ),
-              failLang,
+        notifyCeo(
+          pickL(
+            l(
+              [
+                automaticRetryUsed
+                  ? `'${task.title}' 자동 재시도 1회 후에도 실패했습니다 (exit code: ${finalExitCode}). Inbox로 이동했으며 작업 브랜치는 보존됩니다.`
+                  : `'${task.title}' 작업 실패 (exit code: ${finalExitCode}).`,
+              ],
+              [
+                automaticRetryUsed
+                  ? `Task '${task.title}' failed after its one automatic retry (exit code: ${finalExitCode}). Moved to Inbox; worktree and branch preserved.`
+                  : `Task '${task.title}' failed (exit code: ${finalExitCode}).`,
+              ],
+              [
+                automaticRetryUsed
+                  ? `'${task.title}' は1回の自動再試行後も失敗しました (exit code: ${finalExitCode})。Inboxへ移動し、作業ブランチは保持されます。`
+                  : `'${task.title}' のタスクが失敗しました (exit code: ${finalExitCode})。`,
+              ],
+              [
+                automaticRetryUsed
+                  ? `任务 '${task.title}' 在一次自动重试后仍失败（exit code: ${finalExitCode}）。已移至 Inbox，工作树和分支已保留。`
+                  : `任务 '${task.title}' 失败（exit code: ${finalExitCode}）。`,
+              ],
             ),
-            taskId,
-          );
+            failLang,
+          ),
+          taskId,
+        );
       }
 
       // Even on failure, trigger next cross-dept cooperation so the queue doesn't stall

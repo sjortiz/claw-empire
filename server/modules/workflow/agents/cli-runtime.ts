@@ -1,7 +1,12 @@
-import { createProviderSessionCapture, readProviderSession } from "../core/provider-session.ts";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { resolveCliReasoningLevel } from "../core/reasoning-effort.ts";
+import {
+  createProviderSessionCapture,
+  executionSessionStateLog,
+  isNativeSessionId,
+  type TaskExecutionSessionState,
+} from "../core/execution-session.ts";
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -233,7 +238,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     logPath: string,
     model?: string,
     reasoningLevel?: string,
-    options?: { resume?: boolean },
+    options: { executionSession?: TaskExecutionSessionState; resumeSessionId?: string } = {},
   ): ChildProcess {
     clearCliOutputDedup(taskId);
     // Save prompt for debugging
@@ -241,28 +246,22 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
     fs.chmodSync(promptPath, 0o600);
 
-    let nativeSession = options?.resume ? readProviderSession(db, taskId, provider, logPath) : null;
-    const resumingSession = Boolean(nativeSession);
-    // Kimi's print stream does not consistently expose session metadata. Its
-    // --session flag creates a missing named session, so allocate it durably.
-    if (provider === "kimi" && !nativeSession) {
-      nativeSession = randomUUID();
-      appendTaskLog(taskId, "system", "Provider session: " + JSON.stringify({ provider, id: nativeSession }));
+    const recordNativeSession = (nativeSessionId: string) => {
+      const session = options.executionSession;
+      if (!session || session.provider !== provider || session.taskId !== taskId) return;
+      if (session.nativeSessionId === nativeSessionId) return;
+      session.nativeSessionId = nativeSessionId;
+      session.lastTouchedAt = Date.now();
+      appendTaskLog(taskId, "system", executionSessionStateLog(session));
+    };
+    let resumeSessionId = isNativeSessionId(options.resumeSessionId) ? options.resumeSessionId : undefined;
+    // Kimi --session creates the requested ID when absent. Pin and persist the
+    // ID before spawning because its print stream does not identify the session.
+    if (provider === "kimi" && options.executionSession) {
+      resumeSessionId ??= randomUUID();
+      recordNativeSession(resumeSessionId);
     }
-    const args = nativeSession
-      ? buildAgentArgs(provider, model, reasoningLevel, { resumeSessionId: nativeSession })
-      : buildAgentArgs(provider, model, reasoningLevel);
-    if (options?.resume)
-      appendTaskLog(
-        taskId,
-        "system",
-        resumingSession
-          ? "Provider session resuming: " + provider + " " + nativeSession
-          : "Provider session unavailable for " + provider + "; starting a new run with retained worktree changes",
-      );
-    const captureSession = createProviderSessionCapture(provider, (id) =>
-      appendTaskLog(taskId, "system", "Provider session: " + JSON.stringify({ provider, id })),
-    );
+    const args = buildAgentArgs(provider, model, reasoningLevel, { resumeSessionId });
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
     const effectiveEffort = resolveCliReasoningLevel(provider, reasoningLevel, undefined);
@@ -288,8 +287,8 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
       detached: process.platform !== "win32",
       windowsHide: true,
     });
-
-    if (child.pid && child.pid > 0) appendTaskLog(taskId, "system", "Run process: pid=" + child.pid);
+    if (child.pid && child.pid > 0) appendTaskLog(taskId, "system", `Run process pid: ${child.pid}`);
+    const sessionCapture = createProviderSessionCapture(provider, recordNativeSession);
 
     let finished = false;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -369,8 +368,8 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     // Pipe agent output to log file AND broadcast via WebSocket
     stdoutListener = (chunk: Buffer) => {
       touchIdleTimer();
+      sessionCapture.write(chunk.toString("utf8"));
       const text = normalizeStreamChunk(chunk, { dropCliNoise: true });
-      captureSession(text);
       if (!text) return;
       if (shouldSkipDuplicateCliOutput(taskId, "stdout", text)) return;
       safeWrite(text);
@@ -389,6 +388,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     child.stderr?.on("data", stderrListener);
 
     child.on("close", () => {
+      sessionCapture.end();
       finished = true;
       clearRunTimers();
       detachOutputListeners();

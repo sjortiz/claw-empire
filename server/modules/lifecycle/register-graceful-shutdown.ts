@@ -1,4 +1,3 @@
-import { holdRecoveryDuringShutdown } from "../workflow/core/task-recovery-control.ts";
 import type { ChildProcess } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import type { WebSocket as WsSocket, WebSocketServer } from "ws";
@@ -7,10 +6,7 @@ interface RegisterGracefulShutdownHandlersOptions {
   activeProcesses: Map<string, ChildProcess>;
   stopRequestedTasks: Set<string>;
   killPidTree: (pid: number) => void;
-  rollbackTaskWorktree: (taskId: string, reason: string) => void;
   db: DatabaseSync;
-  nowMs: () => number;
-  endTaskExecutionSession: (taskId: string, reason: string) => void;
   wsClients: Set<WsSocket>;
   wss: WebSocketServer;
   server: { close: (callback: () => void) => void };
@@ -22,7 +18,6 @@ export function registerGracefulShutdownHandlers({
   stopRequestedTasks,
   killPidTree,
   db,
-  nowMs,
   wsClients,
   wss,
   server,
@@ -32,7 +27,6 @@ export function registerGracefulShutdownHandlers({
   function gracefulShutdown(signal: string): void {
     if (shuttingDown) return;
     shuttingDown = true;
-    holdRecoveryDuringShutdown(activeProcesses);
     console.log(`\n[Claw-Empire] ${signal} received. Shutting down gracefully...`);
 
     try {
@@ -44,15 +38,10 @@ export function registerGracefulShutdownHandlers({
     for (const [taskId, child] of activeProcesses) {
       console.log(`[Claw-Empire] Stopping process for task ${taskId} (pid: ${child.pid})`);
       stopRequestedTasks.add(taskId);
-      if (child.pid && child.pid < 0) {
-        child.kill();
-      } else if (child.pid) {
+      if (child.pid) {
         killPidTree(child.pid);
       }
       activeProcesses.delete(taskId);
-
-      // Server shutdown interrupts a run; it is not a CEO cancellation.
-      // Preserve both the worktree and execution session for startup recovery.
 
       const task = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(taskId) as
         | {
@@ -64,7 +53,8 @@ export function registerGracefulShutdownHandlers({
           "UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = ? AND current_task_id = ?",
         ).run(task.assigned_agent_id, taskId);
       }
-      db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ? AND status = 'in_progress'").run(nowMs(), taskId);
+      // Leave the RUN start, task status, session and dirty worktree intact.
+      // Shutdown is an interruption; startup recovery owns the next dispatch.
     }
 
     for (const ws of wsClients) {
@@ -80,7 +70,8 @@ export function registerGracefulShutdownHandlers({
           /* ignore */
         }
         console.log("[Claw-Empire] Shutdown complete.");
-        process.exit(0);
+        if (signal === "SIGUSR2") process.kill(process.pid, "SIGUSR2");
+        else process.exit(0);
       });
     });
 
@@ -93,12 +84,5 @@ export function registerGracefulShutdownHandlers({
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-  process.once("SIGUSR2", () => {
-    try {
-      db.close();
-    } catch {
-      /* ignore */
-    }
-    process.kill(process.pid, "SIGUSR2");
-  });
+  process.once("SIGUSR2", () => gracefulShutdown("SIGUSR2"));
 }

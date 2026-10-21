@@ -2,312 +2,278 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
-import { recoverOrphanInProgressTasks } from "../../lifecycle/recover-orphan-runs.ts";
-import { createRunCompleteHandler } from "../orchestration/run-complete-handler.ts";
-import { createSessionReviewTools } from "../orchestration/session-review-tools.ts";
-import {
-  hasAutomaticRunRetry,
-  queueTaskRunRecovery,
-  resumeQueuedTaskRun,
-  sweepQueuedTaskRuns,
-} from "./run-recovery.ts";
-import { holdRecoveryDuringShutdown } from "./task-recovery-control.ts";
-import { recoverReadyRoot, resumeTaskExecution } from "./task-resume.ts";
+import { recoverOrphanInProgressTasks, sweepQueuedRunRecoveries } from "./run-recovery.ts";
+import { recoverReadyRoot } from "./task-resume.ts";
 
-let db: DatabaseSync;
-let repo: string;
-beforeEach(() => vi.useFakeTimers());
+const databases: DatabaseSync[] = [];
+const directories: string[] = [];
 afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
-  db?.close();
-  if (repo) fs.rmSync(repo, { recursive: true, force: true });
+  for (const db of databases.splice(0)) db.close();
+  for (const dir of directories.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function fixture(persistent = false) {
-  repo = fs.mkdtempSync(path.join(process.env.LOGS_DIR!, "recovery-"));
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString().trim();
+function fixture(child = false, status = "in_progress") {
+  const project = fs.mkdtempSync(path.join(process.env.LOGS_DIR!, "run-recovery-"));
+  directories.push(project);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: project, stdio: "pipe" }).toString().trim();
   git("init", "-b", "main");
-  git("-c", "user.name=Recovery Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "base");
-  db = new DatabaseSync(persistent ? path.join(repo, "recovery.sqlite") : ":memory:");
+  git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "fixture");
+  const db = new DatabaseSync(path.join(project, "fixture.sqlite"));
+  databases.push(db);
   applyBaseSchema(db);
   applyTaskSchemaMigrations(db);
-  db.exec("INSERT INTO agents (id,name,role,cli_provider,status) VALUES ('owner','Owner','senior','codex','working')");
-  const appendTaskLog = (id: string, kind: string, message: string) =>
-    db.prepare("INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?,?,?,?)").run(id, kind, message, now);
-  let now = 1_000_000;
+  const id = child ? "childaaa-task" : "rootaaaa-task";
+  const worktree = path.join(project, ".climpire-worktrees", id.slice(0, 8));
+  const branch = `climpire/${id.slice(0, 8)}`;
+  git("worktree", "add", "-b", branch, worktree);
+  fs.writeFileSync(path.join(worktree, "unfinished.txt"), "preserve my edits\n");
+  db.prepare("INSERT INTO projects(id,name,project_path,core_goal) VALUES ('project','Project',?,'Recover')").run(
+    project,
+  );
+  db.exec("INSERT INTO agents(id,name,role,cli_provider,status) VALUES ('owner','Owner','senior','codex','working')");
+  if (child) db.exec("INSERT INTO tasks(id,title,status) VALUES ('parent','Parent','collaborating')");
+  db.prepare(
+    `INSERT INTO tasks(id,title,status,assigned_agent_id,source_task_id,project_id,updated_at,created_at,started_at)
+    VALUES (?, 'Recover', ?, 'owner', ?, 'project', 1, 1, 1)`,
+  ).run(id, status, child ? "parent" : null);
+  db.prepare("UPDATE agents SET current_task_id = ?").run(id);
   const deps = {
     db,
-    nowMs: () => now,
-    logsDir: repo,
+    logsDir: project,
+    nowMs: () => 1_000_000,
     IN_PROGRESS_ORPHAN_GRACE_MS: 30_000,
-    activeProcesses: new Map(),
-    stopRequestedTasks: new Set(),
-    stopRequestModeByTask: new Map(),
-    taskWorktrees: new Map(),
-    taskExecutionSessions: new Map(),
+    activeProcesses: new Map<string, any>(),
+    taskWorktrees: new Map<string, any>(),
+    stopRequestedTasks: new Set<string>(),
     isPidAlive: vi.fn(() => false),
-    appendTaskLog,
-    broadcast: vi.fn(),
-    notifyCeo: vi.fn(),
     stopProgressTimer: vi.fn(),
-    clearTaskWorkflowState: vi.fn(),
-    endTaskExecutionSession: vi.fn(),
-    handleTaskRunComplete: vi.fn(),
-    resolveLang: () => "en",
+    broadcast: vi.fn(),
     getDeptName: () => "Development",
-    startTaskExecutionForAgent: vi.fn((id: string) => {
-      db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(id);
-      db.prepare("UPDATE agents SET status = 'working', current_task_id = ? WHERE id = 'owner'").run(id);
-      appendTaskLog(id, "system", "RUN start (agent=Owner, provider=codex)");
-      deps.activeProcesses.set(id, { pid: -1 });
-    }),
-  };
-  const add = (id = "root0000-task", status = "in_progress", parent: string | null = null) => {
-    db.prepare(
-      "INSERT INTO tasks(id,title,status,assigned_agent_id,project_path,source_task_id,created_at,updated_at) VALUES (?, 'Recovery task', ?, 'owner', ?, ?, 1,1)",
-    ).run(id, status, repo, parent);
-    const worktree = path.join(repo, ".climpire-worktrees", id.slice(0, 8));
-    git("worktree", "add", "-b", "climpire/" + id.slice(0, 8), worktree);
-    fs.writeFileSync(path.join(worktree, "unfinished.txt"), "keep my changes");
-    db.prepare("UPDATE agents SET current_task_id = ? WHERE id = 'owner'").run(id);
-    appendTaskLog(id, "system", "RUN start (agent=Owner, provider=codex)");
-    return worktree;
-  };
-  return {
-    deps,
-    add,
-    git,
-    advance: (ms = 200_000) => {
-      now += ms;
+    notifyCeo: vi.fn(),
+    handleTaskRunComplete: vi.fn(),
+    appendTaskLog: (taskId: string, kind: string, message: string) => {
+      db.prepare("INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?,?,?,?)").run(
+        taskId,
+        kind,
+        message,
+        1_000_000,
+      );
     },
-    logs: (id: string) =>
-      db
-        .prepare("SELECT message FROM task_logs WHERE task_id = ? ORDER BY rowid")
-        .all(id)
-        .map((r: any) => r.message),
+    startTaskExecutionForAgent: vi.fn(
+      (taskId: string, agent: { id: string }, _deptId?: string | null, _deptName?: string, _options?: any) => {
+        db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(taskId);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ? WHERE id = ?").run(taskId, agent.id);
+        db.prepare(
+          "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?, 'system', 'RUN start (recovered)', 1000000)",
+        ).run(taskId);
+        deps.activeProcesses.set(taskId, { pid: -1 });
+      },
+    ),
   };
+  db.prepare(
+    "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?, 'system', 'RUN start (agent=Owner, provider=codex)', 1)",
+  ).run(id);
+  return { db, deps, id, project, worktree, branch, git };
 }
 
-describe("restart-safe run recovery", () => {
+describe("interrupted run recovery", () => {
   it.each([
-    ["root", "in_progress"],
-    ["child", "in_progress"],
-    ["child", "inbox"],
-  ])("requeues an interrupted %s in %s using its retained worktree without failure", (kind, status) => {
-    const { deps, add, advance, logs } = fixture();
-    if (kind === "child") db.exec("INSERT INTO tasks(id,title,status) VALUES ('parent','Directive','collaborating')");
-    const id = kind === "child" ? "child000-task" : "root0000-task";
-    const worktree = add(id, status, kind === "child" ? "parent" : null);
-    advance();
-    recoverOrphanInProgressTasks(deps, "startup");
-    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledExactlyOnceWith(
-      id,
-      expect.objectContaining({ id: "owner" }),
-      null,
-      "Unassigned",
-      expect.objectContaining({ reuseWorktree: true, recoveryNote: expect.stringContaining("interrupted") }),
-    );
-    expect(deps.taskWorktrees.get(id)).toMatchObject({
-      worktreePath: worktree,
-      branchName: "climpire/" + id.slice(0, 8),
-    });
-    expect(fs.readFileSync(path.join(worktree, "unfinished.txt"), "utf8")).toBe("keep my changes");
-    expect(logs(id)).toContain("Recovery (startup): run interrupted by a restart; resuming in " + worktree);
-    expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
-    expect(deps.notifyCeo).not.toHaveBeenCalled();
-    recoverOrphanInProgressTasks(deps, "interval");
-    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
-  });
-
-  it.each(["cancelled", "done", "pending"])("leaves %s tasks alone", (status) => {
-    const { deps, add, advance } = fixture();
-    add("root0000-task", status);
-    advance();
-    recoverOrphanInProgressTasks(deps, "startup");
-    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
-    expect(db.prepare("SELECT status FROM tasks").get()).toEqual({ status });
-  });
-
-  it.each(["PAUSE_BREAK: explicit pause", "STOP sent to pid 123"])(
-    "honors durable control %s even with lost runtime state",
-    (control) => {
-      const { deps, add, advance } = fixture();
-      add();
-      deps.appendTaskLog("root0000-task", "system", control);
-      advance();
+    [false, "in_progress"],
+    [true, "in_progress"],
+    [true, "inbox"],
+    [false, "inbox"],
+  ] as const)(
+    "recovers root/child=%s from %s in its original dirty worktree without a failure notice",
+    (child, status) => {
+      const { db, deps, id, worktree, branch, git } = fixture(child, status);
       recoverOrphanInProgressTasks(deps, "startup");
-      expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+      expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+      expect(deps.startTaskExecutionForAgent.mock.calls[0][4]).toEqual(
+        expect.objectContaining({
+          reuseWorktree: true,
+          recoveryNote: expect.stringContaining("previous changes are kept"),
+        }),
+      );
+      expect(deps.taskWorktrees.get(id)).toMatchObject({ worktreePath: worktree, branchName: branch });
+      expect(fs.readFileSync(path.join(worktree, "unfinished.txt"), "utf8")).toBe("preserve my edits\n");
+      expect(git("branch", "--show-current")).toBe("main");
+      expect(db.prepare("SELECT status FROM tasks WHERE id = ?").get(id)).toEqual({ status: "in_progress" });
       expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
+      expect(deps.notifyCeo).not.toHaveBeenCalled();
+      expect(
+        db
+          .prepare("SELECT 1 FROM task_logs WHERE task_id = ? AND message = ?")
+          .get(id, `Recovery (startup): run interrupted by a restart; resuming in ${worktree}`),
+      ).toBeTruthy();
+      recoverOrphanInProgressTasks(deps, "interval");
+      expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
     },
   );
 
-  it("leaves a stopped runtime task and paused directive children alone", () => {
-    const { deps, add, advance } = fixture();
-    db.exec("INSERT INTO tasks(id,title,status) VALUES ('parent','Directive','pending')");
-    deps.appendTaskLog("parent", "system", "PAUSE_BREAK: explicit pause");
-    add("child000-task", "inbox", "parent");
-    deps.stopRequestedTasks.add("child000-task");
-    advance();
+  it.each(["cancelled", "done", "pending"])("leaves %s tasks untouched", (status) => {
+    const { deps } = fixture(false, status);
     recoverOrphanInProgressTasks(deps, "startup");
-    deps.stopRequestedTasks.clear();
-    recoverOrphanInProgressTasks(deps, "startup");
-    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
-  });
-
-  it("waits durably for a busy owner and resumes a queued child after restart only once", () => {
-    const { deps, add, advance, logs } = fixture();
-    db.exec("INSERT INTO tasks(id,title,status) VALUES ('parent','Directive','collaborating')");
-    add("child000-task", "in_progress", "parent");
-    db.exec("UPDATE agents SET current_task_id = 'other', status = 'working'");
-    advance();
-    recoverOrphanInProgressTasks(deps, "startup");
-    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
-    expect(db.prepare("SELECT current_task_id FROM agents").get()).toEqual({ current_task_id: "other" });
-    expect(logs("child000-task").some((s: string) => s.startsWith("Workflow wait run-owner:"))).toBe(true);
-    vi.clearAllTimers();
-    db.exec("UPDATE agents SET status = 'idle', current_task_id = NULL");
-    const restarted = { ...deps, activeProcesses: new Map(), taskWorktrees: new Map(), stopRequestedTasks: new Set() };
-    sweepQueuedTaskRuns(restarted, "startup");
-    sweepQueuedTaskRuns(restarted, "interval");
-    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
-  });
-
-  it("does not let the ordinary root sweep bypass a queued worktree wait", () => {
-    const { deps, add } = fixture();
-    add();
-    queueTaskRunRecovery(deps, "root0000-task", "Recovery (startup): run interrupted by a restart");
-    db.exec("UPDATE agents SET status = 'working', current_task_id = 'other'");
-    expect(recoverReadyRoot(deps, "root0000-task", "root sweep")).toBe(false);
-    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
-    db.exec("UPDATE agents SET status = 'idle', current_task_id = NULL");
-    resumeTaskExecution(deps, "root0000-task", "lost owner callback");
-    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledWith(
-      "root0000-task",
-      expect.anything(),
-      null,
-      "Unassigned",
-      expect.objectContaining({ reuseWorktree: true }),
-    );
-  });
-
-  it("recovers a child incorrectly sent to Inbox by the old restart watchdog", () => {
-    const { deps, add, advance } = fixture();
-    db.exec("INSERT INTO tasks(id,title,status) VALUES ('parent','Directive','collaborating')");
-    add("child000-task", "inbox", "parent");
-    deps.appendTaskLog(
-      "child000-task",
-      "system",
-      "Recovery (startup): orphan in_progress detected (age_ms=999999) → replaying failed completion",
-    );
-    deps.appendTaskLog("child000-task", "system", "RUN failed (exit code: 1)");
-    advance();
-    recoverOrphanInProgressTasks(deps, "startup");
-    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
-    expect(deps.notifyCeo).not.toHaveBeenCalled();
-    expect(hasAutomaticRunRetry(db, "child000-task")).toBe(false);
-  });
-
-  it("holds recovery while the server shuts down even after stop flags are cleared", () => {
-    const { deps, add, advance } = fixture();
-    add();
-    advance();
-    holdRecoveryDuringShutdown(deps.activeProcesses);
-    deps.stopRequestedTasks.clear();
-    recoverOrphanInProgressTasks(deps, "interval");
     expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
     expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
   });
 
-  it("recovers a retry interrupted between its in_progress claim and RUN start without spending another retry", () => {
-    const { deps, add, advance } = fixture();
-    add();
-    queueTaskRunRecovery(deps, "root0000-task", "Automatic retry after agent process failure", 1);
-    db.exec("UPDATE tasks SET status = 'in_progress'");
-    advance();
+  it.each(["PAUSE_BREAK: explicit pause", "STOP sent to pid 42"])("preserves durable CEO control: %s", (control) => {
+    const { deps, id } = fixture();
+    deps.appendTaskLog(id, "system", control);
     recoverOrphanInProgressTasks(deps, "startup");
-    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+    expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
+  });
+
+  it.each(["cancelled", "done"])("does not resume a child of a %s directive", (status) => {
+    const { deps, db } = fixture(true);
+    db.prepare("UPDATE tasks SET status = ? WHERE id = 'parent'").run(status);
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+  });
+
+  it("blocks recovery while shutting down, even after a late close cleared stop flags", () => {
+    const { deps } = fixture();
+    recoverOrphanInProgressTasks({ ...deps, shuttingDown: true }, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+  });
+
+  it("waits persistently for a missing worktree and prevents the root sweep creating a replacement", () => {
+    vi.useFakeTimers();
+    const { deps, id, project, worktree } = fixture();
+    fs.renameSync(worktree, path.join(project, "retained-elsewhere"));
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
     expect(
-      db.prepare("SELECT COUNT(*) AS count FROM task_logs WHERE message LIKE 'Automatic run retry: 1/1%'").get(),
-    ).toEqual({ count: 1 });
-    expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
+      deps.db.prepare("SELECT message FROM task_logs WHERE message LIKE 'Workflow wait run-worktree:%'").get(),
+    ).toBeTruthy();
+    expect(recoverReadyRoot(deps, id, "root sweep")).toBe(false);
   });
 
-  it("never duplicates a live detached process after losing runtime handles", () => {
-    const { deps, add, advance } = fixture();
-    add();
-    deps.appendTaskLog("root0000-task", "system", "Run process: pid=123");
-    deps.isPidAlive.mockReturnValue(true);
-    advance();
+  it("preserves an in-memory stop request and a live detached process", () => {
+    const { deps, id } = fixture();
+    deps.stopRequestedTasks.add(id);
     recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+    deps.stopRequestedTasks.clear();
+    deps.appendTaskLog(id, "system", "Run process pid: 42");
+    deps.isPidAlive.mockReturnValue(true);
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.isPidAlive).toHaveBeenCalledWith(42);
     expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
   });
 
-  it("persists one real failure retry across restart, then sends the second failure to Inbox", () => {
-    const { deps, add, advance, logs } = fixture(true);
-    const worktree = add();
-    advance();
-    const completionDeps = {
-      ...deps,
-      codexThreadToSubtask: new Map(),
-      processSubtaskDelegations: vi.fn(),
-      cleanupWorktree: vi.fn(),
-      findTeamLeader: () => null,
-      l: (_ko: string[], en: string[]) => en,
-      pickL: (pool: string[]) => pool[0],
-      sendAgentMessage: vi.fn(),
-      reconcileDelegatedSubtasksAfterRun: vi.fn(),
-      crossDeptNextCallbacks: new Map(),
-      subtaskDelegationCallbacks: new Map(),
-      prettyStreamJson: (s: string) => s,
-    };
-    createRunCompleteHandler(completionDeps).handleTaskRunComplete("root0000-task", 1);
-    expect(db.prepare("SELECT status FROM tasks").get()).toEqual({ status: "planned" });
-    expect(hasAutomaticRunRetry(db, "root0000-task")).toBe(true);
-    expect(completionDeps.cleanupWorktree).not.toHaveBeenCalled();
-    expect(deps.notifyCeo).not.toHaveBeenCalled();
-    vi.clearAllTimers(); // Restart before the dispatch callback, reopening persisted state.
-    db.close();
-    db = new DatabaseSync(path.join(repo, "recovery.sqlite"));
-    expect(hasAutomaticRunRetry(db, "root0000-task")).toBe(true);
+  it("recovers a known dead process immediately at startup even when output was recent", () => {
+    const { deps, id } = fixture();
+    deps.appendTaskLog(id, "system", "Run process pid: 42");
+    fs.writeFileSync(path.join(deps.logsDir, `${id}.log`), "recent output");
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+  });
+
+  it("waits visibly for a busy child owner across restart, then starts only once", () => {
+    vi.useFakeTimers();
+    const { db, deps, id } = fixture(true);
+    db.exec("UPDATE agents SET current_task_id = 'another-task', status = 'working'");
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT status FROM tasks WHERE id = ?").get(id)).toEqual({ status: "planned" });
+    expect(
+      db.prepare("SELECT message FROM task_logs WHERE message LIKE 'Workflow wait root-owner:%'").get(),
+    ).toMatchObject({ message: expect.stringContaining("another-task") });
+    vi.clearAllTimers();
     const restarted = {
-      ...completionDeps,
-      db,
+      ...deps,
+      db: new DatabaseSync(path.join(deps.logsDir, "fixture.sqlite")),
       activeProcesses: new Map(),
       taskWorktrees: new Map(),
-      taskExecutionSessions: new Map(),
     };
-    sweepQueuedTaskRuns(restarted, "startup");
+    databases.push(restarted.db);
+    sweepQueuedRunRecoveries(restarted);
+    expect(db.prepare("SELECT status, current_task_id FROM agents WHERE id = 'owner'").get()).toEqual({
+      status: "working",
+      current_task_id: "another-task",
+    });
+    db.exec("UPDATE agents SET current_task_id = NULL, status = 'idle'");
+    vi.advanceTimersByTime(5_000);
     expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
-    expect(restarted.taskWorktrees.get("root0000-task").worktreePath).toBe(worktree);
-    createRunCompleteHandler(restarted).handleTaskRunComplete("root0000-task", 2);
-    expect(db.prepare("SELECT status FROM tasks").get()).toEqual({ status: "inbox" });
-    expect(logs("root0000-task").filter((s: string) => s.startsWith("Automatic run retry: 1/1"))).toHaveLength(1);
-    expect(deps.notifyCeo).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining("one automatic retry"),
-      "root0000-task",
-    );
-    sweepQueuedTaskRuns(restarted, "startup");
+    sweepQueuedRunRecoveries(restarted);
     expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
   });
 
-  it("restores the application session identity from its durable record", () => {
-    const { deps, add } = fixture();
-    add();
-    const sessions = new Map();
-    const tools = (map: Map<string, any>) =>
-      createSessionReviewTools({ ...deps, taskExecutionSessions: map, randomUUID: () => "app-session-id" });
-    const first = tools(sessions).ensureTaskExecutionSession("root0000-task", "owner", "codex");
-    const after = tools(new Map()).ensureTaskExecutionSession("root0000-task", "owner", "codex");
-    expect(after.sessionId).toBe(first.sessionId);
-    const closed = tools(new Map());
-    closed.endTaskExecutionSession("root0000-task", "done");
-    expect(logsSession()).toContain("Execution session closed:");
-    function logsSession() {
-      return String((db.prepare("SELECT message FROM task_logs ORDER BY rowid DESC LIMIT 1").get() as any).message);
-    }
+  it("resumes a retry reserved just before restart without consuming another retry", () => {
+    const { deps, id } = fixture(true);
+    deps.appendTaskLog(id, "system", "RUN failed (exit code: 1)");
+    deps.appendTaskLog(id, "system", "Run automatic retry: 1/1 (exit code: 1); worktree preserved");
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
+  });
+
+  it("waits for another in-progress assignment even if its agent status is stale idle", () => {
+    vi.useFakeTimers();
+    const { deps, db } = fixture();
+    db.exec(
+      "INSERT INTO tasks(id,title,status,assigned_agent_id) VALUES ('other','Other','in_progress','owner'); UPDATE agents SET status = 'idle', current_task_id = NULL",
+    );
+    deps.activeProcesses.set("other", { pid: -1 });
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+  });
+
+  it("keeps strict worktree/session reuse if the ordinary root sweep wins an owner-wait race", () => {
+    vi.useFakeTimers();
+    const { db, deps, id } = fixture();
+    db.exec("UPDATE agents SET current_task_id = 'another-task', status = 'working'");
+    recoverOrphanInProgressTasks(deps, "startup");
+    db.exec("UPDATE agents SET current_task_id = NULL, status = 'idle'");
+    expect(recoverReadyRoot(deps, id, "root sweep")).toBe(true);
+    expect(deps.startTaskExecutionForAgent.mock.calls[0][4]).toMatchObject({ reuseWorktree: true });
+    vi.advanceTimersByTime(5_000);
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+  });
+
+  it("replays recorded completions but does not requeue a real failure in Inbox", () => {
+    const { deps, id, db } = fixture();
+    db.prepare(
+      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?, 'system', 'RUN completed (exit code: 0)', 2)",
+    ).run(id);
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.handleTaskRunComplete).toHaveBeenCalledExactlyOnceWith(id, 0);
+    db.prepare("UPDATE tasks SET status = 'inbox' WHERE id = ?").run(id);
+    deps.appendTaskLog(id, "system", "RUN failed (exit code: 1)");
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("recovers legacy synthetic restart failures in Inbox (child=%s)", (child) => {
+    const { deps, db, id } = fixture(child, "inbox");
+    db.prepare(
+      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?, 'system', 'Recovery (startup): orphan in_progress detected (age_ms=120000) → replaying failed completion', 2)",
+    ).run(id);
+    db.prepare(
+      "INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?, 'system', 'RUN failed (exit code: 1)', 3)",
+    ).run(id);
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
+    expect(deps.notifyCeo).not.toHaveBeenCalled();
+    expect(deps.handleTaskRunComplete).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake an old replay of a recorded real failure for an interruption", () => {
+    const { deps, db, id } = fixture(true, "inbox");
+    for (const message of [
+      "RUN failed (exit code: 2)",
+      "Recovery (startup): orphan in_progress detected (age_ms=120000) → replaying failed completion",
+      "RUN failed (exit code: 1)",
+    ])
+      db.prepare("INSERT INTO task_logs(task_id,kind,message,created_at) VALUES (?, 'system', ?, 2)").run(id, message);
+    recoverOrphanInProgressTasks(deps, "startup");
+    expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
   });
 });

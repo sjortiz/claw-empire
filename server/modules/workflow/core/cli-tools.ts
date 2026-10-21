@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { normalizeClaudeEffort } from "./reasoning-effort.ts";
+import { isNativeSessionId } from "./execution-session.ts";
 
 export type CliOutputStream = "stdout" | "stderr";
 
@@ -53,6 +54,7 @@ export function createCliTools(deps: CreateCliToolsDeps) {
     opts: { noTools?: boolean; resumeSessionId?: string } = {},
   ): string[] {
     const { noTools = false } = opts;
+    const resumeSessionId = isNativeSessionId(opts.resumeSessionId) ? opts.resumeSessionId : undefined;
     switch (provider) {
       case "codex": {
         const args = ["codex"];
@@ -60,10 +62,13 @@ export function createCliTools(deps: CreateCliToolsDeps) {
         if (model) args.push("-m", model);
         if (reasoningLevel) args.push("-c", `model_reasoning_effort="${reasoningLevel}"`);
         if (!noTools) args.push("--yolo");
-        args.push("exec");
-        if (opts.resumeSessionId) args.push("resume", opts.resumeSessionId);
-        args.push("--json");
-        if (noTools) args.push("--sandbox", "read-only");
+        if (resumeSessionId) {
+          if (noTools) args.push("--sandbox", "read-only");
+          args.push("exec", "resume", "--json", resumeSessionId, "-");
+        } else {
+          args.push("exec", "--json");
+          if (noTools) args.push("--sandbox", "read-only");
+        }
         return args;
       }
       case "claude": {
@@ -78,17 +83,17 @@ export function createCliTools(deps: CreateCliToolsDeps) {
           "200",
         ];
         if (model) args.push("--model", model);
+        if (resumeSessionId) args.push("--resume", resumeSessionId);
         const effort = normalizeClaudeEffort(reasoningLevel);
         if (effort) args.push("--effort", effort);
-        if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
         // Keep no-tools as a single argv token so empty value is preserved across shells.
         if (noTools) args.push("--tools=");
         return args;
       }
       case "gemini": {
         const args = ["gemini"];
-        if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
         if (model) args.push("-m", model);
+        if (resumeSessionId) args.push("--resume", resumeSessionId);
         if (noTools) {
           args.push("--approval-mode", "plan", "--output-format=stream-json");
         } else {
@@ -98,15 +103,15 @@ export function createCliTools(deps: CreateCliToolsDeps) {
       }
       case "kimi": {
         const args = ["kimi", "--print", "--output-format=stream-json"];
-        if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
         if (model) args.push("-m", model);
+        if (resumeSessionId) args.push("--session", resumeSessionId);
         return args;
       }
       case "opencode": {
         const args = ["opencode", "run"];
-        if (opts.resumeSessionId) args.push("--session", opts.resumeSessionId);
         if (model) args.push("-m", model);
         args.push("--format", "json");
+        if (resumeSessionId) args.push("--session", resumeSessionId);
         return args;
       }
       case "copilot":
