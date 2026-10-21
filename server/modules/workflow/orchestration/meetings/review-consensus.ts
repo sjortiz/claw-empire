@@ -1,5 +1,9 @@
-import { effectiveMeetingVerdict } from "../../../../../shared/meeting-verdict.ts";
-import { resolveMeetingVerdict, type ResolvedMeetingVerdict } from "../../core/meeting-verdict.ts";
+import { resolveMeetingVerdict } from "../../meeting-verdict.ts";
+import {
+  formatMeetingVerdict,
+  parseStoredMeetingVerdict,
+  stripMeetingVerdict,
+} from "../../../../../src/lib/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import { processReviewConsensusOutcome } from "./review-consensus-outcome.ts";
 
@@ -87,7 +91,16 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           )
           .get(taskId) as { id: string; round: number; status: string } | undefined;
         const resumeMeeting = latestMeeting?.status === "in_progress";
-        const round = resumeMeeting ? (latestMeeting?.round ?? 1) : (latestMeeting?.round ?? 0) + 1;
+        // Clarification is not a remediation round and must not consume the round budget.
+        const retryMissingVerdict =
+          latestMeeting?.status === "failed" &&
+          (
+            db.prepare("SELECT content FROM meeting_minute_entries WHERE meeting_id = ?").all(latestMeeting.id) as {
+              content: string;
+            }[]
+          ).some((entry) => parseStoredMeetingVerdict(entry.content)?.verdict === "no_verdict");
+        const round =
+          resumeMeeting || retryMissingVerdict ? (latestMeeting?.round ?? 1) : (latestMeeting?.round ?? 0) + 1;
         reviewRoundState.set(taskId, round);
         if (!resumeMeeting && round > REVIEW_MAX_ROUNDS) {
           const cappedLang = resolveLang(taskTitle);
@@ -149,22 +162,26 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
         const transcript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true, rawOutput: true };
-        const resolvedVerdicts = new Map<string, ResolvedMeetingVerdict>();
-        const nonBlockingNotes = new Set<string>();
-        const resolveReviewer = async (leader: any, run: any, phase: "feedback" | "approval") => {
-          const text = String(run?.text ?? "").trim() || chooseSafeReply(run, lang, phase, leader);
+        const reviewReply = async (
+          run: any,
+          leader: any,
+          phase: "opening" | "feedback" | "summary" | "approval",
+        ): Promise<string> => {
           const resolved = await resolveMeetingVerdict({
-            text,
+            text: String(run?.text ?? ""),
             lang,
+            reviewer: leader.id,
+            phase: `review ${phase}`,
             retry: (prompt) => runAgentOneShot(leader, prompt, oneShotOptions),
-            fallback: wantsReviewRevision,
-            log: (message) =>
-              appendTaskLog(taskId, "system", `Review round ${round} reviewer ${leader.id} ${phase}: ${message}`),
+            log: (message) => appendTaskLog(taskId, "system", message),
           });
-          for (const note of resolved.verdict.non_blocking_notes)
-            nonBlockingNotes.add(`${getAgentDisplayName(leader, lang)}: ${note}`);
-          resolvedVerdicts.set(leader.id, resolved);
-          return resolved;
+          const prose = chooseSafeReply(
+            { ...run, text: stripMeetingVerdict(String(run?.text ?? "")) },
+            lang,
+            phase,
+            leader,
+          );
+          return `${prose}\n\n${formatMeetingVerdict(resolved.verdict)}`;
         };
         const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
           const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
@@ -346,7 +363,8 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
         });
         const openingRun = await runMeetingOneShotWithRetry(planningLeader, openingPrompt, "opening");
         if (abortIfInactive()) return;
-        const openingText = chooseSafeReply(openingRun, lang, "opening", planningLeader);
+        const openingText = await reviewReply(openingRun, planningLeader, "opening");
+        if (abortIfInactive()) return;
         speak(planningLeader, "chat", "all", null, openingText);
         await sleepMs(randomDelay(720, 1300));
         if (abortIfInactive()) return;
@@ -355,6 +373,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           if (abortIfInactive()) return;
           const feedbackPrompt = buildMeetingPrompt(leader, {
             meetingType: "review",
+            verdictRequired: true,
             round,
             taskTitle,
             taskDescription,
@@ -374,11 +393,10 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           });
           const feedbackRun = await runMeetingOneShotWithRetry(leader, feedbackPrompt, "feedback");
           if (abortIfInactive()) return;
-          const feedbackVerdict = await resolveReviewer(leader, feedbackRun, "feedback");
+          const feedbackText = await reviewReply(feedbackRun, leader, "feedback");
           if (abortIfInactive()) return;
-          const feedbackText = feedbackVerdict.content;
           speak(leader, "chat", "agent", planningLeader.id, feedbackText);
-          if (effectiveMeetingVerdict(feedbackVerdict.verdict) === "revise") {
+          if (wantsReviewRevision(feedbackText)) {
             needsRevision = true;
             if (!reviseOwner) reviseOwner = leader;
           }
@@ -390,6 +408,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           if (abortIfInactive()) return;
           const soloPrompt = buildMeetingPrompt(planningLeader, {
             meetingType: "review",
+            verdictRequired: true,
             round,
             taskTitle,
             taskDescription,
@@ -407,13 +426,8 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           });
           const soloRun = await runMeetingOneShotWithRetry(planningLeader, soloPrompt, "feedback");
           if (abortIfInactive()) return;
-          const soloVerdict = await resolveReviewer(planningLeader, soloRun, "feedback");
+          const soloText = await reviewReply(soloRun, planningLeader, "feedback");
           if (abortIfInactive()) return;
-          const soloText = soloVerdict.content;
-          if (effectiveMeetingVerdict(soloVerdict.verdict) === "revise") {
-            needsRevision = true;
-            reviseOwner = planningLeader;
-          }
           speak(planningLeader, "chat", "all", null, soloText);
           await sleepMs(randomDelay(620, 980));
           if (abortIfInactive()) return;
@@ -444,7 +458,8 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
         if (abortIfInactive()) return;
-        const summaryText = chooseSafeReply(summaryRun, lang, "summary", planningLeader);
+        const summaryText = await reviewReply(summaryRun, planningLeader, "summary");
+        if (abortIfInactive()) return;
         speak(planningLeader, "report", "all", null, summaryText);
         await sleepMs(randomDelay(680, 1120));
         if (abortIfInactive()) return;
@@ -454,6 +469,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           const isReviseOwner = reviseOwner?.id === leader.id;
           const approvalPrompt = buildMeetingPrompt(leader, {
             meetingType: "review",
+            verdictRequired: true,
             round,
             taskTitle,
             taskDescription,
@@ -477,11 +493,10 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           });
           const approvalRun = await runMeetingOneShotWithRetry(leader, approvalPrompt, "approval");
           if (abortIfInactive()) return;
-          const approvalVerdict = await resolveReviewer(leader, approvalRun, "approval");
+          const approvalText = await reviewReply(approvalRun, leader, "approval");
           if (abortIfInactive()) return;
-          const approvalText = approvalVerdict.content;
           speak(leader, "status_update", "all", null, approvalText);
-          if (effectiveMeetingVerdict(approvalVerdict.verdict) === "revise") {
+          if (wantsReviewRevision(approvalText)) {
             needsRevision = true;
             if (!reviseOwner) reviseOwner = leader;
           }
@@ -505,8 +520,6 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           onApproved,
           abortIfInactive,
           meetingReviewDecisionByAgent,
-          resolvedVerdicts,
-          nonBlockingNotes: [...nonBlockingNotes],
           findLatestTranscriptContentByAgent,
           isDeferrableReviewHold,
           summarizeForMeetingBubble,

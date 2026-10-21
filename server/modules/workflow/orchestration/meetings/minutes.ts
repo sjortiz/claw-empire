@@ -1,3 +1,4 @@
+import { parseStoredMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../../src/lib/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import { randomUUID } from "node:crypto";
 
@@ -186,14 +187,12 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
     const out: string[] = [];
     const seen = new Set<string>();
     const perDept = new Map<string, number>();
-    const isIssue = (text: string) =>
-      /보완|보류|리스크|미첨부|미구축|미완료|불가|부족|0%|hold|revise|revision|required|pending|risk|block|missing|not attached|incomplete|保留|修正|补充|未完成|未附|风险/i.test(
-        text,
-      );
 
     for (const row of transcript) {
-      const base = row.content.replace(/\s+/g, " ").trim();
-      if (!base || !isIssue(base)) continue;
+      const verdict = parseStoredMeetingVerdict(row.content);
+      if (!verdict || !meetingVerdictNeedsRevision(verdict)) continue;
+      const base = verdict.blocking_items.join("; ").replace(/\s+/g, " ").trim();
+      if (!base) continue;
       const deptKey = row.department.replace(/\s+/g, " ").trim().toLowerCase() || "unknown";
       const deptCount = perDept.get(deptKey) ?? 0;
       if (deptCount >= maxPerDepartment) continue;
@@ -215,6 +214,9 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
     const out: string[] = [];
     const seen = new Set<string>();
     for (const row of transcript) {
+      // Structured reviewer prose and informational notes are never fallback work items.
+      const verdict = parseStoredMeetingVerdict(row.content);
+      if (verdict) continue;
       const base = row.content.replace(/\s+/g, " ").trim();
       if (!base || base.length < 8) continue;
       const note = `${row.department} ${row.speaker}: ${base}`;
@@ -233,7 +235,7 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
     round: number,
     notes: string[],
     lang: string,
-    noteKind: "action" | "non_blocking" = "action",
+    kind: "blocking" | "non_blocking" = "blocking",
   ): void {
     const current = db.prepare("SELECT description, title FROM tasks WHERE id = ?").get(taskId) as
       | {
@@ -245,14 +247,24 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
 
     const stamp = new Date().toISOString().replace("T", " ").slice(0, 16);
     const phaseLabel = phase === "planned" ? "Planned Kickoff" : "Review";
-    const header =
+    const noteLabel =
       lang === "en"
-        ? `[PROJECT MEMO] ${phaseLabel} round ${round} unresolved improvement items (${stamp})`
+        ? "nonblocking notes (informational only; no work items)"
         : lang === "ja"
-          ? `[PROJECT MEMO] ${phaseLabel} ラウンド ${round} 未解決の補完項目 (${stamp})`
+          ? "非阻害メモ（参考情報のみ・作業化しない）"
           : lang === "zh"
-            ? `[PROJECT MEMO] ${phaseLabel} 第 ${round} 轮未解决改进项 (${stamp})`
-            : `[PROJECT MEMO] ${phaseLabel} 라운드 ${round} 미해결 보완 항목 (${stamp})`;
+            ? "非阻塞备注（仅供参考，不转为工作）"
+            : "비차단 참고 사항 (정보 기록만, 작업 생성 없음)";
+    const header =
+      kind === "non_blocking"
+        ? `[PROJECT MEMO] ${phaseLabel} round ${round} ${noteLabel} (${stamp})`
+        : lang === "en"
+          ? `[PROJECT MEMO] ${phaseLabel} round ${round} unresolved improvement items (${stamp})`
+          : lang === "ja"
+            ? `[PROJECT MEMO] ${phaseLabel} ラウンド ${round} 未解決の補完項目 (${stamp})`
+            : lang === "zh"
+              ? `[PROJECT MEMO] ${phaseLabel} 第 ${round} 轮未解决改进项 (${stamp})`
+              : `[PROJECT MEMO] ${phaseLabel} 라운드 ${round} 미해결 보완 항목 (${stamp})`;
     const fallbackLine =
       lang === "en"
         ? "- No explicit issue line captured; follow-up verification is still required."
@@ -261,18 +273,9 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
           : lang === "zh"
             ? "- 未捕获到明确问题行，但后续验证仍需继续。"
             : "- 명시적 이슈 문장을 추출하지 못했지만 후속 검증은 계속 필요합니다.";
-    const noteHeader =
-      noteKind === "non_blocking"
-        ? ({
-            en: `[PROJECT MEMO] ${phaseLabel} round ${round} non-blocking notes (documentation only; no work items) (${stamp})`,
-            ko: `[PROJECT MEMO] ${phaseLabel} 라운드 ${round} 비차단 메모 (문서 기록 전용, 작업 생성 금지) (${stamp})`,
-            ja: `[PROJECT MEMO] ${phaseLabel} ラウンド ${round} 非ブロック注記（記録のみ、作業項目にしない）(${stamp})`,
-            zh: `[PROJECT MEMO] ${phaseLabel} 第 ${round} 轮非阻塞备注（仅记录，不转为工作项）(${stamp})`,
-          }[lang] ?? header)
-        : header;
     const body = notes.length > 0 ? notes.map((note) => `- ${note}`).join("\n") : fallbackLine;
 
-    const block = `${noteHeader}\n${body}`;
+    const block = `${header}\n${body}`;
     const existing = current.description ?? "";
     const next = existing ? `${existing}\n\n${block}` : block;
     const trimmed = next.length > 18_000 ? next.slice(next.length - 18_000) : next;

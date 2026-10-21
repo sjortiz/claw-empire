@@ -1,5 +1,6 @@
-import { effectiveMeetingVerdict } from "../../../../shared/meeting-verdict.ts";
-import { resolveMeetingVerdict, type ResolvedMeetingVerdict } from "../core/meeting-verdict.ts";
+import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
+import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
+import type { MeetingReviewDecision } from "../core/conversation-types.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
@@ -34,6 +35,7 @@ type CreatePlannedApprovalToolsDeps = {
   collectPlannedActionItems: (...args: any[]) => any[];
   appendTaskProjectMemo: (...args: any[]) => any;
   appendTaskLog: (...args: any[]) => any;
+  classifyMeetingReviewDecision: (text: string) => MeetingReviewDecision;
   reviewMeetingOneShotTimeoutMs?: number;
 };
 
@@ -67,6 +69,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     collectPlannedActionItems,
     appendTaskProjectMemo,
     appendTaskLog,
+    classifyMeetingReviewDecision,
     reviewMeetingOneShotTimeoutMs,
   } = deps;
 
@@ -95,6 +98,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         reviewRoundState.set(lockKey, round);
 
         let hasSupplementSignals = false;
+        let hasMissingVerdicts = false;
         const seatIndexByAgent = new Map(leaders.slice(0, 6).map((leader: any, idx: number) => [leader.id, idx]));
 
         const taskCtx = db
@@ -125,30 +129,10 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         });
         const lang = resolveLang(taskDescription ?? taskTitle);
         const transcript: any[] = [];
+        const informationalNotes: string[] = [];
+        const workTranscript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
-        const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true, rawOutput: true };
-        const resolvedVerdicts = new Map<object, ResolvedMeetingVerdict>();
-        const nonBlockingNotes = new Set<string>();
-        const nonBlockingNoteTexts = new Set<string>();
-        const wantsRevision = (content: string): boolean =>
-          /보완|수정|보류|리스크|추가.?필요|hold|revise|revision|required|pending|risk|block|保留|修正|补充|暂缓/i.test(
-            content,
-          );
-        const resolveReviewer = async (leader: any, text: string) => {
-          const resolved = await resolveMeetingVerdict({
-            text,
-            lang,
-            retry: (prompt) => runAgentOneShot(leader, prompt, oneShotOptions),
-            fallback: wantsRevision,
-            log: (message) =>
-              appendTaskLog(taskId, "system", `Planned round ${round} reviewer ${leader.id}: ${message}`),
-          });
-          for (const note of resolved.verdict.non_blocking_notes) {
-            nonBlockingNotes.add(`${getAgentDisplayName(leader, lang)}: ${note}`);
-            nonBlockingNoteTexts.add(note);
-          }
-          return resolved;
-        };
+        const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };
         const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
           const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
           return /timeout after|timed out|request timed out|aborted/i.test(source);
@@ -197,16 +181,14 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           return true;
         };
 
-        const pushTranscript = (leader: any, content: string, resolved?: ResolvedMeetingVerdict) => {
-          const entry = {
+        const pushTranscript = (leader: any, content: string) => {
+          transcript.push({
             speaker_agent_id: leader.id,
             speaker: getAgentDisplayName(leader, lang),
             department: getDeptName(leader.department_id ?? "", taskWorkflowPackKey),
             role: getRoleLabel(leader.role, lang),
             content,
-          };
-          transcript.push(entry);
-          if (resolved) resolvedVerdicts.set(entry, resolved);
+          });
         };
         const speak = (
           leader: any,
@@ -215,13 +197,12 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           receiverId: string | null,
           content: string,
           planningContent = content,
-          resolved?: ResolvedMeetingVerdict,
         ) => {
           if (isTaskWorkflowInterrupted(taskId)) return;
           sendAgentMessage(leader, content, messageType, receiverType, receiverId, taskId);
           const seatIndex = seatIndexByAgent.get(leader.id) ?? 0;
           emitMeetingSpeech(leader.id, seatIndex, "kickoff", taskId, content, lang);
-          pushTranscript(leader, planningContent, resolved);
+          pushTranscript(leader, planningContent);
           if (meetingId) {
             appendMeetingMinuteEntry(meetingId, minuteSeq++, leader, lang, messageType, content, taskWorkflowPackKey);
           }
@@ -257,6 +238,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             const draftPrompt = buildMeetingPrompt(leader, {
               meetingType: "planned",
               planningPhase: "draft",
+              verdictRequired: true,
               round,
               taskTitle,
               taskDescription,
@@ -269,11 +251,25 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               lang,
             });
             const run = await runMeetingOneShotWithRetry(leader, draftPrompt, "feedback");
-            if (run?.error || isTimeoutRun(run)) {
+            if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
               throw new Error(run?.error || "Department planning draft did not complete");
             }
-            const resolved = await resolveReviewer(leader, String(run?.text ?? "").trim());
-            return { leader, text: resolved.content, displayText: resolved.content, resolved };
+            const resolved = await resolveMeetingVerdict({
+              text: String(run.text),
+              lang,
+              reviewer: leader.id,
+              phase: "planned draft",
+              retry: (prompt) => runAgentOneShot(leader, prompt, { ...oneShotOptions, rawOutput: true }),
+              log: (message) => appendTaskLog(taskId, "system", message),
+            });
+            const workText = planningWorkFromVerdict(String(run.text), resolved.verdict);
+            return {
+              leader,
+              verdict: resolved.verdict,
+              workText,
+              text: `${workText}\n\n${formatMeetingVerdict({ ...resolved.verdict, non_blocking_notes: [] })}`,
+              displayText: `${chooseSafeReply({ ...run, text: stripMeetingVerdict(String(run.text)) }, lang, "feedback", leader)}\n\n${formatMeetingVerdict(resolved.verdict)}`,
+            };
           }),
         );
         if (abortIfInactive()) return;
@@ -286,21 +282,35 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             planningLeader.id,
             draft.value.displayText,
             draft.value.text,
-            draft.value.resolved,
           );
-          if (effectiveMeetingVerdict(draft.value.resolved.verdict) === "revise") hasSupplementSignals = true;
+          workTranscript.push({
+            speaker_agent_id: draft.value.leader.id,
+            speaker: getAgentDisplayName(draft.value.leader, lang),
+            department: getDeptName(draft.value.leader.department_id ?? "", taskWorkflowPackKey),
+            role: getRoleLabel(draft.value.leader.role, lang),
+            content: draft.value.workText,
+          });
+          if (draft.value.verdict.verdict === "no_verdict") hasMissingVerdicts = true;
+          if (classifyMeetingReviewDecision(draft.value.text) === "hold") hasSupplementSignals = true;
+          informationalNotes.push(
+            ...draft.value.verdict.non_blocking_notes.map(
+              (note) => `${getAgentDisplayName(draft.value.leader, lang)}: ${note}`,
+            ),
+          );
         }
 
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
           meetingType: "planned",
           planningPhase: "consolidation",
+          verdictRequired: true,
           round,
           taskTitle,
           taskDescription,
           workflowPackKey: taskWorkflowPackKey,
           transcript,
-          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a preceding JSON fenced block before the final verdict block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
-          stanceHint: "Keep kickoff moving and show concrete planned next steps instead of blocking.",
+          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a JSON fenced plan block before the verdict metadata block and final APPROVE/REVISE line: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
+          stanceHint:
+            "Keep kickoff moving and show concrete planned next steps. Nonblocking reviewer notes are informational only; never turn them into plan_items or remediation work.",
           lang,
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
@@ -309,39 +319,49 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
         const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
-        const summaryVerdict = await resolveReviewer(planningLeader, String(summaryRun?.text ?? ""));
-        if (abortIfInactive()) return;
-        speak(planningLeader, "report", "all", null, summaryVerdict.content, summaryVerdict.content, summaryVerdict);
-        if (nonBlockingNotes.size > 0)
-          appendTaskProjectMemo(taskId, "planned", round, [...nonBlockingNotes], lang, "non_blocking");
-        // Keep approved planning prose when consolidation has no usable graph, but
-        // exclude verdict metadata and notes echoed by any participant from work.
-        // Explicit executable plan_items remain the primary plan, independently of approval.
-        const actionTranscript = transcript.flatMap((entry) => {
-          const resolved = resolvedVerdicts.get(entry);
-          if (!resolved) return [entry];
-          if (resolved.source === "fallback") return [{ ...entry, content: resolved.originalText }];
-          if (effectiveMeetingVerdict(resolved.verdict) === "revise")
-            return resolved.verdict.blocking_items.map((content) => ({ ...entry, content }));
-          const isVerdictMetadata = (text: string) => /"(?:verdict|blocking_items|non_blocking_notes)"\s*:/.test(text);
-          let content = resolved.originalText.replace(/```(?:json)?\s*\n([\s\S]*?)\n```/gi, (block, body) =>
-            isVerdictMetadata(body) ? "" : block,
-          );
-          if (/^\s*\{[\s\S]*\}\s*$/.test(content) && isVerdictMetadata(content)) content = "";
-          for (const note of nonBlockingNoteTexts) content = content.split(note).join("");
-          content = content.trim();
-          return content ? [{ ...entry, content }] : [];
+        const summaryVerdict = await resolveMeetingVerdict({
+          text: String(summaryRun?.text ?? ""),
+          lang,
+          reviewer: planningLeader.id,
+          phase: "planned consolidation",
+          retry: (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+          log: (message) => appendTaskLog(taskId, "system", message),
         });
+        if (abortIfInactive()) return;
+        informationalNotes.push(
+          ...summaryVerdict.verdict.non_blocking_notes.map(
+            (note) => `${getAgentDisplayName(planningLeader, lang)}: ${note}`,
+          ),
+        );
+        if (classifyMeetingReviewDecision(formatMeetingVerdict(summaryVerdict.verdict)) === "hold")
+          hasSupplementSignals = true;
+        const summaryText = `${chooseSafeReply({ ...summaryRun, text: stripMeetingVerdict(String(summaryRun?.text ?? "")) }, lang, "summary", planningLeader)}\n\n${formatMeetingVerdict(summaryVerdict.verdict)}`;
+        speak(planningLeader, "report", "all", null, summaryText);
+        if (hasMissingVerdicts || summaryVerdict.verdict.verdict === "no_verdict") {
+          if (informationalNotes.length)
+            appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
+          appendTaskLog(taskId, "system", `Planned meeting round ${round}: no verdict; clarification required`);
+          notifyCeo(`[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)}`, taskId);
+          if (meetingId) finishMeetingMinutes(meetingId, "failed");
+          dismissLeadersFromCeoOffice(taskId, leaders);
+          reviewRoundState.delete(lockKey);
+          reviewInFlight.delete(lockKey);
+          return;
+        }
+        // Only stripped department drafts feed fallback work. Consolidation repeats
+        // those drafts, and verdict notes are informational rather than executable.
         const planItems = graph
           ? [JSON.stringify({ plan_items: graph })]
-          : collectPlannedActionItems(actionTranscript, 10);
+          : collectPlannedActionItems(workTranscript, 10);
         const memoItems = graph
           ? graph.map(
               (item) =>
                 `${item.department_id}: ${item.title}${item.depends_on.length ? ` (depends on: ${item.depends_on.join(", ")})` : ""}`,
             )
           : planItems;
-        appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
+        if (memoItems.length) appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
+        if (informationalNotes.length)
+          appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
         appendTaskLog(
           taskId,
           "system",

@@ -1,10 +1,11 @@
+import MeetingVerdictView, { MeetingVerdictBadge } from "./MeetingVerdictView";
+import { parseStoredMeetingVerdict, meetingVerdictNeedsRevision, stripMeetingVerdict } from "../lib/meeting-verdict";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Agent, Task, MeetingMinute } from "../types";
 import * as api from "../api";
 import type { TerminalProgressHint, TerminalProgressHintsPayload } from "../api";
 import AgentAvatar from "./AgentAvatar";
 import TaskBranchReview from "./taskboard/TaskBranchReview";
-import MeetingVerdictSummary from "./terminal-panel/MeetingVerdictSummary";
 import { useI18n } from "../i18n";
 import {
   INTERVENTION_PROMPT_MAX_LENGTH,
@@ -14,6 +15,30 @@ import {
   type TaskLogEntry,
   type TerminalPanelProps,
 } from "./terminal-panel/model";
+
+function MeetingVerdictCounts({ meeting }: { meeting: MeetingMinute }) {
+  const { t } = useI18n();
+  // Count each leader's last statement once, never their intermediate feedback.
+  const latest = new Map<string, ReturnType<typeof parseStoredMeetingVerdict>>();
+  for (const entry of meeting.entries)
+    latest.set(entry.speaker_agent_id ?? entry.speaker_name, parseStoredMeetingVerdict(entry.content));
+  let approved = 0,
+    revised = 0,
+    missing = 0;
+  for (const verdict of latest.values()) {
+    if (verdict?.verdict === "no_verdict") missing++;
+    else if (!verdict) continue;
+    else if (meetingVerdictNeedsRevision(verdict)) revised++;
+    else approved++;
+  }
+  return (
+    <span className="text-[10px]" style={{ color: "var(--th-text-secondary)" }}>
+      APPROVE {approved} · REVISE {revised}
+      {missing > 0 &&
+        ` · ${missing} ${t({ ko: "판정 확인 대기", en: "awaiting clarification", ja: "判定確認待ち", zh: "等待确认判定" })}`}
+    </span>
+  );
+}
 
 export default function TerminalPanel({
   taskId,
@@ -738,35 +763,42 @@ export default function TerminalPanel({
                   >
                     {meetingStatusLabel(meeting.status)}
                   </span>
+                  <MeetingVerdictCounts meeting={meeting} />
                   <span className="ml-auto text-[10px]" style={{ color: "var(--th-text-muted)" }}>
                     {new Date(meeting.started_at).toLocaleString(locale)}
                   </span>
                 </div>
                 <div className="space-y-1.5">
-                  {meeting.entries.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="rounded-md border px-2 py-1.5"
-                      style={{ borderColor: "var(--th-border)", background: "var(--th-panel-bg)" }}
-                    >
+                  {meeting.entries.map((entry) => {
+                    const verdict = parseStoredMeetingVerdict(entry.content);
+                    return (
                       <div
-                        className="mb-0.5 flex items-center gap-2 text-[10px]"
-                        style={{ color: "var(--th-text-secondary)" }}
+                        key={entry.id}
+                        className="rounded-md border px-2 py-1.5"
+                        style={{ borderColor: "var(--th-border)", background: "var(--th-panel-bg)" }}
                       >
-                        <span>#{entry.seq}</span>
-                        <span className="text-cyan-300">{entry.speaker_name}</span>
-                        {entry.department_name && <span>{entry.department_name}</span>}
-                        {entry.role_label && <span>· {entry.role_label}</span>}
+                        <div
+                          className="mb-0.5 flex items-center gap-2 text-[10px]"
+                          style={{ color: "var(--th-text-secondary)" }}
+                        >
+                          <span>#{entry.seq}</span>
+                          <span className="text-cyan-300">{entry.speaker_name}</span>
+                          {entry.department_name && <span>{entry.department_name}</span>}
+                          {entry.role_label && <span>· {entry.role_label}</span>}
+                          <span className="ml-auto">
+                            <MeetingVerdictBadge verdict={verdict} />
+                          </span>
+                        </div>
+                        <div
+                          className="text-xs leading-relaxed whitespace-pre-wrap break-words"
+                          style={{ color: "var(--th-text-primary)" }}
+                        >
+                          {stripMeetingVerdict(entry.content)}
+                          <MeetingVerdictView verdict={verdict} showBadge={false} />
+                        </div>
                       </div>
-                      <div
-                        className="text-xs leading-relaxed whitespace-pre-wrap break-words"
-                        style={{ color: "var(--th-text-primary)" }}
-                      >
-                        {entry.content}
-                      </div>
-                      <MeetingVerdictSummary content={entry.content} />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))

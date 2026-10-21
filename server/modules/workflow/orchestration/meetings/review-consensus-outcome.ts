@@ -1,6 +1,5 @@
-import { effectiveMeetingVerdict } from "../../../../../shared/meeting-verdict.ts";
-import type { ResolvedMeetingVerdict } from "../../core/meeting-verdict.ts";
-import type { Lang } from "../../../../types/lang.ts";
+import { meetingVerdictClarification } from "../../meeting-verdict.ts";
+import { parseMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../../src/lib/meeting-verdict.ts";
 import type { MeetingTranscriptEntry } from "./minutes.ts";
 
 type OutcomeContext = any;
@@ -19,17 +18,10 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     leaders,
     transcript,
     lang,
-    workflowPackKey,
     meetingId,
     onApproved,
     abortIfInactive,
-    meetingReviewDecisionByAgent,
-    resolvedVerdicts,
     findLatestTranscriptContentByAgent,
-    isDeferrableReviewHold,
-    summarizeForMeetingBubble,
-    getDeptName,
-    getAgentDisplayName,
     appendTaskLog,
     REVIEW_MAX_REVISION_SIGNALS_PER_ROUND,
     REVIEW_MAX_REVISION_SIGNALS_PER_DEPT_PER_ROUND,
@@ -54,6 +46,35 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     scheduleNextReviewRound,
   } = ctx;
 
+  const informationalNotes = [
+    ...new Set(
+      (transcript as MeetingTranscriptEntry[]).flatMap((row) => {
+        const verdict = parseMeetingVerdict(row.content);
+        return verdict?.non_blocking_notes.map((note) => `${row.department} ${row.speaker}: ${note}`) ?? [];
+      }),
+    ),
+  ];
+  if (informationalNotes.length)
+    appendTaskProjectMemo(taskId, "review", round, informationalNotes, lang, "non_blocking");
+
+  const missingVerdicts = (leaders as any[]).filter(
+    (leader) =>
+      !parseMeetingVerdict(findLatestTranscriptContentByAgent(transcript as MeetingTranscriptEntry[], leader.id)),
+  );
+  if (missingVerdicts.length) {
+    appendTaskLog(
+      taskId,
+      "system",
+      `Review round ${round}: no verdict; clarification required (${missingVerdicts.map((leader) => leader.id).join(", ")})`,
+    );
+    notifyCeo(`[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)}`, taskId);
+    if (meetingId) finishMeetingMinutes(meetingId, "failed");
+    dismissLeadersFromCeoOffice(taskId, leaders);
+    reviewRoundState.delete(taskId);
+    reviewInFlight.delete(taskId);
+    return true;
+  }
+
   // Final review result should follow each leader's last approval statement,
   // not stale "needs revision" flags from earlier feedback turns.
   const finalHoldLeaders: any[] = [];
@@ -61,30 +82,9 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   const deferredMonitoringNotes: string[] = [];
   const finalHoldDeptCount = new Map<string, number>();
   for (const leader of leaders as any[]) {
-    const resolved = resolvedVerdicts?.get(leader.id) as ResolvedMeetingVerdict | undefined;
-    if (
-      resolved
-        ? effectiveMeetingVerdict(resolved.verdict) !== "revise"
-        : meetingReviewDecisionByAgent.get(leader.id) !== "hold"
-    )
-      continue;
     const latestDecisionLine = findLatestTranscriptContentByAgent(transcript as MeetingTranscriptEntry[], leader.id);
-    if (
-      (!resolved || resolved.source === "fallback") &&
-      isDeferrableReviewHold(resolved?.originalText ?? latestDecisionLine)
-    ) {
-      const clipped = summarizeForMeetingBubble(latestDecisionLine, 160, lang as Lang);
-      deferredMonitoringLeaders.push(leader);
-      deferredMonitoringNotes.push(
-        `${getDeptName(leader.department_id ?? "", workflowPackKey)} ${getAgentDisplayName(leader, lang)}: ${clipped}`,
-      );
-      appendTaskLog(
-        taskId,
-        "system",
-        `Review round ${round}: converted deferrable hold to post-merge monitoring (${leader.id})`,
-      );
-      continue;
-    }
+    const verdict = parseMeetingVerdict(latestDecisionLine);
+    if (!verdict || !meetingVerdictNeedsRevision(verdict)) continue;
     if (finalHoldLeaders.length >= REVIEW_MAX_REVISION_SIGNALS_PER_ROUND) {
       appendTaskLog(
         taskId,
@@ -106,9 +106,6 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     finalHoldDeptCount.set(deptKey, deptCount + 1);
     finalHoldLeaders.push(leader);
   }
-  const nonBlockingNotes = ctx.nonBlockingNotes ?? [];
-  if (nonBlockingNotes.length > 0)
-    appendTaskProjectMemo(taskId, "review", round, nonBlockingNotes, lang, "non_blocking");
   const needsRevision = finalHoldLeaders.length > 0;
   if (!needsRevision && deferredMonitoringNotes.length > 0) {
     appendTaskProjectMemo(taskId, "review", round, deferredMonitoringNotes, lang);
@@ -123,23 +120,15 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   if (abortIfInactive()) return true;
 
   if (needsRevision) {
-    const rawMemoItems = resolvedVerdicts
-      ? finalHoldLeaders
-          .flatMap((leader: any) => {
-            const resolved = resolvedVerdicts.get(leader.id) as ResolvedMeetingVerdict | undefined;
-            return (resolved?.verdict.blocking_items ?? [])
-              .slice(0, REVIEW_MAX_MEMO_ITEMS_PER_DEPT)
-              .map(
-                (item) =>
-                  `${getDeptName(leader.department_id ?? "", workflowPackKey)} ${getAgentDisplayName(leader, lang)}: ${item}`,
-              );
-          })
-          .slice(0, REVIEW_MAX_MEMO_ITEMS_PER_ROUND)
-      : collectRevisionMemoItems(
-          transcript as MeetingTranscriptEntry[],
-          REVIEW_MAX_MEMO_ITEMS_PER_ROUND,
-          REVIEW_MAX_MEMO_ITEMS_PER_DEPT,
-        );
+    const rawMemoItems = collectRevisionMemoItems(
+      (transcript as MeetingTranscriptEntry[]).filter(
+        (row, index, entries) =>
+          finalHoldLeaders.some((leader) => leader.id === row.speaker_agent_id) &&
+          !entries.slice(index + 1).some((later) => later.speaker_agent_id === row.speaker_agent_id),
+      ),
+      REVIEW_MAX_MEMO_ITEMS_PER_ROUND,
+      REVIEW_MAX_MEMO_ITEMS_PER_DEPT,
+    );
     const { freshItems, duplicateCount } = reserveReviewRevisionMemoItems(taskId, round, rawMemoItems);
     const hasFreshMemoItems = freshItems.length > 0;
     const fallbackMemoItem = pickL(
