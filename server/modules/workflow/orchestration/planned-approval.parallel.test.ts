@@ -43,7 +43,7 @@ it("drafts department plans concurrently and lets the assigned planner consolida
   });
   const tools = createPlannedApprovalTools({
     db,
-    wantsReviewRevision: () => false,
+    classifyMeetingReviewDecision: () => "approved",
     reviewInFlight: new Set(),
     reviewRoundState: new Map(),
     getTaskReviewLeaders: () => leaders,

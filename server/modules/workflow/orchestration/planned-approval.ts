@@ -1,9 +1,6 @@
 import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
-import {
-  formatMeetingVerdict,
-  meetingVerdictNeedsRevision,
-  stripMeetingVerdict,
-} from "../../../../src/lib/meeting-verdict.ts";
+import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
+import type { MeetingReviewDecision } from "../core/conversation-types.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 
@@ -38,7 +35,7 @@ type CreatePlannedApprovalToolsDeps = {
   collectPlannedActionItems: (...args: any[]) => any[];
   appendTaskProjectMemo: (...args: any[]) => any;
   appendTaskLog: (...args: any[]) => any;
-  wantsReviewRevision: (text: string) => boolean;
+  classifyMeetingReviewDecision: (text: string) => MeetingReviewDecision;
   reviewMeetingOneShotTimeoutMs?: number;
 };
 
@@ -72,6 +69,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     collectPlannedActionItems,
     appendTaskProjectMemo,
     appendTaskLog,
+    classifyMeetingReviewDecision,
     reviewMeetingOneShotTimeoutMs,
   } = deps;
 
@@ -264,11 +262,12 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               retry: (prompt) => runAgentOneShot(leader, prompt, { ...oneShotOptions, rawOutput: true }),
               log: (message) => appendTaskLog(taskId, "system", message),
             });
+            const workText = planningWorkFromVerdict(String(run.text), resolved.verdict);
             return {
               leader,
               verdict: resolved.verdict,
-              workText: planningWorkFromVerdict(String(run.text), resolved.verdict),
-              text: `${planningWorkFromVerdict(String(run.text), resolved.verdict)}\n\n${formatMeetingVerdict({ ...resolved.verdict, non_blocking_notes: [] })}`,
+              workText,
+              text: `${workText}\n\n${formatMeetingVerdict({ ...resolved.verdict, non_blocking_notes: [] })}`,
               displayText: `${chooseSafeReply({ ...run, text: stripMeetingVerdict(String(run.text)) }, lang, "feedback", leader)}\n\n${formatMeetingVerdict(resolved.verdict)}`,
             };
           }),
@@ -292,7 +291,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             content: draft.value.workText,
           });
           if (draft.value.verdict.verdict === "no_verdict") hasMissingVerdicts = true;
-          if (meetingVerdictNeedsRevision(draft.value.verdict)) hasSupplementSignals = true;
+          if (classifyMeetingReviewDecision(draft.value.text) === "hold") hasSupplementSignals = true;
           informationalNotes.push(
             ...draft.value.verdict.non_blocking_notes.map(
               (note) => `${getAgentDisplayName(draft.value.leader, lang)}: ${note}`,
@@ -334,7 +333,8 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             (note) => `${getAgentDisplayName(planningLeader, lang)}: ${note}`,
           ),
         );
-        if (meetingVerdictNeedsRevision(summaryVerdict.verdict)) hasSupplementSignals = true;
+        if (classifyMeetingReviewDecision(formatMeetingVerdict(summaryVerdict.verdict)) === "hold")
+          hasSupplementSignals = true;
         const summaryText = `${chooseSafeReply({ ...summaryRun, text: stripMeetingVerdict(String(summaryRun?.text ?? "")) }, lang, "summary", planningLeader)}\n\n${formatMeetingVerdict(summaryVerdict.verdict)}`;
         speak(planningLeader, "report", "all", null, summaryText);
         if (hasMissingVerdicts || summaryVerdict.verdict.verdict === "no_verdict") {
@@ -348,6 +348,8 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           reviewInFlight.delete(lockKey);
           return;
         }
+        // Only stripped department drafts feed fallback work. Consolidation repeats
+        // those drafts, and verdict notes are informational rather than executable.
         const planItems = graph
           ? [JSON.stringify({ plan_items: graph })]
           : collectPlannedActionItems(workTranscript, 10);

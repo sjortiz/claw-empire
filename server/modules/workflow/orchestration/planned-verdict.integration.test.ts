@@ -11,6 +11,7 @@ import {
 } from "../../../../src/lib/meeting-verdict.ts";
 import { createPlannedApprovalTools } from "./planned-approval.ts";
 import { createMeetingMinutesTools } from "./meetings/minutes.ts";
+import { createSubtaskSeedingTools } from "../agents/subtask-seeding.ts";
 
 let db: DatabaseSync;
 afterEach(() => db?.close());
@@ -43,17 +44,29 @@ async function runPlanning(draft: string, summary: string, retry = "invalid verd
   const runAgentOneShot = vi.fn(async (_agent: any, prompt: string) => ({
     text: prompt === "draft" ? draft : prompt === "consolidation" ? summary : retry,
   }));
-  const onApproved = vi.fn();
-  const buildMeetingPrompt = vi.fn((_agent: any, context: any) => context.planningPhase);
-  createPlannedApprovalTools({
+  const { seedApprovedPlanSubtasks } = createSubtaskSeedingTools({
     ...deps,
-    ...minutes,
-    wantsReviewRevision: createReplyCoreTools({
+    analyzeSubtaskDepartment: (text) => (text.startsWith("dev ") ? "dev" : null),
+    rerouteSubtasksByPlanningLeader: async () => {},
+    findTeamLeader: (department) => db.prepare("SELECT * FROM agents WHERE department_id = ?").get(department),
+    getPreferredLanguage: () => "en",
+    resolveLang: () => "en",
+    notifyCeo: vi.fn(),
+  });
+  const onApproved = vi.fn((items: string[] = []) => seedApprovedPlanSubtasks("task", "planning", items));
+  const classifyMeetingReviewDecision = vi.fn(
+    createReplyCoreTools({
       detectLang: () => "en",
       getPreferredLanguage: () => "en",
       pickL: (pool) => pool.en[0],
       prettyStreamJson: (text) => text,
-    }).wantsReviewRevision,
+    }).classifyMeetingReviewDecision,
+  );
+  const buildMeetingPrompt = vi.fn((_agent: any, context: any) => context.planningPhase);
+  createPlannedApprovalTools({
+    ...deps,
+    ...minutes,
+    classifyMeetingReviewDecision,
     reviewInFlight: new Set(),
     reviewRoundState: new Map(),
     getTaskReviewLeaders: () => db.prepare("SELECT * FROM agents ORDER BY id").all(),
@@ -83,6 +96,8 @@ async function runPlanning(draft: string, summary: string, retry = "invalid verd
     appendTaskLog,
     runAgentOneShot,
     buildMeetingPrompt,
+    classifyMeetingReviewDecision,
+    seededPlanItems: db.prepare("SELECT title, description FROM subtasks WHERE title LIKE '[Plan Item] %'").all(),
     status: (db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get() as any).status,
     description: (db.prepare("SELECT description FROM tasks WHERE id = 'task'").get() as any).description as string,
   };
@@ -96,6 +111,14 @@ describe("planned meeting verdicts", () => {
     );
     const items = result.onApproved.mock.calls[0][0];
     expect(items).toEqual(["dev Dev: Implement API"]);
+    expect(result.seededPlanItems).toEqual([
+      { title: "[Plan Item] Implement API", description: expect.stringContaining("dev Dev: Implement API") },
+    ]);
+    expect(result.classifyMeetingReviewDecision).toHaveBeenCalledTimes(2);
+    expect(result.classifyMeetingReviewDecision.mock.results.map((call) => call.value)).toEqual([
+      "approved",
+      "approved",
+    ]);
     expect(result.runAgentOneShot).toHaveBeenCalledTimes(2);
     expect(result.description).toContain("nonblocking notes (informational only; no work items)");
     expect(result.description).toContain("Monitor risk later");
@@ -110,6 +133,36 @@ describe("planned meeting verdicts", () => {
       content: string;
     }>;
     expect(stored.map((entry) => parseMeetingVerdict(entry.content))).toEqual([approve, approve]);
+  });
+  it("records informational notes without seeding plan items from notes-only drafts", async () => {
+    const result = await runPlanning(
+      `Monitor risk later\n${formatMeetingVerdict(approve)}`,
+      `Monitor risk later\n${formatMeetingVerdict(approve)}`,
+    );
+    expect(result.onApproved).toHaveBeenCalledExactlyOnceWith([]);
+    expect(result.seededPlanItems).toEqual([]);
+    expect(result.description).toContain("Monitor risk later");
+    expect(result.description).not.toContain("unresolved improvement items");
+  });
+  it("seeds draft work once when consolidation repeats it without plan_items", async () => {
+    const text = `Implement API\n${formatMeetingVerdict(approve)}`;
+    const result = await runPlanning(text, text);
+    expect(result.onApproved).toHaveBeenCalledExactlyOnceWith(["dev Dev: Implement API"]);
+    expect(result.seededPlanItems).toHaveLength(1);
+    expect(result.seededPlanItems[0]).toEqual({
+      title: "[Plan Item] Implement API",
+      description: expect.stringContaining("dev Dev: Implement API"),
+    });
+  });
+  it("classifies the resolved verdict after a verdict-only retry and preserves the original draft work", async () => {
+    const result = await runPlanning("Implement API", formatMeetingVerdict(approve), formatMeetingVerdict(approve));
+    expect(result.onApproved).toHaveBeenCalledExactlyOnceWith(["dev Dev: Implement API"]);
+    expect(result.classifyMeetingReviewDecision).toHaveBeenCalledTimes(2);
+    expect(result.classifyMeetingReviewDecision.mock.results.map((call) => call.value)).toEqual([
+      "approved",
+      "approved",
+    ]);
+    expect(result.seededPlanItems).toHaveLength(1);
   });
   it("preserves a solo planning leader's draft instead of replacing it with the consolidation verdict", async () => {
     const result = await runPlanning(

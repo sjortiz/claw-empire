@@ -170,7 +170,6 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   const hasApprovalAgreementSignal = __ctx.hasApprovalAgreementSignal;
   const isDeferrableReviewHold = __ctx.isDeferrableReviewHold;
   const classifyMeetingReviewDecision = __ctx.classifyMeetingReviewDecision;
-  const wantsReviewRevision = __ctx.wantsReviewRevision;
   const findLatestTranscriptContentByAgent = __ctx.findLatestTranscriptContentByAgent;
   const formatMeetingTranscript = __ctx.formatMeetingTranscript;
   const buildMeetingPrompt = __ctx.buildMeetingPrompt;
@@ -518,7 +517,7 @@ export function initializeWorkflowPartC(ctx: RuntimeContext): WorkflowOrchestrat
   } = workflowMeetingTools;
 
   const { startPlannedApprovalMeeting } = createPlannedApprovalTools({
-    wantsReviewRevision,
+    classifyMeetingReviewDecision,
     reviewInFlight,
     reviewRoundState,
     db,
