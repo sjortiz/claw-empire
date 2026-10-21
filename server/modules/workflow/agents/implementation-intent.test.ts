@@ -101,6 +101,26 @@ describe("directive implementation intent", () => {
   ])("does not infer code work from documentation supplements: %s", (text) => {
     expect(detectImplementationIntent(text).requiresImplementation).toBe(false);
   });
+  it.each([
+    "Fix #84 and API documentation about #85",
+    "#84 버그를 수정하고 #85 문서를 업데이트해",
+    "#84 버그를 수정하며 #85 문서를 업데이트해",
+    "#84 のバグを修正して #85 の文書を更新",
+    "修复功能 #84并更新文档 #85",
+    "修复功能 #84并且更新文档 #85",
+  ])("keeps only executable issue references in mixed clauses: %s", (text) => {
+    const mixedIntent = detectImplementationIntent(text);
+    expect(mixedIntent.requiresImplementation).toBe(true);
+    expect(mixedIntent.implementationUnits.map((unit) => unit.reference)).toEqual(["#84"]);
+  });
+  it.each([
+    "Fix API authentication documentation and regression test examples",
+    "API 문서를 수정하고 테스트 문서를 추가해",
+    "APIの文書を修正してテストの文書を追加",
+    "修改功能文档并更新测试文档",
+  ])("keeps coordinated supporting targets out of implementation: %s", (text) => {
+    expect(detectImplementationIntent(text, "Fix API bug #84").requiresImplementation).toBe(false);
+  });
 });
 
 describe("implementation graph acceptance", () => {
