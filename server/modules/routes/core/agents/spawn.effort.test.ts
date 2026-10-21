@@ -11,9 +11,10 @@ describe("agent task spawn effort", () => {
     { provider: "claude", global: "high", override: "low", expected: "low" },
     { provider: "codex", global: "high", override: "medium", expected: "medium" },
     { provider: "api", global: undefined, override: "none", expected: "none" },
+    { provider: "claude", global: undefined, override: null, expected: undefined, cancelled: true },
   ])(
     "uses $provider global=$global override=$override at the task launcher",
-    ({ provider, global, override, expected }) => {
+    async ({ provider, global, override, expected, cancelled }) => {
       const agent = {
         id: "agent-1",
         name: "Worker",
@@ -34,7 +35,11 @@ describe("agent task spawn effort", () => {
         project_path: "/work/project",
       };
       let handler: ((req: unknown, res: unknown) => void) | undefined;
-      const spawnCliAgent = vi.fn(() => ({ on: vi.fn(), pid: 42 }));
+      const spawnCliAgent = vi.fn(async () => {
+        if (cancelled) throw Object.assign(new Error("cli_launch_cancelled"), { code: "CLI_LAUNCH_CANCELLED" });
+        return { on: vi.fn(), pid: 42 };
+      });
+      const run = vi.fn();
       const launchApiProviderAgent = vi.fn();
       const context = {
         app: {
@@ -45,7 +50,7 @@ describe("agent task spawn effort", () => {
         db: {
           prepare: (sql: string) => ({
             get: () => (sql.includes("FROM tasks") ? task : agent),
-            run: vi.fn(),
+            run,
           }),
         },
         logsDir: "/work/logs",
@@ -71,7 +76,14 @@ describe("agent task spawn effort", () => {
       } as unknown as RuntimeContext;
       registerAgentSpawnRoute(context);
       const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
-      handler!({ params: { id: "agent-1" } }, res);
+      await handler!({ params: { id: "agent-1" } }, res);
+      if (cancelled) {
+        expect(res.status).toHaveBeenCalledWith(409);
+        expect(res.json).toHaveBeenCalledWith({ error: "cli_launch_cancelled" });
+        expect(run).not.toHaveBeenCalled();
+        expect(context.handleTaskRunComplete).not.toHaveBeenCalled();
+        return;
+      }
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ ok: true, pid: 42 }));
       if (provider === "api") {
         expect(spawnCliAgent).not.toHaveBeenCalled();

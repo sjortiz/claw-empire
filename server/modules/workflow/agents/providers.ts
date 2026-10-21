@@ -125,6 +125,7 @@ export function initializeWorkflowAgentProviders(ctx: RuntimeContext): any {
   } = httpAgentTools;
 
   const apiProviderTools = createApiProviderTools({
+    appendTaskLog,
     db,
     logsDir,
     activeProcesses,

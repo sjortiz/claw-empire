@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import { prepareHeadroomCli } from "../../headroom.ts";
 import { resolveCliReasoningLevel } from "../core/reasoning-effort.ts";
 import {
   createProviderSessionCapture,
@@ -230,7 +231,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     return parts.join(path.delimiter);
   }
 
-  function spawnCliAgent(
+  async function spawnCliAgent(
     taskId: string,
     provider: string,
     prompt: string,
@@ -239,7 +240,20 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     model?: string,
     reasoningLevel?: string,
     options: { executionSession?: TaskExecutionSessionState; resumeSessionId?: string } = {},
-  ): ChildProcess {
+  ): Promise<ChildProcess> {
+    // Health preflight must finish before launching. A stop/reassignment during
+    // that await must not resurrect this run or replace an active process.
+    const readOwner = () => db.prepare?.("SELECT status, assigned_agent_id FROM tasks WHERE id = ?").get(taskId);
+    const owner = readOwner();
+    const processBefore = activeProcesses.get(taskId);
+    const route = await prepareHeadroomCli(db, provider, process.env);
+    const current = readOwner();
+    if (
+      activeProcesses.get(taskId) !== processBefore ||
+      (owner && (!current || current.status !== owner.status || current.assigned_agent_id !== owner.assigned_agent_id))
+    ) {
+      throw Object.assign(new Error("cli_launch_cancelled"), { code: "CLI_LAUNCH_CANCELLED" });
+    }
     clearCliOutputDedup(taskId);
     // Save prompt for debugging
     const promptPath = path.join(logsDir, `${taskId}.prompt.txt`);
@@ -261,7 +275,7 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
       resumeSessionId ??= randomUUID();
       recordNativeSession(resumeSessionId);
     }
-    const args = buildAgentArgs(provider, model, reasoningLevel, { resumeSessionId });
+    const args = [...buildAgentArgs(provider, model, reasoningLevel, { resumeSessionId }), ...route.args];
     const logStream = fs.createWriteStream(logPath, { flags: "a" });
     const { safeWrite, safeEnd } = createSafeLogStreamOps(logStream);
     const effectiveEffort = resolveCliReasoningLevel(provider, reasoningLevel, undefined);
@@ -270,7 +284,12 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     );
 
     // Remove CLAUDECODE env var to prevent "nested session" detection
-    const cleanEnv = { ...process.env };
+    if (route.warning) {
+      safeWrite(`${route.warning}\n`);
+      appendTaskLog(taskId, "system", route.warning);
+      broadcast("cli_output", { task_id: taskId, stream: "stderr", data: `${route.warning}\n` });
+    }
+    const cleanEnv = route.env;
     delete cleanEnv.CLAUDECODE;
     delete cleanEnv.CLAUDE_CODE;
     cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? process.env.PATH ?? ""));

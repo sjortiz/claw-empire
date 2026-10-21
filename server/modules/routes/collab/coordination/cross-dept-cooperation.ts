@@ -384,7 +384,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
 
     // Cross-department leader acknowledges AND creates a real task
     const crossAckDelay = 1500 + Math.random() * 1000;
-    setTimeout(() => {
+    setTimeout(async () => {
       if (isTaskAutoRecoveryHeld(deps, taskId)) return;
       const parent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string } | undefined;
       if (!parent || !["planned", "pending", "collaborating", "in_progress", "review"].includes(parent.status)) return;
@@ -685,16 +685,23 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               execAgent.cli_reasoning_level,
               crossModelConfig[execProvider]?.reasoningLevel,
             );
-            const child = spawnCliAgent(
-              crossTaskId,
-              execProvider,
-              sessionPrompt,
-              agentCwd,
-              logFilePath,
-              crossModel,
-              crossReasoningLevel,
-            );
-            child.on("close", (code: number | null) => finalizeCrossDeptRun(code ?? 1));
+            try {
+              const child = await spawnCliAgent(
+                crossTaskId,
+                execProvider,
+                sessionPrompt,
+                agentCwd,
+                logFilePath,
+                crossModel,
+                crossReasoningLevel,
+              );
+              child.on("close", (code: number | null) => finalizeCrossDeptRun(code ?? 1));
+            } catch (error) {
+              if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") return;
+              appendTaskLog(crossTaskId, "error", "CLI collaboration launch failed");
+              finalizeCrossDeptRun(1);
+              return;
+            }
           }
 
           notifyCeo(

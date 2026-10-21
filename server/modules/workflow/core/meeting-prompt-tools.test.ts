@@ -126,3 +126,35 @@ describe("buildMeetingPrompt", () => {
     expect(prompt).toContain("Remotion");
   });
 });
+
+it.each(["draft", "consolidation"] as const)(
+  "adds implementation rules only when required during %s",
+  (planningPhase) => {
+    const tools = createTools();
+    const context = {
+      meetingType: "planned" as const,
+      planningPhase,
+      round: 1,
+      taskTitle: "Nexo",
+      taskDescription: "Fix #84",
+      transcript: [],
+      turnObjective: "Plan",
+      lang: "en",
+    };
+    const plain = tools.buildMeetingPrompt(createAgent(), context);
+    expect(
+      tools.buildMeetingPrompt(createAgent(), { ...context, requiresImplementation: false, implementationUnits: [] }),
+    ).toBe(plain);
+    const code = tools.buildMeetingPrompt(createAgent(), {
+      ...context,
+      requiresImplementation: true,
+      implementationUnits: [
+        { key: "issue-84", reference: "#84", description: "Fix #84", requiresTests: true, separateBranch: true },
+      ],
+    });
+    expect(code).toContain("[Required implementation coverage]");
+    expect(code).toContain('department_id: "dev"');
+    expect(code).toContain("one separate branch for this issue");
+    expect(code).toContain("cannot replace implementation");
+  },
+);

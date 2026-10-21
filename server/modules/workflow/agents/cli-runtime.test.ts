@@ -53,7 +53,7 @@ describe("CLI run header", () => {
       completeSubtaskFromCli: vi.fn(),
     });
     const logPath = path.join(logsDir, "test.log");
-    runtime.spawnCliAgent("test", provider, "prompt", logsDir, logPath, "model-name", level);
+    await runtime.spawnCliAgent("test", provider, "prompt", logsDir, logPath, "model-name", level);
     child.emit("close", 0);
 
     await vi.waitFor(() => {
@@ -68,7 +68,7 @@ describe("CLI run header", () => {
     });
     expect(spawn).toHaveBeenCalledWith(
       provider,
-      cliTools.buildAgentArgs(provider, "model-name", level).slice(1),
+      expect.arrayContaining(cliTools.buildAgentArgs(provider, "model-name", level).slice(1)),
       expect.objectContaining({ cwd: logsDir }),
     );
   });
@@ -79,7 +79,10 @@ describe("provider session continuity", () => {
     const logsDir = fs.mkdtempSync(path.join(process.env.LOGS_DIR!, "kimi-resume-"));
     directories.push(logsDir);
     const db = new DatabaseSync(":memory:");
-    db.exec("CREATE TABLE task_logs (task_id TEXT, kind TEXT, message TEXT, created_at INTEGER)");
+    // The launch reads the task owner (Headroom preflight) and settings before spawning.
+    db.exec(`CREATE TABLE task_logs (task_id TEXT, kind TEXT, message TEXT, created_at INTEGER);
+      CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT, assigned_agent_id TEXT);
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);`);
     const children: ChildProcess[] = [];
     vi.mocked(spawn).mockImplementation((_command, args) => {
       const nativeSessionId = args![args!.indexOf("--session") + 1];
@@ -122,11 +125,13 @@ describe("provider session continuity", () => {
     };
     const logPath = path.join(logsDir, "test.log");
     try {
-      runtime.spawnCliAgent("test", "kimi", "prompt", logsDir, logPath, undefined, undefined, { executionSession });
+      await runtime.spawnCliAgent("test", "kimi", "prompt", logsDir, logPath, undefined, undefined, {
+        executionSession,
+      });
       children[0].emit("close", 1);
       const recovered = loadTaskExecutionSession(db, "test")!;
       expect(recovered.nativeSessionId).toMatch(/^[a-f0-9-]{36}$/);
-      runtime.spawnCliAgent("test", "kimi", "resume", logsDir, logPath, undefined, undefined, {
+      await runtime.spawnCliAgent("test", "kimi", "resume", logsDir, logPath, undefined, undefined, {
         executionSession: recovered,
         resumeSessionId: recovered.nativeSessionId,
       });
@@ -185,7 +190,7 @@ describe("provider session continuity", () => {
       openedAt: 100,
       lastTouchedAt: 100,
     };
-    runtime.spawnCliAgent(
+    await runtime.spawnCliAgent(
       "test",
       provider,
       "resume prompt",

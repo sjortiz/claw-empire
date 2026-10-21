@@ -1,3 +1,4 @@
+import { implementationIntentFromTask, includeImplementationDepartment } from "../../agents/implementation-intent.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../../routes/core/tasks/execution-run-auto-assign.ts";
 
 interface AgentRow {
@@ -85,7 +86,10 @@ export function createMeetingLeaderSelectionTools(deps: LeaderSelectionDeps) {
     }
 
     const sourceText = `${task?.title ?? ""} ${task?.description ?? ""}`;
-    for (const deptId of detectTargetDepartments(sourceText)) {
+    for (const deptId of includeImplementationDepartment(
+      detectTargetDepartments(sourceText),
+      implementationIntentFromTask(task?.title ?? "", task?.description),
+    )) {
       deptSet.add(deptId);
     }
 

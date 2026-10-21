@@ -4,7 +4,13 @@ import path from "node:path";
 import { notifyTaskStatus } from "../../../../gateway/client.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
-import { resolveConstrainedAgentScopeForTask, selectAutoAssignableAgentForTask } from "./execution-run-auto-assign.ts";
+import {
+  isOAuthBackedProviderReady,
+  loadActiveOAuthAccountIdsByProvider,
+  requiresDevelopmentImplementationOwner,
+  resolveConstrainedAgentScopeForTask,
+  selectAutoAssignableAgentForTask,
+} from "./execution-run-auto-assign.ts";
 import { buildWorkflowPackExecutionGuidance } from "../../../workflow/packs/execution-guidance.ts";
 import { resolveVideoArtifactSpecForTask } from "../../../workflow/packs/video-artifact.ts";
 import { ensureVideoPreprodRemotionBestPracticesSkill } from "../../../workflow/core/video-skill-bootstrap.ts";
@@ -88,7 +94,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     buildAvailableSkillsPromptBlock,
   } = deps;
 
-  app.post("/api/tasks/:id/run", (req, res) => {
+  app.post("/api/tasks/:id/run", async (req, res) => {
     const id = String(req.params.id);
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
       | {
@@ -141,6 +147,12 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
       });
     }
 
+    const implementationOwnerRequired = requiresDevelopmentImplementationOwner(db as any, task);
+    if (implementationOwnerRequired && task.department_id !== "dev") {
+      db.prepare("UPDATE tasks SET department_id = 'dev', updated_at = ? WHERE id = ?").run(nowMs(), id);
+      task.department_id = "dev";
+      appendTaskLog(id, "system", "Restored accepted Development implementation ownership before execution");
+    }
     let agentId = task.assigned_agent_id || (req.body?.agent_id as string | undefined);
     if (agentId) {
       const constrainedAgentIds = resolveConstrainedAgentScopeForTask(db as any, {
@@ -150,7 +162,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
       });
       if (
         Array.isArray(constrainedAgentIds) &&
-        constrainedAgentIds.length > 0 &&
+        (implementationOwnerRequired || constrainedAgentIds.length > 0) &&
         !constrainedAgentIds.includes(agentId)
       ) {
         appendTaskLog(
@@ -160,9 +172,27 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
         );
         agentId = undefined;
       }
+      if (agentId && implementationOwnerRequired) {
+        const candidate = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRow | undefined;
+        if (
+          !candidate ||
+          candidate.department_id !== "dev" ||
+          (candidate.current_task_id && candidate.current_task_id !== id) ||
+          !["idle", "break", "working"].includes(candidate.status) ||
+          !isOAuthBackedProviderReady(candidate, loadActiveOAuthAccountIdsByProvider(db as any))
+        ) {
+          appendTaskLog(
+            id,
+            "system",
+            `Development implementation assignment rejected: agent ${agentId} is not eligible`,
+          );
+          agentId = undefined;
+        }
+      }
     }
     if (!agentId) {
       const autoSelected = selectAutoAssignableAgentForTask(db as any, {
+        id,
         workflow_pack_key: task.workflow_pack_key,
         department_id: task.department_id,
         project_id: task.project_id,
@@ -182,6 +212,22 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
       }
     }
     if (!agentId) {
+      if (implementationOwnerRequired) {
+        const reason =
+          "Waiting for an eligible Development implementation agent; Development ownership and project agent scope are required";
+        db.prepare("UPDATE tasks SET assigned_agent_id = NULL, status = 'pending', updated_at = ? WHERE id = ?").run(
+          nowMs(),
+          id,
+        );
+        db.prepare(
+          "UPDATE subtasks SET assigned_agent_id = NULL, status = 'blocked', blocked_reason = ? WHERE delegated_task_id = ?",
+        ).run(reason, id);
+        appendTaskLog(id, "system", `Implementation assignment blocked: ${reason}`);
+        broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(id));
+        const blockedSubtasks = db.prepare("SELECT * FROM subtasks WHERE delegated_task_id = ?").all(id);
+        for (const subtask of blockedSubtasks) broadcast("subtask_update", subtask);
+        return res.status(409).json({ error: "implementation_assignment_blocked", message: reason });
+      }
       return res.status(400).json({
         error: "no_agent_assigned",
         message: "Assign an agent before running.",
@@ -624,7 +670,15 @@ Whenever you complete a subtask, report it in this format:
       return res.json({ ok: true, pid: fakePid, logPath, cwd: agentCwd, worktree: !!worktreePath });
     }
 
-    const child = spawnCliAgent(id, provider, prompt, agentCwd, logPath, mainModel, mainReasoningLevel);
+    let child;
+    try {
+      child = await spawnCliAgent(id, provider, prompt, agentCwd, logPath, mainModel, mainReasoningLevel);
+    } catch (error) {
+      if ((error as { code?: string })?.code === "CLI_LAUNCH_CANCELLED") {
+        return res.status(409).json({ error: "cli_launch_cancelled" });
+      }
+      throw error;
+    }
 
     child.on("close", (code: number | null) => {
       handleTaskRunComplete(id, code ?? 1);
