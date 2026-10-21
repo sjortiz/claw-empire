@@ -1,6 +1,8 @@
 # First-class Headroom support: implementation specification
 
-Status: Planning handoff, 2026-10-21. This document specifies proposed behavior; the feature is not implemented in this branch. Task: `96ad3e9f-b8a0-440b-a6e9-877389564c9e`.
+Status: continuation review, 2026-10-21. This branch now includes Development `c8dbe31` and Design `5581d9f`, incorporated by refresh `b171593`. Implementation is present, but full CEO acceptance remains open. See the [requirement disposition and remaining release gates](2026-10-21-headroom-review-disposition.md). Current task: `b07b6c1a-e374-4b9b-bbad-10d9e2d2d689`; original specification task: `96ad3e9f-b8a0-440b-a6e9-877389564c9e`.
+
+The baseline observations and final Planning handoff section below describe the original pre-implementation investigation. They are historical evidence, not a statement that the refreshed branch lacks runtime changes. Requirements remain acceptance criteria unless the CEO explicitly accepts a scope change.
 
 ## Outcome and boundaries
 
