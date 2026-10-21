@@ -9,6 +9,27 @@ function createTools() {
 }
 
 describe("buildAgentArgs", () => {
+  it.each(["claude", "codex", "gemini", "kimi", "opencode"])(
+    "resumes %s by its exact native session ID",
+    (provider) => {
+      const args = createTools().buildAgentArgs(provider, "model", "high", { resumeSessionId: "session-123" });
+      if (provider === "codex") {
+        expect(args.slice(args.indexOf("exec"))).toEqual(["exec", "resume", "--json", "session-123", "-"]);
+      } else {
+        const flag = provider === "kimi" || provider === "opencode" ? "--session" : "--resume";
+        expect(args.slice(args.indexOf(flag), args.indexOf(flag) + 2)).toEqual([flag, "session-123"]);
+      }
+      expect(args).not.toContain("--last");
+      expect(args).not.toContain("--continue");
+    },
+  );
+
+  it.each(["", "--last", "a\nb", "a b"])("ignores invalid native session ID %j", (resumeSessionId) => {
+    expect(createTools().buildAgentArgs("codex", undefined, undefined, { resumeSessionId })).toEqual(
+      createTools().buildAgentArgs("codex"),
+    );
+  });
+
   it("claude noTools mode uses --tools= without empty argv", () => {
     const tools = createTools();
     const args = tools.buildAgentArgs("claude", "claude-opus-4-6", undefined, { noTools: true });
