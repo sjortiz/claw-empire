@@ -1,4 +1,6 @@
-import { createDelegationWait, isDelegationSuspended } from "../delegation-wait.ts";
+import { isTaskAutoRecoveryHeld } from "../../../workflow/core/task-resume.ts";
+import { createPersistentWait } from "../../../workflow/core/persistent-wait.ts";
+import { pickAvailableDepartmentAgent } from "../available-department-agent.ts";
 import { buildAgentCoordinationContext } from "../../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
@@ -67,7 +69,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
     maybeNotifyAllSubtasksComplete,
   } = deps;
 
-  const delegationWait = createDelegationWait({ db, nowMs, appendTaskLog, notifyCeo, broadcast });
+  const persistentWait = createPersistentWait({ db, nowMs, appendTaskLog, notifyCeo, broadcast });
 
   function getConstrainedAgentIds(
     workflowPackKey: string | null | undefined,
@@ -270,7 +272,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
     ctx: CrossDeptContext,
     onAllDone?: () => void,
   ): void {
-    if (isDelegationSuspended(db, ctx.taskId)) return;
+    if (isTaskAutoRecoveryHeld(deps, ctx.taskId)) return;
     if (index >= deptIds.length) {
       onAllDone?.();
       return;
@@ -281,6 +283,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
       | undefined;
     if (!parent || !["planned", "pending", "collaborating", "in_progress", "review"].includes(parent.status)) return;
     const crossDeptId = deptIds[index];
+    const waitKey = `cross-department:${crossDeptId}`;
     const { teamLeader, taskTitle, ceoMessage, leaderDeptId, leaderDeptName, leaderName, lang, taskId } = ctx;
     const resolvedProjectId =
       ctx.projectId ??
@@ -298,9 +301,9 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
         : getConstrainedAgentIds(resolvedPackKey ?? null, resolvedProjectId, ctx.leaderDeptId);
     const crossLeader = findTeamLeader(crossDeptId, projectCandidateAgentIds);
     if (!crossLeader) {
-      if (!delegationWait.wait(taskId, `cross-dept:${crossDeptId}`, `department leader (${crossDeptId})`)) return;
-      const retry = setTimeout(() => startCrossDeptCooperation(deptIds, index, ctx, onAllDone), 5_000);
-      retry.unref?.();
+      persistentWait.wait(taskId, waitKey, `Collaboration waiting for department leader (${crossDeptId})`, () =>
+        startCrossDeptCooperation(deptIds, index, ctx, onAllDone),
+      );
       return;
     }
     const nextCtx: CrossDeptContext =
@@ -382,7 +385,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
     // Cross-department leader acknowledges AND creates a real task
     const crossAckDelay = 1500 + Math.random() * 1000;
     setTimeout(() => {
-      if (isDelegationSuspended(db, taskId)) return;
+      if (isTaskAutoRecoveryHeld(deps, taskId)) return;
       const parent = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string } | undefined;
       if (!parent || !["planned", "pending", "collaborating", "in_progress", "review"].includes(parent.status)) return;
       const crossSubAtRun = manualScoped
@@ -404,27 +407,17 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
         availableAgent(crossSubAtRun) ??
         availableAgent(crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
         availableAgent(crossCoordinator) ??
-        availableAgent(
-          pickManualPoolAgent(
-            projectCandidateAgentIds ??
-              (
-                db
-                  .prepare(
-                    "SELECT id FROM agents WHERE department_id = ? AND COALESCE(workflow_pack_key, 'development') = ?",
-                  )
-                  .all(crossDeptId, resolvedPackKey || "development") as Array<{ id: string }>
-              ).map((agent) => agent.id),
-            crossDeptId,
-          ),
-        );
+        pickAvailableDepartmentAgent(db, crossDeptId, projectCandidateAgentIds, resolvedPackKey);
       if (!execAgent) {
-        if (!delegationWait.wait(taskId, `cross-dept:${crossDeptId}`, `available department agent (${crossDeptId})`))
-          return;
-        const retry = setTimeout(() => startCrossDeptCooperation(deptIds, index, nextCtx, onAllDone), 5_000);
-        retry.unref?.();
+        persistentWait.wait(
+          taskId,
+          waitKey,
+          `Collaboration waiting for an available agent (${crossDeptId}; preferred=${crossSubAtRun?.id ?? crossLeader.id})`,
+          () => startCrossDeptCooperation(deptIds, index, nextCtx, onAllDone),
+        );
         return;
       }
-      delegationWait.resolve(taskId, `cross-dept:${crossDeptId}`);
+      persistentWait.clear(taskId, waitKey);
       const execName = lang === "ko" ? execAgent.name_ko || execAgent.name : execAgent.name;
 
       const crossAckMsg =

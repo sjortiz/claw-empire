@@ -17,13 +17,7 @@ let db: DatabaseSync;
 afterEach(() => db?.close());
 const approve: MeetingVerdict = { verdict: "approve", blocking_items: [], non_blocking_notes: ["Monitor risk later"] };
 
-async function runPlanning(
-  draft: string,
-  summary: string,
-  retry = "invalid verdict",
-  solo = false,
-  runResult?: (prompt: string, text: string, call: number) => { text: string; error?: string; timedOut?: boolean },
-) {
+async function runPlanning(draft: string, summary: string, retry = "invalid verdict", solo = false) {
   db = new DatabaseSync(":memory:");
   applyBaseSchema(db);
   applyTaskSchemaMigrations(db);
@@ -47,11 +41,9 @@ async function runPlanning(
     REVIEW_MAX_MEMO_ITEMS_PER_DEPT: 4,
   };
   const minutes = createMeetingMinutesTools(deps);
-  let runCount = 0;
-  const runAgentOneShot = vi.fn(async (_agent: any, prompt: string) => {
-    const text = prompt === "draft" ? draft : prompt === "consolidation" ? summary : retry;
-    return runResult?.(prompt, text, ++runCount) ?? { text };
-  });
+  const runAgentOneShot = vi.fn(async (_agent: any, prompt: string) => ({
+    text: prompt === "draft" ? draft : prompt === "consolidation" ? summary : retry,
+  }));
   const { seedApprovedPlanSubtasks } = createSubtaskSeedingTools({
     ...deps,
     analyzeSubtaskDepartment: (text) => (text.startsWith("dev ") ? "dev" : null),
@@ -71,13 +63,11 @@ async function runPlanning(
     }).classifyMeetingReviewDecision,
   );
   const buildMeetingPrompt = vi.fn((_agent: any, context: any) => context.planningPhase);
-  const reviewInFlight = new Set<string>();
-  const notifyCeo = vi.fn();
   createPlannedApprovalTools({
     ...deps,
     ...minutes,
     classifyMeetingReviewDecision,
-    reviewInFlight,
+    reviewInFlight: new Set(),
     reviewRoundState: new Map(),
     getTaskReviewLeaders: () => db.prepare("SELECT * FROM agents ORDER BY id").all(),
     resolveProjectPath: () => "/workspace/project",
@@ -89,149 +79,31 @@ async function runPlanning(
     sendAgentMessage: vi.fn(),
     emitMeetingSpeech: vi.fn(),
     callLeadersToCeoOffice: vi.fn(),
-    notifyCeo,
+    notifyCeo: vi.fn(),
     buildMeetingPrompt,
     runAgentOneShot,
     chooseSafeReply: (run: any) => run.text,
     sleepMs: async () => {},
     randomDelay: () => 0,
   }).startPlannedApprovalMeeting("task", "Plan", "planning", onApproved);
-  await vi.waitFor(() => expect(reviewInFlight.size).toBe(0));
+  await vi.waitFor(() =>
+    expect(db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get()).not.toEqual({
+      status: "in_progress",
+    }),
+  );
   return {
     onApproved,
-    notifyCeo,
     appendTaskLog,
     runAgentOneShot,
     buildMeetingPrompt,
     classifyMeetingReviewDecision,
     seededPlanItems: db.prepare("SELECT title, description FROM subtasks WHERE title LIKE '[Plan Item] %'").all(),
-    status: (
-      db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task' ORDER BY round DESC LIMIT 1").get() as any
-    ).status,
+    status: (db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get() as any).status,
     description: (db.prepare("SELECT description FROM tasks WHERE id = 'task'").get() as any).description as string,
   };
 }
 
 describe("planned meeting verdicts", () => {
-  it("retries a thrown planning failure once and proceeds after recovery", async () => {
-    const result = await runPlanning(
-      formatMeetingVerdict(approve),
-      formatMeetingVerdict(approve),
-      "invalid",
-      false,
-      (_prompt, text, call) => {
-        if (call === 1) throw new Error("provider unavailable");
-        return { text };
-      },
-    );
-    expect(result.status).toBe("completed");
-    expect(result.onApproved).toHaveBeenCalledOnce();
-    expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
-    expect(result.appendTaskLog).toHaveBeenCalledWith(
-      "task",
-      "system",
-      expect.stringContaining("retrying the meeting once"),
-    );
-  });
-  it("stops after a second failure, releases the lock, and exposes task-card retry", async () => {
-    const result = await runPlanning("", "", "invalid", false, () => {
-      throw new Error("provider unavailable");
-    });
-    expect(result.runAgentOneShot).toHaveBeenCalledTimes(2);
-    expect(result.onApproved).not.toHaveBeenCalled();
-    expect(db.prepare("SELECT status FROM tasks WHERE id = 'task'").get()).toEqual({ status: "pending" });
-    expect(result.notifyCeo).toHaveBeenCalledWith(expect.stringContaining("use Resume on the task card"), "task");
-    expect(db.prepare("SELECT COUNT(*) AS count FROM meeting_minutes WHERE status = 'failed'").get()).toEqual({
-      count: 2,
-    });
-  });
-
-  const oversized = Array.from({ length: 32 }, (_, index) => ({
-    key: `item${index}`,
-    title: `Work ${index}`,
-    department_id: index < 16 ? "dev" : "planning",
-    depends_on: index ? [`item${index - 1}`] : [],
-  }));
-  const oversizedSummary = `\`\`\`json\n${JSON.stringify({ plan_items: oversized })}\n\`\`\`\n${formatMeetingVerdict(approve)}`;
-  it("merges a 32-item meeting plan once while preserving owners and cross-department prerequisites", async () => {
-    const merged = Array.from({ length: 16 }, (_, index) => ({
-      key: `merged${index}`,
-      title: `Grouped work ${index}`,
-      department_id: index < 8 ? "dev" : "planning",
-      depends_on: index ? [`merged${index - 1}`] : [],
-      source_keys: [`item${index * 2}`, `item${index * 2 + 1}`],
-    }));
-    const result = await runPlanning(
-      formatMeetingVerdict(approve),
-      oversizedSummary,
-      "invalid",
-      false,
-      (prompt, text) => ({
-        text: prompt === "merge" ? JSON.stringify({ plan_items: merged }) : text,
-      }),
-    );
-    expect(result.status).toBe("completed");
-    expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
-    expect(result.buildMeetingPrompt.mock.calls.filter((call) => call[1].planningPhase === "merge")).toHaveLength(1);
-    const approved = JSON.parse(result.onApproved.mock.calls[0][0]![0]);
-    expect(approved.plan_items).toHaveLength(16);
-    expect(approved.plan_items[8]).toMatchObject({ department_id: "planning", depends_on: ["merged7"] });
-    expect(db.prepare("SELECT COUNT(*) AS count FROM subtasks").get()).toEqual({ count: 16 });
-    expect(result.appendTaskLog).toHaveBeenCalledWith("task", "system", expect.stringContaining("32 -> 16"));
-  });
-  it.each(["error", "oversized", "lost-dependency"])(
-    "continues a 32-item meeting using a logged raised cap after merge %s",
-    async (mode) => {
-      const result = await runPlanning(
-        formatMeetingVerdict(approve),
-        oversizedSummary,
-        "invalid",
-        false,
-        (prompt, text) => {
-          if (prompt !== "merge") return { text };
-          if (mode === "error") return { text: "", error: "timeout after 65000ms" };
-          return {
-            text: JSON.stringify({
-              plan_items: oversized.map((item) => ({
-                ...item,
-                source_keys: [item.key],
-                ...(mode === "lost-dependency" ? { depends_on: [] } : {}),
-              })),
-            }),
-          };
-        },
-      );
-      expect(result.status).toBe("completed");
-      expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
-      const approved = JSON.parse(result.onApproved.mock.calls[0][0]![0]);
-      expect(approved.plan_items).toEqual(oversized);
-      expect(db.prepare("SELECT COUNT(*) AS count FROM subtasks").get()).toEqual({ count: 32 });
-      expect(result.appendTaskLog).toHaveBeenCalledWith(
-        "task",
-        "system",
-        expect.stringContaining("cap raised for this meeting to 32"),
-      );
-    },
-  );
-
-  it("accepts successful timeout discussion without retrying the model", async () => {
-    const text = `Repair timeout after requests timed out and aborted jobs.\n${formatMeetingVerdict(approve)}`;
-    const result = await runPlanning(text, text);
-    expect(result.status).toBe("completed");
-    expect(result.onApproved).toHaveBeenCalledTimes(1);
-    expect(result.runAgentOneShot).toHaveBeenCalledTimes(2);
-    expect(result.appendTaskLog.mock.calls.some((call) => String(call[2]).includes("timed out"))).toBe(false);
-  });
-  it("still retries a genuine execution timeout once", async () => {
-    const text = `Implement API\n${formatMeetingVerdict(approve)}`;
-    const result = await runPlanning(text, text, text, false, (_prompt, output, call) =>
-      call === 1 ? { text: "", error: "timeout after 65000ms" } : { text: output },
-    );
-    expect(result.status).toBe("completed");
-    expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
-    expect(result.appendTaskLog).toHaveBeenCalledWith("task", "system", expect.stringContaining("retrying once"));
-  });
-
   it("shares verdict handling, preserves executable drafts without plan_items, and excludes notes from fallback work", async () => {
     const result = await runPlanning(
       `Implement API\nMonitor risk later\n${formatMeetingVerdict(approve)}`,

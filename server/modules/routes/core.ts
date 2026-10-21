@@ -447,12 +447,14 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
     subtaskDelegationDispatchInFlight,
     subtaskDelegationCompletionNoticeSent,
     taskExecutionSessions,
+    startPlannedApprovalMeeting,
+    seedApprovedPlanSubtasks,
+    processSubtaskDelegations,
+    startCrossDeptCooperation,
+    detectTargetDepartments,
     getDeptName,
     isTaskWorkflowInterrupted,
     startTaskExecutionForAgent,
-    startPlannedApprovalMeeting,
-    seedApprovedPlanSubtasks: __ctx.seedApprovedPlanSubtasks,
-    processSubtaskDelegations,
     randomDelay,
   });
 

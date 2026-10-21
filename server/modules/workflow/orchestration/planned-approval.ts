@@ -1,16 +1,14 @@
-import { isMeetingRunTimeout } from "../core/meeting-run-timeout.ts";
 import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
 import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 import type { MeetingReviewDecision } from "../core/conversation-types.ts";
-import { parsePlanningGraph, parseMergedPlanningGraph } from "../agents/planning-graph.ts";
+import { mergeOversizedPlanningGraph } from "./planning-graph-size.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
+import { isTimeoutRun } from "../core/meeting-run.ts";
 
 type CreatePlannedApprovalToolsDeps = {
   reviewInFlight: Set<string>;
   reviewRoundState: Map<string, number>;
   db: any;
-  broadcast?: (event: string, payload: unknown) => void;
-  nowMs?: () => number;
   getTaskReviewLeaders: (...args: any[]) => any[];
   resolveProjectPath: (...args: any[]) => any;
   resolveLang: (...args: any[]) => any;
@@ -38,6 +36,7 @@ type CreatePlannedApprovalToolsDeps = {
   collectPlannedActionItems: (...args: any[]) => any[];
   appendTaskProjectMemo: (...args: any[]) => any;
   appendTaskLog: (...args: any[]) => any;
+  broadcast?: (...args: any[]) => any;
   classifyMeetingReviewDecision: (text: string) => MeetingReviewDecision;
   reviewMeetingOneShotTimeoutMs?: number;
 };
@@ -74,23 +73,20 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     appendTaskLog,
     classifyMeetingReviewDecision,
     reviewMeetingOneShotTimeoutMs,
+    broadcast,
   } = deps;
 
   function markPlanningAttention(taskId: string, reason: string): void {
-    const t = deps.nowMs?.() ?? Date.now();
-    db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'planned'").run(
-      t,
+    db.prepare("UPDATE tasks SET status = 'pending', planning_attention_reason = ?, updated_at = ? WHERE id = ?").run(
+      reason,
+      Date.now(),
       taskId,
     );
     db.prepare(
-      `UPDATE agents SET current_task_id = NULL WHERE current_task_id = ? AND status IN ('idle', 'break')`,
+      "UPDATE agents SET current_task_id = NULL WHERE current_task_id = ? AND status IN ('idle', 'break')",
     ).run(taskId);
-    appendTaskLog(
-      taskId,
-      "system",
-      `Workflow attention required: planning meeting failed (${reason}). Use Resume on the task card to retry planning.`,
-    );
-    deps.broadcast?.("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+    broadcast?.("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+    appendTaskLog(taskId, "error", `Planning needs attention: ${reason}. Retry planning meeting from the task card.`);
   }
 
   function startPlannedApprovalMeeting(
@@ -98,21 +94,11 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     taskTitle: string,
     departmentId: string | null,
     onApproved: (planningNotes?: string[]) => void,
-    retryAttempt?: number,
   ): void {
     const lockKey = `planned:${taskId}`;
     if (reviewInFlight.has(lockKey)) {
       return;
     }
-    const lastRetry =
-      db
-        .prepare(
-          `SELECT message FROM task_logs WHERE task_id = ? AND
-      (message LIKE 'Planned meeting retry:%' OR message LIKE 'RESUME:%' OR message LIKE 'Planned meeting recovered%')
-      ORDER BY id DESC LIMIT 1`,
-        )
-        .get(taskId)?.message ?? "";
-    const attempt = retryAttempt ?? (lastRetry.startsWith("Planned meeting retry:") ? 1 : 0);
     reviewInFlight.add(lockKey);
 
     void (async () => {
@@ -182,14 +168,14 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           const options =
             phase === "summary" || phase === "feedback" ? { ...oneShotOptions, rawOutput: true } : oneShotOptions;
           const first = await runAgentOneShot(agent, prompt, options);
-          if (!isMeetingRunTimeout(first)) return first;
+          if (!isTimeoutRun(first)) return first;
           appendTaskLog(taskId, "system", `Planned meeting ${phase} timed out (${oneShotTimeoutMs}ms); retrying once`);
           const retryPrompt =
             phase === "summary"
               ? `${prompt}\n\n[retry] Previous attempt timed out. Return a concise complete plan, preserving all item and prerequisite keys from every department draft.`
               : compactPromptForRetry(prompt);
           const second = await runAgentOneShot(agent, retryPrompt, options);
-          if (isMeetingRunTimeout(second)) {
+          if (isTimeoutRun(second)) {
             appendTaskLog(taskId, "system", `Planned meeting ${phase} retry timed out (${oneShotTimeoutMs}ms)`);
           }
           return second;
@@ -278,7 +264,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               lang,
             });
             const run = await runMeetingOneShotWithRetry(leader, draftPrompt, "feedback");
-            if (run?.error || isMeetingRunTimeout(run) || !String(run?.text ?? "").trim()) {
+            if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
               throw new Error(run?.error || "Department planning draft did not complete");
             }
             const resolved = await resolveMeetingVerdict({
@@ -342,62 +328,15 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
         if (abortIfInactive()) return;
-        if (summaryRun?.error || isMeetingRunTimeout(summaryRun)) {
+        if (summaryRun?.error || isTimeoutRun(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
-        let graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
-        if (graph && graph.length > 30) {
-          const originalGraph = graph;
-          appendTaskLog(
-            taskId,
-            "system",
-            `Planning graph has ${graph.length} items; requesting one merge pass (target <=30)`,
-          );
-          try {
-            const mergePrompt = buildMeetingPrompt(planningLeader, {
-              meetingType: "planned",
-              planningPhase: "merge",
-              round,
-              taskTitle,
-              taskDescription,
-              workflowPackKey: taskWorkflowPackKey,
-              transcript: [],
-              turnObjective: `Merge overlapping work in this validated plan into at most 30 executable items. Merge only items with the same department_id. Preserve every source item's work, evidence and checks, ownership, and all prerequisites, including cross-department dependencies. Return one JSON fenced block with plan_items. Every merged item must include key, title, description, department_id, depends_on (merged local keys), and source_keys (all original keys it covers). Each original key must appear exactly once in source_keys; remap prerequisites to their merged keys and do not introduce cycles. If safe grouping is impossible, retain the full plan with source_keys rather than losing work. Original plan: ${JSON.stringify({ plan_items: originalGraph })}`,
-              stanceHint:
-                "This is one bounded size-reduction pass. Return the complete structured graph only; no verdict is needed.",
-              lang,
-            });
-            // Exactly one merge call: a failed size reduction must not stall the meeting.
-            const mergedRun = await runAgentOneShot(planningLeader, mergePrompt, {
-              ...oneShotOptions,
-              rawOutput: true,
-            });
-            if (abortIfInactive()) return;
-            if (mergedRun?.error || isMeetingRunTimeout(mergedRun)) {
-              throw new Error(mergedRun?.error || "Planning merge did not complete");
-            }
-            graph = parseMergedPlanningGraph(String(mergedRun?.text ?? ""), originalGraph);
-            appendTaskLog(
-              taskId,
-              "system",
-              `Planning merge pass: ${originalGraph.length} -> ${graph.length} items; ownership and prerequisites validated`,
-            );
-          } catch (error) {
-            graph = originalGraph;
-            appendTaskLog(
-              taskId,
-              "system",
-              `Planning merge pass failed; retaining validated original graph: ${String(error)}`,
-            );
-          }
-          if (graph.length > 30) {
-            appendTaskLog(
-              taskId,
-              "system",
-              `Planning item cap raised for this meeting to ${graph.length} after one merge pass; retaining validated ownership and prerequisites`,
-            );
-          }
-        }
+        const graph = await mergeOversizedPlanningGraph(
+          String(summaryRun?.text ?? ""),
+          (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+          (message) => appendTaskLog(taskId, "system", message),
+        );
+        if (abortIfInactive()) return;
         const summaryVerdict = await resolveMeetingVerdict({
           text: String(summaryRun?.text ?? ""),
           lang,
@@ -420,15 +359,12 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           if (informationalNotes.length)
             appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
           appendTaskLog(taskId, "system", `Planned meeting round ${round}: no verdict; clarification required`);
-          markPlanningAttention(taskId, "no structured verdict after clarification retry");
-          notifyCeo(
-            `[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)} Use Resume on the task card to retry planning.`,
-            taskId,
-          );
+          notifyCeo(`[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)}`, taskId);
           if (meetingId) finishMeetingMinutes(meetingId, "failed");
           dismissLeadersFromCeoOffice(taskId, leaders);
           reviewRoundState.delete(lockKey);
           reviewInFlight.delete(lockKey);
+          markPlanningAttention(taskId, "A planning reviewer did not provide a structured verdict after clarification");
           return;
         }
         // Only stripped department drafts feed fallback work. Consolidation repeats
@@ -472,9 +408,11 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         );
         if (meetingId) finishMeetingMinutes(meetingId, "completed");
         dismissLeadersFromCeoOffice(taskId, leaders);
+        db.prepare("UPDATE tasks SET planning_meeting_failures = 0, planning_attention_reason = NULL WHERE id = ?").run(
+          taskId,
+        );
         reviewRoundState.delete(lockKey);
         reviewInFlight.delete(lockKey);
-        appendTaskLog(taskId, "system", "Planned meeting recovered successfully");
         onApproved(planItems);
       } catch (err: any) {
         if (isTaskWorkflowInterrupted(taskId)) {
@@ -488,27 +426,34 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         if (meetingId) finishMeetingMinutes(meetingId, "failed");
         dismissLeadersFromCeoOffice(taskId, leaders);
         reviewInFlight.delete(lockKey);
-        if (attempt === 0) {
-          appendTaskLog(taskId, "system", `Planned meeting retry: ${msg}; retrying the meeting once`);
-          startPlannedApprovalMeeting(taskId, taskTitle, departmentId, onApproved, 1);
+        db.prepare(
+          "UPDATE tasks SET planning_meeting_failures = COALESCE(planning_meeting_failures, 0) + 1 WHERE id = ?",
+        ).run(taskId);
+        const failureState = db.prepare("SELECT planning_meeting_failures FROM tasks WHERE id = ?").get(taskId) as
+          | { planning_meeting_failures: number }
+          | undefined;
+        if (failureState?.planning_meeting_failures === 1) {
+          appendTaskLog(taskId, "system", `Automatic re-queue: planned meeting failed; retrying once: ${msg}`);
+          startPlannedApprovalMeeting(taskId, taskTitle, departmentId, onApproved);
           return;
         }
         markPlanningAttention(taskId, msg);
-        reviewRoundState.delete(lockKey);
         const errLang = resolveLang(taskTitle);
         notifyCeo(
           pickL(
             l(
               [
-                `[CEO OFFICE] '${taskTitle}' Planned 회의가 재시도 후 실패했습니다: ${msg}. 작업 카드의 Resume으로 회의를 재시도하세요.`,
+                `[CEO OFFICE] '${taskTitle}' Planned 회의가 재시도 후에도 실패하여 확인이 필요합니다: ${msg}. 작업 카드에서 계획 회의를 재시도하세요.`,
               ],
               [
-                `[CEO OFFICE] Planning meeting for '${taskTitle}' failed again: ${msg}. Needs attention; use Resume on the task card to retry planning.`,
+                `[CEO OFFICE] Planned meeting for '${taskTitle}' failed after one retry and needs attention: ${msg}. Use Retry planning meeting on the task card.`,
               ],
               [
-                `[CEO OFFICE] '${taskTitle}' のPlanned会議が再試行後に失敗しました: ${msg}。タスクカードのResumeで再試行できます。`,
+                `[CEO OFFICE] '${taskTitle}' のPlanned会議が再試行後も失敗し、確認が必要です: ${msg}。タスクカードから計画会議を再試行してください。`,
               ],
-              [`[CEO OFFICE] 处理'${taskTitle}'的 Planned 会议重试后仍失败：${msg}。请使用任务卡上的 Resume 重试。`],
+              [
+                `[CEO OFFICE] '${taskTitle}' 的 Planned 会议在重试后仍失败，需要关注：${msg}。请在任务卡中重试规划会议。`,
+              ],
             ),
             errLang,
           ),

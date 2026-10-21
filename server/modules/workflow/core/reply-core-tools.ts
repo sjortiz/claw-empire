@@ -6,6 +6,7 @@ import {
 } from "../../../../src/lib/meeting-verdict.ts";
 import { isLang, type Lang } from "../../../types/lang.ts";
 import { readNonNegativeIntEnv } from "../../../db/runtime.ts";
+import { isTimeoutRun } from "./meeting-run.ts";
 import {
   compactMeetingPromptText,
   formatMeetingTranscriptForPrompt,
@@ -260,7 +261,7 @@ export function createReplyCoreTools(deps: CreateReplyCoreToolsDeps) {
     if (/modified since it was last read|read the file again before modifying/i.test(source)) return "stale_file";
     if (/"type"\s*:\s*"(?:step_finish|step-finish)".*"reason"\s*:\s*"tool-calls"/i.test(source))
       return "tool_calls_only";
-    if (/timeout after|timed out|request timed out/i.test(source)) return "timeout";
+    if (isTimeoutRun({ error: runError })) return "timeout";
     if (runError || /\[(?:one-shot-error|tool-error)\]/i.test(source) || /^error:/im.test(source)) return "generic";
     return null;
   }
@@ -317,7 +318,7 @@ export function createReplyCoreTools(deps: CreateReplyCoreToolsDeps) {
     }
     const cleaned = normalizeConversationReply(rawText, maxReplyChars, { maxSentences: 0 });
     if (!cleaned) return fallbackTurnReply(kind, lang, agent);
-    if (/timeout after|CLI 응답 생성에 실패|response failed|one-shot-error/i.test(cleaned)) {
+    if (/CLI 응답 생성에 실패|response failed|one-shot-error/i.test(cleaned)) {
       return fallbackTurnReply(kind, lang, agent);
     }
     if (isInternalWorkNarration(cleaned)) return fallbackTurnReply(kind, lang, agent);

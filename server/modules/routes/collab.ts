@@ -634,7 +634,6 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     processSubtaskDelegations,
     maybeNotifyAllSubtasksComplete,
   } = initializeSubtaskDelegation({
-    reviewInFlight: __ctx.reviewInFlight,
     taskWorktrees: __ctx.taskWorktrees,
     db,
     l,
@@ -787,6 +786,8 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     getDeptRoleConstraint,
     formatTaskSubtaskProgressSummary,
     processSubtaskDelegations,
+    maybeNotifyAllSubtasksComplete,
+    startCrossDeptCooperation,
     reconcileCrossDeptSubtasks,
     recoverCrossDeptQueueAfterMissingCallback,
     resolveProjectPath,

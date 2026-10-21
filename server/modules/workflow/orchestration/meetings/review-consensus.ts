@@ -1,4 +1,3 @@
-import { isMeetingRunTimeout } from "../../core/meeting-run-timeout.ts";
 import { resolveMeetingVerdict } from "../../meeting-verdict.ts";
 import {
   formatMeetingVerdict,
@@ -7,6 +6,7 @@ import {
 } from "../../../../../src/lib/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import { processReviewConsensusOutcome } from "./review-consensus-outcome.ts";
+import { isTimeoutRun } from "../../core/meeting-run.ts";
 
 type ReviewConsensusDeps = any;
 
@@ -200,7 +200,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           phase: "opening" | "feedback" | "summary" | "approval",
         ): Promise<any> => {
           const first = await runAgentOneShot(agent, prompt, oneShotOptions);
-          if (!isMeetingRunTimeout(first)) return first;
+          if (!isTimeoutRun(first)) return first;
           appendTaskLog(
             taskId,
             "system",
@@ -208,7 +208,7 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
           );
           const retryPrompt = compactPromptForRetry(prompt);
           const second = await runAgentOneShot(agent, retryPrompt, oneShotOptions);
-          if (isMeetingRunTimeout(second)) {
+          if (isTimeoutRun(second)) {
             appendTaskLog(taskId, "system", `Review meeting ${phase} retry timed out (${oneShotTimeoutMs}ms)`);
           }
           return second;

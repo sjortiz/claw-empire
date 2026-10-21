@@ -1,9 +1,11 @@
+import { ensureSubtaskCancellation } from "./subtask-cancellation.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_WORKFLOW_PACK_KEY, WORKFLOW_PACK_KEYS, isWorkflowPackKey } from "../../workflow/packs/definitions.ts";
 
 type DbLike = Pick<DatabaseSync, "exec" | "prepare">;
 
 export function applyTaskSchemaMigrations(db: DbLike): void {
+  ensureSubtaskCancellation(db);
   // Subtask cross-department delegation columns
   try {
     db.exec("ALTER TABLE subtasks ADD COLUMN target_department_id TEXT");
@@ -21,8 +23,6 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
   } catch {
     /* already exists */
   }
-
-  migrateCancelledSubtasks(db);
 
   // Cross-department collaboration: link collaboration task back to original task
   try {
@@ -177,6 +177,15 @@ CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(sourc
   migrateLegacyTasksStatusSchema(db);
   repairLegacyTaskForeignKeys(db);
   ensureMessagesIdempotencySchema(db);
+  // Add after legacy table rebuilds so they cannot drop recovery state columns.
+  // Preserve planning failures across restarts; only an explicit retry clears attention.
+  for (const definition of ["planning_attention_reason TEXT", "planning_meeting_failures INTEGER NOT NULL DEFAULT 0"]) {
+    try {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${definition}`);
+    } catch {
+      /* already exists */
+    }
+  }
 }
 
 function safeJsonParse(raw: string): unknown {
@@ -734,40 +743,4 @@ function ensureMessagesIdempotencySchema(db: DbLike): void {
     ON messages(idempotency_key)
     WHERE idempotency_key IS NOT NULL
   `);
-}
-
-// SQLite cannot alter a CHECK constraint. Preserve all columns and user indexes
-// while adding the terminal cancelled state needed by recovery readiness checks.
-function migrateCancelledSubtasks(db: DbLike): void {
-  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'subtasks'").get() as
-    | { sql: string }
-    | undefined;
-  if (!table || table.sql.includes("'cancelled'")) return;
-  const schema = table.sql
-    .replace(/CREATE TABLE(?: IF NOT EXISTS)? subtasks/i, "CREATE TABLE subtasks_recovery_new")
-    .replace(/('blocked')\s*\)\s*\)/, "$1,'cancelled'))");
-  if (schema === table.sql || !schema.includes("'cancelled'"))
-    throw new Error("Cannot migrate subtask cancellation constraint");
-  const objects = db
-    .prepare(
-      "SELECT sql FROM sqlite_master WHERE tbl_name = 'subtasks' AND type IN ('index', 'trigger') AND sql IS NOT NULL",
-    )
-    .all() as { sql: string }[];
-  const columns = (db.prepare("PRAGMA table_info(subtasks)").all() as { name: string }[])
-    .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
-    .join(", ");
-  db.exec("PRAGMA foreign_keys = OFF");
-  try {
-    db.exec("BEGIN");
-    db.exec(schema);
-    db.exec(`INSERT INTO subtasks_recovery_new (${columns}) SELECT ${columns} FROM subtasks`);
-    db.exec("DROP TABLE subtasks; ALTER TABLE subtasks_recovery_new RENAME TO subtasks");
-    for (const object of objects) db.exec(object.sql);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  } finally {
-    db.exec("PRAGMA foreign_keys = ON");
-  }
 }

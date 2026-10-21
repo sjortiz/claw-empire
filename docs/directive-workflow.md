@@ -30,11 +30,10 @@ items, and the root consolidates after them. Legacy prose plans and tasks remain
 supported; dependency updates are also available through the subtask API.
 
 Plans above the 30-item target receive one bounded summarizer pass that groups
-work within its owning department. Source-key coverage and mapped prerequisites
-are validated before accepting the merged graph. If merging fails, the validated
-original graph is retained. If the result still exceeds 30 items, the cap is
-raised to that graph's size for the meeting and logged; size alone never rejects
-a plan. Invalid graphs (including missing keys or cycles) still fail validation.
+work within its owning department. The merged graph must retain every department
+and pass key, dependency and cycle validation. If merging fails or still exceeds
+30 items, the validated original graph is retained and the size target is raised
+for that meeting with a logged reason. Size alone never rejects a plan.
 
 Dependency reuse copies/reflinks compatible pnpm installations into each
 worktree instead of sharing a writable node_modules directory. Manifest, lockfile,
@@ -51,16 +50,19 @@ path as task-card Resume immediately. Approval and integration remain prerequisi
 root-local revision consolidation runs on the resumed root. Explicit pauses and
 unresolved review decisions stay under CEO control.
 
-Resource waits record their start in task logs and survive restart. After ten
+Resource waits record their start in task logs and survive restart. After fifteen
 minutes they stop and notify the CEO; waiting tasks become pending so the task
 card exposes Resume. Resume clears exhausted wait budgets and attention-blocked
-department work, then retries delegation or planning. Live parent runs continue
-while a blocked department awaits attention.
+department work, then retries delegation or planning. Planning-graph integration
+uses a separate one-hour wait limit. Live parent runs continue while a blocked
+department awaits attention.
 
 A planning meeting that throws retries once, with its reason logged. A second
-failure moves the directive to pending and notifies the CEO to use Resume to
-retry the meeting. Missing structured verdicts retain their clarification limit
-and also require explicit attention rather than silently starting execution.
+failure persists an attention reason, moves the directive to pending and notifies
+the CEO. The task card shows the reason and a Retry planning meeting action that
+uses the shared Resume path. Missing structured verdicts retain their
+clarification limit and also require explicit attention rather than silently
+starting execution.
 
 ## Testing
 

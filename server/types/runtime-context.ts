@@ -322,8 +322,10 @@ export interface RouteCollabExports {
   getDeptName: (...args: any[]) => any;
   getDeptRoleConstraint: (...args: any[]) => any;
   formatTaskSubtaskProgressSummary: (...args: any[]) => any;
+  maybeNotifyAllSubtasksComplete: (...args: any[]) => any;
   processSubtaskDelegations: (...args: any[]) => any;
   reconcileCrossDeptSubtasks: (...args: any[]) => any;
+  startCrossDeptCooperation: (...args: any[]) => any;
   recoverCrossDeptQueueAfterMissingCallback: (...args: any[]) => any;
   resolveProjectPath: (...args: any[]) => any;
   handleReportRequest: (...args: any[]) => any;

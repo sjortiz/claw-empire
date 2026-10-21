@@ -1,5 +1,5 @@
-import { resetDelegationWaits } from "../../collab/delegation-wait.ts";
-import { resumeTaskExecution } from "../../../workflow/orchestration/task-recovery.ts";
+import { resetPersistentWaits } from "../../../workflow/core/persistent-wait.ts";
+import { resumeTaskExecution } from "../../../workflow/core/task-resume.ts";
 import type { RuntimeContext } from "../../../../types/runtime-context.ts";
 import type { AgentRow } from "../../shared/types.ts";
 import { createHash } from "node:crypto";
@@ -48,7 +48,14 @@ export type TaskExecutionControlRouteDeps = Pick<
   | "randomDelay"
 > &
   Partial<
-    Pick<RuntimeContext, "startPlannedApprovalMeeting" | "seedApprovedPlanSubtasks" | "processSubtaskDelegations">
+    Pick<
+      RuntimeContext,
+      | "startPlannedApprovalMeeting"
+      | "seedApprovedPlanSubtasks"
+      | "processSubtaskDelegations"
+      | "startCrossDeptCooperation"
+      | "detectTargetDepartments"
+    >
   >;
 
 export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRouteDeps): void {
@@ -215,7 +222,6 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
 
     const mode = String(req.body?.mode ?? req.query.mode ?? "cancel");
     const targetStatus = mode === "pause" ? "pending" : "cancelled";
-    if (mode === "pause") appendTaskLog(id, "system", "PAUSE: explicit CEO pause");
     if (mode === "pause") {
       const { sessionId, controlToken } = readInterruptSessionProof(req as any);
       const hasAnyProof = Boolean(sessionId || controlToken);
@@ -321,6 +327,7 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
           task.assigned_agent_id,
         );
       }
+      if (targetStatus === "pending") appendTaskLog(id, "system", "PAUSE_BREAK: explicit pause (no active process)");
       const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
       broadcast("task_update", updatedTask);
       const statusChanged = task.status !== targetStatus;
@@ -490,6 +497,8 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
           title: string;
           status: string;
           assigned_agent_id: string | null;
+          planning_attention_reason?: string | null;
+          planning_meeting_failures?: number;
         }
       | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
@@ -505,7 +514,15 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       return res.status(400).json({ error: "invalid_status", message: `Cannot resume from '${task.status}'` });
     }
 
-    resetDelegationWaits(deps, id);
+    const retryPlanning = Boolean(task.planning_attention_reason);
+    if (retryPlanning || task.planning_meeting_failures) {
+      db.prepare("UPDATE tasks SET planning_attention_reason = NULL, planning_meeting_failures = 0 WHERE id = ?").run(
+        id,
+      );
+    }
+    resetPersistentWaits(db, id, nowMs());
+    stopRequestedTasks.delete(id);
+    stopRequestModeByTask.delete(id);
     const wasPaused = task.status === "pending";
     const targetStatus = task.assigned_agent_id ? "planned" : "inbox";
     const t = nowMs();
@@ -526,7 +543,9 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
         setTimeout(
           () => {
             if (isTaskWorkflowInterrupted(id) || activeProcesses.has(id)) return;
-            resumeTaskExecution(deps, id, "CEO resume requested");
+            resumeTaskExecution(deps, id, retryPlanning ? "manual planning meeting retry" : "manual resume", {
+              planning: retryPlanning,
+            });
           },
           randomDelay(450, 900),
         );
