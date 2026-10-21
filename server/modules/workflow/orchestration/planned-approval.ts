@@ -1,7 +1,7 @@
 import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
 import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 import type { MeetingReviewDecision } from "../core/conversation-types.ts";
-import { parsePlanningGraph } from "../agents/planning-graph.ts";
+import { mergeOversizedPlanningGraph } from "./planning-graph-size.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 import { isTimeoutRun } from "../core/meeting-run.ts";
 
@@ -315,7 +315,12 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         if (summaryRun?.error || isTimeoutRun(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
-        const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
+        const graph = await mergeOversizedPlanningGraph(
+          String(summaryRun?.text ?? ""),
+          (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+          (message) => appendTaskLog(taskId, "system", message),
+        );
+        if (abortIfInactive()) return;
         const summaryVerdict = await resolveMeetingVerdict({
           text: String(summaryRun?.text ?? ""),
           lang,
