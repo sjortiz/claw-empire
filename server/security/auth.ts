@@ -212,6 +212,8 @@ export function installSecurityMiddleware(app: Express): void {
   app.use((req, res, next) => {
     if (!req.path.startsWith("/api/")) return next();
     if (isPublicApiPath(req.path)) return next();
+    // This exact route enforces a loopback-only, task-session capability itself.
+    if (req.path === "/api/agent-messages" && (req.method === "GET" || req.method === "POST")) return next();
     if (!isAuthenticated(req)) {
       return res.status(401).json({ error: "unauthorized" });
     }

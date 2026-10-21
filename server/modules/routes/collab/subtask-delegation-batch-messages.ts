@@ -34,8 +34,33 @@ interface CrossLeaderAckParams extends MessageDeps {
 interface DelegatedDescriptionParams extends MessageDeps {
   lang: Lang;
   sourceDeptName: string;
+  targetDeptName: string;
+  parentTaskId: string;
   parentSummary: string;
   delegatedChecklist: string;
+}
+
+export const DELEGATED_PARENT_SUMMARY_MAX_CHARS = 500;
+export const DELEGATED_CHECKLIST_MAX_CHARS = 12_000;
+
+export function clipDelegationText(text: string, maxChars: number): string {
+  const value = text.trim();
+  return value.length > maxChars ? `${value.slice(0, maxChars - 1).trimEnd()}…` : value;
+}
+
+export function buildDelegatedChecklist(
+  subtasks: Array<{ id: string; title: string; description: string | null }>,
+): string {
+  return clipDelegationText(
+    subtasks
+      .map((st, idx) => {
+        const title = clipDelegationText(st.title.replace(/\s+/g, " "), 240);
+        const detail = st.description ? ` - ${clipDelegationText(st.description, 2_000)}` : "";
+        return `${idx + 1}. ${title} [${st.id}]${detail}`;
+      })
+      .join("\n"),
+    DELEGATED_CHECKLIST_MAX_CHARS,
+  );
 }
 
 interface ExecutionStartParams extends MessageDeps {
@@ -128,13 +153,24 @@ export function buildDelegatedTitle(deps: MessageDeps, lang: Lang, itemCount: nu
 }
 
 export function buildDelegatedDescription(params: DelegatedDescriptionParams): string {
-  const { l, pickL, lang, sourceDeptName, parentSummary, delegatedChecklist } = params;
+  const { l, pickL, lang, sourceDeptName, targetDeptName, parentTaskId, parentSummary, delegatedChecklist } = params;
+  const summary = clipDelegationText(parentSummary.replace(/\s+/g, " "), DELEGATED_PARENT_SUMMARY_MAX_CHARS);
+  const checklist = clipDelegationText(delegatedChecklist, DELEGATED_CHECKLIST_MAX_CHARS);
+  const reference = `GET /api/tasks/${parentTaskId}`;
   return pickL(
     l(
-      [`[서브태스크 위임 from ${sourceDeptName}] ${parentSummary}\n\n[순차 체크리스트]\n${delegatedChecklist}`],
-      [`[Subtasks delegated from ${sourceDeptName}] ${parentSummary}\n\n[Sequential checklist]\n${delegatedChecklist}`],
-      [`[サブタスク委任元 ${sourceDeptName}] ${parentSummary}\n\n[順次チェックリスト]\n${delegatedChecklist}`],
-      [`[SubTask 委派来源 ${sourceDeptName}] ${parentSummary}\n\n[顺序清单]\n${delegatedChecklist}`],
+      [
+        `[서브태스크 위임 from ${sourceDeptName}]\n[담당 범위: ${targetDeptName}]\n아래 담당 체크리스트만 수행하세요. 다른 부서의 업무는 해당 담당자와 조율하고 중복 수행하지 마세요.\n\n[순차 체크리스트]\n${checklist}\n\n[상위 업무 배경 — 참고 전용]\n${summary}\n전체 지시 및 생략된 체크리스트 상세: ${reference} (상위 업무 ${parentTaskId}). 전체 지시는 배경 참고이며 이 부서에 전체 업무를 배정하는 지시가 아닙니다.`,
+      ],
+      [
+        `[Subtasks delegated from ${sourceDeptName}]\n[Department scope: ${targetDeptName}]\nExecute only the owned checklist below. Coordinate dependencies with other owners; do not duplicate their work.\n\n[Sequential checklist]\n${checklist}\n\n[Parent context — reference only]\n${summary}\nFull directive and any omitted checklist details: ${reference} (parent task ${parentTaskId}). The full directive is background reference; it does not assign the entire task to this department.`,
+      ],
+      [
+        `[サブタスク委任元 ${sourceDeptName}]\n[担当範囲: ${targetDeptName}]\n以下の担当チェックリストのみ実行してください。他部門への依存事項は担当者と調整し、作業を重複しないでください。\n\n[順次チェックリスト]\n${checklist}\n\n[親タスクの背景 — 参照専用]\n${summary}\n完全な指示と省略されたチェックリストの詳細: ${reference} (親タスク ${parentTaskId})。完全な指示は背景資料であり、この部門に全作業を割り当てるものではありません。`,
+      ],
+      [
+        `[SubTask 委派来源 ${sourceDeptName}]\n[负责范围：${targetDeptName}]\n仅执行以下负责清单。请与其他负责人协调依赖项，避免重复他们的工作。\n\n[顺序清单]\n${checklist}\n\n[父任务背景 — 仅供参考]\n${summary}\n完整指示及省略的清单详情：${reference}（父任务 ${parentTaskId}）。完整指示仅作背景参考，并非将全部任务分配给本部门。`,
+      ],
     ),
     lang,
   );

@@ -2,6 +2,11 @@ import type { Lang } from "../../../types/lang.ts";
 import { getDepartmentPromptForPack } from "../../workflow/packs/department-scope.ts";
 import type { AgentRow } from "./direct-chat.ts";
 import type { L10n } from "./language-policy.ts";
+import {
+  buildDelegatedChecklist,
+  buildDelegatedDescription,
+  clipDelegationText,
+} from "./subtask-delegation-batch-messages.ts";
 import type { SubtaskRow } from "./subtask-summary.ts";
 
 type ParentTaskRow = {
@@ -47,13 +52,9 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
     targetDeptName: string,
   ): string {
     const lang = resolveLang(parentTask.description ?? parentTask.title);
-    const assignedIds = new Set(assignedSubtasks.map((st) => st.id));
-    const orderedChecklist = assignedSubtasks
-      .map((st, idx) => {
-        const detail = st.description ? ` - ${st.description}` : "";
-        return `${idx + 1}. ${st.title}${detail}`;
-      })
-      .join("\n");
+    const ownedSubtasks = assignedSubtasks.filter((st) => st.target_department_id === targetDeptId);
+    const assignedIds = new Set(ownedSubtasks.map((st) => st.id));
+    const orderedChecklist = buildDelegatedChecklist(ownedSubtasks);
 
     const allSubtasks = db
       .prepare(
@@ -78,21 +79,24 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
       .prepare("SELECT department_id, workflow_pack_key FROM tasks WHERE id = ?")
       .get(parentTask.id) as { department_id: string | null; workflow_pack_key: string | null } | undefined;
 
-    const subtaskLines = allSubtasks
-      .map((st) => {
-        const icon = statusIcon[st.status] || "⏳";
-        const dept = st.target_department_id
-          ? getDeptName(st.target_department_id, parentDept?.workflow_pack_key ?? null)
-          : getDeptName(parentDept?.department_id ?? "", parentDept?.workflow_pack_key ?? null);
-        const marker = assignedIds.has(st.id)
-          ? pickL(l([" ← 당신의 담당"], [" <- assigned to you"], [" ← あなたの担당"], [" <- 你的负责项"]), lang)
-          : "";
-        return `${icon} ${st.title} (${dept} - ${st.status})${marker}`;
-      })
-      .join("\n");
+    const subtaskLines = clipDelegationText(
+      allSubtasks
+        .map((st) => {
+          const icon = statusIcon[st.status] || "⏳";
+          const dept = st.target_department_id
+            ? getDeptName(st.target_department_id, parentDept?.workflow_pack_key ?? null)
+            : getDeptName(parentDept?.department_id ?? "", parentDept?.workflow_pack_key ?? null);
+          const marker = assignedIds.has(st.id)
+            ? pickL(l([" ← 당신의 담당"], [" <- assigned to you"], [" ← あなたの担当"], [" <- 你的负责项"]), lang)
+            : "";
+          return `${icon} ${clipDelegationText(st.title.replace(/\s+/g, " "), 160)} (${dept} - ${st.status})${marker}`;
+        })
+        .join("\n"),
+      4_000,
+    );
 
     // Collect completed sibling subtask artifacts so downstream teams can reference prior work
-    const completedSiblings = allSubtasks.filter((st) => st.status === "done" && !assignedIds.has(st.id));
+    const completedSiblings = allSubtasks.filter((st) => st.status === "done" && !assignedIds.has(st.id)).slice(0, 6);
     let completedArtifactsBlock = "";
     if (completedSiblings.length > 0) {
       const artifactSections: string[] = [];
@@ -108,23 +112,17 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
               "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY created_at DESC LIMIT 10",
             )
             .all(sibling.delegated_task_id) as Array<{ message: string }>;
-          const logSummary = recentLogs
-            .map((row) => row.message)
-            .filter((m) => m && !m.startsWith("RUN ") && !m.startsWith("Status →"))
-            .slice(0, 5)
-            .reverse()
-            .join("\n  ");
-          const delegatedTask = db
-            .prepare("SELECT title, description, project_path FROM tasks WHERE id = ?")
-            .get(sibling.delegated_task_id) as
-            | { title: string; description: string | null; project_path: string | null }
-            | undefined;
-          const desc = delegatedTask?.description
-            ? delegatedTask.description.split("\n").slice(0, 15).join("\n  ")
-            : "";
+          const logSummary = clipDelegationText(
+            recentLogs
+              .map((row) => row.message)
+              .filter((m) => m && !m.startsWith("RUN ") && !m.startsWith("Status →"))
+              .slice(0, 3)
+              .reverse()
+              .join("\n  "),
+            600,
+          );
           artifactSections.push(
-            `[${deptName}] ${sibling.title} (DONE)` +
-              (desc ? `\n  ${desc}` : "") +
+            `[${deptName}] ${clipDelegationText(sibling.title, 160)} (DONE; task ${sibling.delegated_task_id})` +
               (logSummary ? `\n  ---\n  ${logSummary}` : ""),
           );
         } else {
@@ -132,9 +130,10 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
           const siblingRow = db.prepare("SELECT description FROM subtasks WHERE id = ?").get(sibling.id) as
             | { description: string | null }
             | undefined;
-          const desc = siblingRow?.description ? siblingRow.description.split("\n").slice(0, 10).join("\n  ") : "";
+          const desc = siblingRow?.description ? clipDelegationText(siblingRow.description, 600) : "";
           artifactSections.push(
-            `[${deptName}] ${sibling.title} (DONE — completed by origin team)` + (desc ? `\n  ${desc}` : ""),
+            `[${deptName}] ${clipDelegationText(sibling.title, 160)} (DONE — completed by origin team)` +
+              (desc ? `\n  ${desc}` : ""),
           );
         }
       }
@@ -145,16 +144,19 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
           "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY created_at DESC LIMIT 15",
         )
         .all(parentTask.id) as Array<{ message: string }>;
-      const parentLogSummary = parentLogs
-        .map((row) => row.message)
-        .filter((m) => m && !m.startsWith("RUN ") && !m.startsWith("Status →") && !m.startsWith("Subtask delegation"))
-        .slice(0, 5)
-        .reverse()
-        .join("\n  ");
+      const parentLogSummary = clipDelegationText(
+        parentLogs
+          .map((row) => row.message)
+          .filter((m) => m && !m.startsWith("RUN ") && !m.startsWith("Status →") && !m.startsWith("Subtask delegation"))
+          .slice(0, 3)
+          .reverse()
+          .join("\n  "),
+        600,
+      );
       if (parentLogSummary) {
         const originDeptName = getDeptName(parentDept?.department_id ?? "", parentDept?.workflow_pack_key ?? null);
         artifactSections.unshift(
-          `[${originDeptName}] ${parentTask.title} (origin task summary)\n  ${parentLogSummary}`,
+          `[${originDeptName}] ${clipDelegationText(parentTask.title, 160)} (origin task summary)\n  ${parentLogSummary}`,
         );
       }
 
@@ -167,7 +169,7 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
         ),
         lang,
       );
-      completedArtifactsBlock = `${completedLabel}\n${artifactSections.join("\n\n")}`;
+      completedArtifactsBlock = `${completedLabel}\n${clipDelegationText(artifactSections.join("\n\n"), 4_000)}`;
     }
 
     const roleLabel =
@@ -232,8 +234,6 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
       ),
       lang,
     );
-    const originalTaskLabel = pickL(l(["원본 업무"], ["Original task"], ["元タスク"], ["原始任务"]), lang);
-    const ceoRequestLabel = pickL(l(["CEO 요청"], ["CEO request"], ["CEO依頼"], ["CEO指示"]), lang);
     const allSubtasksLabel = pickL(
       l(["전체 서브태스크 현황"], ["All subtask status"], ["全サブタスク状況"], ["全部 SubTask 状态"]),
       lang,
@@ -247,10 +247,16 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
       ),
       lang,
     );
-    const checklistLabel = pickL(
-      l(["순차 실행 체크리스트"], ["Sequential execution checklist"], ["順次実行チェックリスト"], ["顺序执行清单"]),
+    const scopedDescription = buildDelegatedDescription({
+      l,
+      pickL,
       lang,
-    );
+      sourceDeptName: getDeptName(parentDept?.department_id ?? "", parentDept?.workflow_pack_key ?? null),
+      targetDeptName,
+      parentTaskId: parentTask.id,
+      parentSummary: parentTask.description || parentTask.title,
+      delegatedChecklist: orderedChecklist,
+    });
     const finalInstruction = pickL(
       l(
         [
@@ -269,17 +275,14 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
       [
         header,
         ``,
-        `${originalTaskLabel}: ${parentTask.title}`,
-        parentTask.description ? `${ceoRequestLabel}: ${parentTask.description}` : "",
+        deptOwnedLabel,
+        scopedDescription,
         ``,
         `[${allSubtasksLabel}]`,
         subtaskLines,
         completedArtifactsBlock ? `\n${completedArtifactsBlock}` : "",
         ``,
-        deptOwnedLabel,
-        `${checklistLabel}:`,
-        orderedChecklist,
-        conversationCtx ? `\n${conversationCtx}` : "",
+        conversationCtx ? `\n${clipDelegationText(conversationCtx, 4_000)}` : "",
         ``,
         `---`,
         `Agent: ${agentDisplayName} (${roleLabel}, ${targetDeptName})`,
@@ -294,8 +297,8 @@ export function createSubtaskDelegationPromptBuilder(deps: PromptDeps) {
         allowWarningFix: hasExplicitWarningFixRequest(
           parentTask.title,
           parentTask.description,
-          assignedSubtasks.map((st) => st.title).join(" / "),
-          assignedSubtasks
+          ownedSubtasks.map((st) => st.title).join(" / "),
+          ownedSubtasks
             .map((st) => st.description)
             .filter((v): v is string => !!v)
             .join(" / "),

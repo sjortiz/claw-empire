@@ -1,3 +1,4 @@
+import { buildAgentCoordinationContext } from "../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../workflow/core/reasoning-effort.ts";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,6 +14,7 @@ import type { SubtaskRow } from "./subtask-summary.ts";
 import {
   buildCrossLeaderAckMessage,
   buildDelegatedDescription,
+  buildDelegatedChecklist,
   buildDelegatedTitle,
   buildExecutionStartNotice,
   buildOriginRequestMessage,
@@ -32,6 +34,7 @@ type ParentTaskRow = {
 };
 
 interface BatchDeps {
+  taskWorktrees?: NonNullable<Parameters<typeof buildAgentCoordinationContext>[6]>["taskWorktrees"];
   db: any;
   l: (ko: string[], en: string[], ja?: string[], zh?: string[]) => L10n;
   pickL: (pool: L10n, lang: Lang) => string;
@@ -123,6 +126,7 @@ interface BatchDeps {
 export function createSubtaskDelegationBatch(deps: BatchDeps) {
   const {
     db,
+    taskWorktrees,
     l,
     pickL,
     resolveLang,
@@ -340,12 +344,14 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
       const delegatedTaskId = randomUUID();
       const ct = nowMs();
       const delegatedTitle = buildDelegatedTitle({ l, pickL }, lang, subtasks.length, batchTitle);
-      const delegatedChecklist = subtasks.map((st, idx) => `${idx + 1}. ${st.title}`).join("\n");
+      const delegatedChecklist = buildDelegatedChecklist(subtasks);
       const delegatedDescription = buildDelegatedDescription({
         l,
         pickL,
         lang,
         sourceDeptName: getDeptName(parentTask.department_id ?? "", parentTask.workflow_pack_key ?? null),
+        targetDeptName,
+        parentTaskId: parentTask.id,
         parentSummary: parentTask.description || parentTask.title,
         delegatedChecklist,
       });
@@ -489,49 +495,22 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
           const executionSession = ensureTaskExecutionSession(delegatedTaskId, execAgent.id, execProvider);
           const worktreeNote = `\nNOTE: You are working in an isolated Git worktree branch (climpire/${delegatedTaskId.slice(0, 8)}). Commit your changes normally.`;
 
-          // Build sibling worktree reference block so agents can read prior departments' work
-          let siblingWorktreeBlock = "";
-          try {
-            const siblingRows = db
-              .prepare(
-                "SELECT s.title, s.target_department_id, s.delegated_task_id FROM subtasks s WHERE s.task_id = ? AND s.status = 'done' AND s.delegated_task_id IS NOT NULL AND s.delegated_task_id != ?",
-              )
-              .all(parentTask.id, delegatedTaskId) as Array<{
-              title: string;
-              target_department_id: string | null;
-              delegated_task_id: string;
-            }>;
-            const validSiblings: string[] = [];
-            for (const sib of siblingRows) {
-              const shortId = sib.delegated_task_id.slice(0, 8);
-              const wtPath = path.join(projPath, ".climpire-worktrees", shortId);
-              if (fs.existsSync(wtPath)) {
-                const deptLabel = sib.target_department_id
-                  ? getDeptName(sib.target_department_id, parentTask.workflow_pack_key)
-                  : "unknown";
-                validSiblings.push(`- [${deptLabel}] ${wtPath}`);
-              }
-            }
-            if (validSiblings.length > 0) {
-              siblingWorktreeBlock = [
-                "",
-                "[Prior Department Deliverables]",
-                "The following directories contain completed work from other departments on this project.",
-                "You MUST read and reference these files to ensure consistency with prior deliverables.",
-                "These are READ-ONLY references — do NOT modify files in these paths.",
-                ...validSiblings,
-              ].join("\n");
-            }
-          } catch {
-            // best effort — do not block delegation on sibling lookup failure
-          }
+          const coordinationContext = buildAgentCoordinationContext(
+            db,
+            delegatedTaskId,
+            executionSession,
+            lang,
+            { l, pickL },
+            nowMs(),
+            { taskWorktrees },
+          );
 
           const sessionPrompt = [
             `[Task Session] id=${executionSession.sessionId} owner=${executionSession.agentId} provider=${executionSession.provider}`,
             "Task-scoped session: keep continuity only within this delegated task.",
             spawnPrompt,
             worktreeNote,
-            siblingWorktreeBlock,
+            coordinationContext,
           ].join("\n");
 
           if (execProvider === "claude") {

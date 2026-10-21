@@ -277,6 +277,9 @@ export function initializeCollabCoordination(ctx: RuntimeContext): any {
   }
 
   const { recoverCrossDeptQueueAfterMissingCallback, startCrossDeptCooperation } = createCrossDeptCooperationTools({
+    createWorktree: __ctx.createWorktree,
+    ensureClaudeMd: __ctx.ensureClaudeMd,
+    taskWorktrees: __ctx.taskWorktrees,
     db,
     nowMs,
     appendTaskLog,

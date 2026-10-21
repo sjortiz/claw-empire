@@ -144,6 +144,16 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at INTEGER DEFAULT (unixepoch()*1000)
 );
 
+CREATE TABLE IF NOT EXISTS task_agent_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  source_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  target_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  delivered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_task_agent_notes_inbox ON task_agent_notes(target_task_id, delivered_at, id);
+CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(source_task_id, id);
+
 CREATE TABLE IF NOT EXISTS task_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id TEXT REFERENCES tasks(id),

@@ -764,6 +764,7 @@ export function registerRoutesPartB(ctx: RuntimeContext): RouteCollabExports {
     processSubtaskDelegations,
     maybeNotifyAllSubtasksComplete,
   } = initializeSubtaskDelegation({
+    taskWorktrees: __ctx.taskWorktrees,
     db,
     l,
     pickL,

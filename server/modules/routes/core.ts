@@ -398,6 +398,7 @@ export function registerRoutesPartA(ctx: RuntimeContext): Record<string, never> 
   });
 
   registerTaskExecutionRoutes({
+    taskWorktrees,
     app,
     db,
     activeProcesses,

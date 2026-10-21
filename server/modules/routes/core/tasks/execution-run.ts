@@ -1,3 +1,4 @@
+import { buildAgentCoordinationContext } from "../../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
 import { notifyTaskStatus } from "../../../../gateway/client.ts";
@@ -47,7 +48,8 @@ export type TaskRunRouteDeps = Pick<
   | "spawnCliAgent"
   | "handleTaskRunComplete"
   | "buildAvailableSkillsPromptBlock"
->;
+> &
+  Partial<Pick<RuntimeContext, "taskWorktrees">>;
 
 export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
   const {
@@ -61,6 +63,7 @@ export function registerTaskRunRoute(deps: TaskRunRouteDeps): void {
     resolveProjectPath,
     logsDir,
     createWorktree,
+    taskWorktrees,
     generateProjectContext,
     getRecentChanges,
     ensureClaudeMd,
@@ -457,6 +460,15 @@ Whenever you complete a subtask, report it in this format:
       videoArtifactRelativePath: videoArtifactSpec?.relativePath,
     });
 
+    const coordinationContext = buildAgentCoordinationContext(
+      db,
+      id,
+      executionSession,
+      taskLang,
+      { l, pickL },
+      nowMs(),
+      { taskWorktrees },
+    );
     const prompt = buildTaskExecutionPrompt(
       [
         (
@@ -470,6 +482,7 @@ Whenever you complete a subtask, report it in this format:
         `[Task] ${task.title}`,
         task.description ? `\n${task.description}` : "",
         workflowPackGuidance ? `\n[Workflow Pack Execution Rules]\n${workflowPackGuidance}` : "",
+        coordinationContext,
         continuationCtx,
         conversationCtx,
         `\n---`,

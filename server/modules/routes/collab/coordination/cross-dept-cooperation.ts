@@ -1,3 +1,4 @@
+import { buildAgentCoordinationContext } from "../../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../../workflow/core/reasoning-effort.ts";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -24,6 +25,9 @@ type CrossDeptCooperationDeps = any;
 export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) {
   const {
     db,
+    taskWorktrees,
+    createWorktree,
+    ensureClaudeMd,
     nowMs,
     appendTaskLog,
     broadcast,
@@ -512,11 +516,43 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               title: string;
               description: string | null;
               project_path: string | null;
+              base_branch: string | null;
               workflow_pack_key: string | null;
             }
           | undefined;
         if (crossTaskData) {
+          const finalizeCrossDeptRun = (exitCode: number) => {
+            const linked = delegatedTaskToSubtask.get(crossTaskId);
+            if (linked) {
+              handleSubtaskDelegationComplete(crossTaskId, linked, exitCode);
+            } else {
+              handleTaskRunComplete(crossTaskId, exitCode);
+            }
+          };
           const projPath = resolveProjectPath(crossTaskData);
+          // Late-note continuations reuse this exact worktree, including dirty files.
+          const agentCwd = createWorktree(
+            projPath,
+            crossTaskId,
+            execAgent.name,
+            crossTaskData.base_branch ?? undefined,
+          );
+          if (!agentCwd) {
+            appendTaskLog(
+              crossTaskId,
+              "error",
+              `Execution blocked: isolated worktree creation failed for project path '${projPath}'`,
+            );
+            // Use normal failure handling to release the agent and advance the queue.
+            finalizeCrossDeptRun(1);
+            return;
+          }
+          appendTaskLog(
+            crossTaskId,
+            "system",
+            `Git worktree created: ${agentCwd} (branch: climpire/${crossTaskId.slice(0, 8)})`,
+          );
+          if (execProvider === "claude") ensureClaudeMd(projPath, agentCwd);
           const logFilePath = path.join(logsDir, `${crossTaskId}.log`);
           const roleLabels: Record<string, string> = {
             team_leader: "Team Leader",
@@ -543,6 +579,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               execAgent.personality ? `Personality: ${execAgent.personality}` : "",
               deptConstraint,
               deptPromptBlock,
+              `NOTE: You are working in an isolated Git worktree branch (climpire/${crossTaskId.slice(0, 8)}). Commit your changes normally.`,
               pickL(
                 l(
                   ["위 작업을 충분히 완수하세요. 필요 시 위 대화 맥락을 참고하세요."],
@@ -562,15 +599,10 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
             `[Task Session] id=${executionSession.sessionId} owner=${executionSession.agentId} provider=${executionSession.provider}`,
             "Task-scoped session: keep continuity only for this collaboration task.",
             spawnPrompt,
+            buildAgentCoordinationContext(db, crossTaskId, executionSession, taskLang, { l, pickL }, nowMs(), {
+              taskWorktrees,
+            }),
           ].join("\n");
-          const finalizeCrossDeptRun = (exitCode: number) => {
-            const linked = delegatedTaskToSubtask.get(crossTaskId);
-            if (linked) {
-              handleSubtaskDelegationComplete(crossTaskId, linked, exitCode);
-            } else {
-              handleTaskRunComplete(crossTaskId, exitCode);
-            }
-          };
 
           appendTaskLog(crossTaskId, "system", `RUN start (agent=${execAgent.name}, provider=${execProvider})`);
           if (execProvider === "api") {
@@ -581,7 +613,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               execAgent.api_provider_id ?? null,
               execAgent.api_model ?? null,
               sessionPrompt,
-              projPath,
+              agentCwd,
               logFilePath,
               controller,
               fakePid,
@@ -595,7 +627,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               crossTaskId,
               execProvider,
               sessionPrompt,
-              projPath,
+              agentCwd,
               logFilePath,
               controller,
               fakePid,
@@ -614,7 +646,7 @@ export function createCrossDeptCooperationTools(deps: CrossDeptCooperationDeps) 
               crossTaskId,
               execProvider,
               sessionPrompt,
-              projPath,
+              agentCwd,
               logFilePath,
               crossModel,
               crossReasoningLevel,

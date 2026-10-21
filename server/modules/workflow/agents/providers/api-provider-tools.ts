@@ -270,7 +270,8 @@ export function createApiProviderTools(deps: CreateApiProviderToolsDeps) {
     safeWrite(`\n===== task run start ${new Date().toISOString()} | provider=api =====\n`);
 
     const promptPath = path.join(logsDir, `${taskId}.prompt.txt`);
-    fs.writeFileSync(promptPath, prompt, "utf8");
+    fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
+    fs.chmodSync(promptPath, 0o600);
 
     const mockProc = {
       pid: fakePid,

@@ -195,10 +195,10 @@ export function createSubtaskSeedingTools(deps: SubtaskSeedingDeps) {
         ),
         description: pickL(
           l(
-            [`Planned 회의 보완점을 실행 계획으로 반영합니다: ${detail}`],
-            [`Convert this planned-meeting improvement note into an executable task: ${detail}`],
-            [`Planned会議の補完項目を実行計画へ反映します: ${detail}`],
-            [`将 Planned 会议补充项转为可执行任务：${detail}`],
+            [`Planned 회의에서 배정된 다음 항목만 실행하고 담당 산출물을 보고하세요: ${detail}`],
+            [`Execute only this assigned planned-meeting item and report its deliverable: ${detail}`],
+            [`Planned会議で割り当てられた次の項目のみ実行し、担当成果物を報告してください: ${detail}`],
+            [`仅执行以下 Planned 会议分配项并报告负责的交付物：${detail}`],
           ),
           lang,
         ),

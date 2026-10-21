@@ -381,7 +381,9 @@ export function ChatPanel({
         }
         if (selectedTaskId && msg.task_id === selectedTaskId) return true;
         return (
-          (msg.sender_type === "ceo" && msg.receiver_type === "agent" && msg.receiver_id === selectedAgentId) ||
+          ((msg.sender_type === "ceo" || msg.sender_type === "agent") &&
+            msg.receiver_type === "agent" &&
+            msg.receiver_id === selectedAgentId) ||
           (msg.sender_type === "agent" && msg.sender_id === selectedAgentId) ||
           msg.message_type === "announcement" ||
           msg.message_type === "directive" ||

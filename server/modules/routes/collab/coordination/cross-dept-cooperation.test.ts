@@ -107,6 +107,8 @@ describe("createCrossDeptCooperationTools", () => {
 
       const { startCrossDeptCooperation } = createCrossDeptCooperationTools({
         db,
+        createWorktree: vi.fn(() => "/workspace/demo/.climpire-worktrees/test"),
+        ensureClaudeMd: vi.fn(),
         nowMs: () => 1_717_171_717_000,
         appendTaskLog: vi.fn(),
         broadcast: vi.fn(),
@@ -223,6 +225,8 @@ describe("createCrossDeptCooperationTools", () => {
 
     const { startCrossDeptCooperation } = createCrossDeptCooperationTools({
       db,
+      createWorktree: vi.fn(() => "/workspace/demo/.climpire-worktrees/test"),
+      ensureClaudeMd: vi.fn(),
       nowMs: () => 1_717_171_717_000,
       appendTaskLog: vi.fn(),
       broadcast: vi.fn(),

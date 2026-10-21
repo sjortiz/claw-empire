@@ -1,3 +1,4 @@
+import type { RuntimeContext } from "../../../types/runtime-context.ts";
 import type { Lang } from "../../../types/lang.ts";
 import type { AgentRow } from "./direct-chat.ts";
 import { reconcileVideoRenderDelegationState } from "../../workflow/orchestration/video-render-delegation-state.ts";
@@ -8,6 +9,7 @@ import { initializeSubtaskSummary, type SubtaskRow } from "./subtask-summary.ts"
 import type { L10n } from "./language-policy.ts";
 
 interface SubtaskDelegationDeps {
+  taskWorktrees?: RuntimeContext["taskWorktrees"];
   db: any;
   l: (ko: string[], en: string[], ja?: string[], zh?: string[]) => L10n;
   pickL: (pool: L10n, lang: Lang) => string;
@@ -107,6 +109,7 @@ interface SubtaskDelegationDeps {
 export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   const {
     db,
+    taskWorktrees,
     l,
     pickL,
     resolveLang,
@@ -538,8 +541,13 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
       return;
     }
 
-    delegatedTaskToSubtask.delete(delegatedTaskId);
     handleTaskRunComplete(delegatedTaskId, exitCode);
+    // A successful run with late peer notes continues before delegated items finish.
+    const afterRun = db.prepare("SELECT status FROM tasks WHERE id = ?").get(delegatedTaskId) as
+      | { status: string }
+      | undefined;
+    if (afterRun?.status === "in_progress" || afterRun?.status === "pending") return;
+    delegatedTaskToSubtask.delete(delegatedTaskId);
 
     const lang = getPreferredLanguage();
     const blockedReason = pickL(
@@ -576,6 +584,7 @@ export function initializeSubtaskDelegation(deps: SubtaskDelegationDeps) {
   }
 
   const { delegateSubtaskBatch } = createSubtaskDelegationBatch({
+    taskWorktrees,
     db,
     l,
     pickL,

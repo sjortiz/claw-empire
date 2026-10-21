@@ -140,6 +140,13 @@ export default function ChatMessageList({
               : isSystem
                 ? tr("시스템", "System", "システム", "系统")
                 : getAgentName(senderAgent) || senderNameFromPayload || tr("알 수 없음", "Unknown", "不明", "未知");
+            const recipientName =
+              msg.sender_type === "agent" &&
+              msg.receiver_type === "agent" &&
+              msg.receiver_id &&
+              msg.receiver_id !== "ceo"
+                ? getAgentName(agents.find((agent) => agent.id === msg.receiver_id)) || msg.receiver_id
+                : null;
             const decisionRequest = decisionRequestByMessage.get(msg.id);
 
             if (msg.sender_type === "agent" && msg.receiver_type === "all") {
@@ -228,7 +235,11 @@ export default function ChatMessageList({
               <div key={msg.id} className="flex items-end gap-2">
                 <AgentAvatar agent={senderAgent} spriteMap={spriteMap} size={28} />
                 <div className="flex max-w-[75%] flex-col gap-1">
-                  <span className="px-1 text-xs text-gray-500">{senderName}</span>
+                  <span className="px-1 text-xs text-gray-500">
+                    {senderName}
+                    {recipientName &&
+                      ` · ${tr(`${recipientName}에게`, `To ${recipientName}`, `${recipientName}宛て`, `发给 ${recipientName}`)}`}
+                  </span>
                   <div className="rounded-2xl rounded-bl-sm bg-gray-700 px-4 py-2.5 text-sm text-gray-100 shadow-md">
                     <MessageContent content={msg.content} />
                   </div>

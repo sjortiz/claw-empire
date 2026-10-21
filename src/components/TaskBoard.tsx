@@ -8,6 +8,7 @@ import CreateTaskModal from "./taskboard/CreateTaskModal";
 import FilterBar from "./taskboard/FilterBar";
 import TaskCard from "./taskboard/TaskCard";
 import { COLUMNS, isHideableStatus, taskStatusLabel, type HideableStatus } from "./taskboard/constants";
+import { buildRelatedTaskIndex } from "./taskboard/delegated-scope";
 
 interface TaskBoardProps {
   tasks: Task[];
@@ -111,6 +112,8 @@ export function TaskBoard({
     }
     return grouped;
   }, [filteredTasks]);
+
+  const relatedTasksByTask = useMemo(() => buildRelatedTaskIndex(tasks), [tasks]);
 
   const subtasksByTask = useMemo(() => {
     const grouped: Record<string, SubTask[]> = {};
@@ -268,6 +271,7 @@ export function TaskBoard({
                       agents={agents}
                       departments={departments}
                       taskSubtasks={subtasksByTask[task.id] ?? []}
+                      relatedTasks={relatedTasksByTask.get(task.id)}
                       isHiddenTask={hiddenTaskIds.has(task.id)}
                       onUpdateTask={onUpdateTask}
                       onDeleteTask={onDeleteTask}

@@ -230,7 +230,8 @@ export function createCliRuntimeTools(deps: CliRuntimeDeps) {
     clearCliOutputDedup(taskId);
     // Save prompt for debugging
     const promptPath = path.join(logsDir, `${taskId}.prompt.txt`);
-    fs.writeFileSync(promptPath, prompt, "utf8");
+    fs.writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
+    fs.chmodSync(promptPath, 0o600);
 
     const args = buildAgentArgs(provider, model, reasoningLevel);
     const logStream = fs.createWriteStream(logPath, { flags: "a" });

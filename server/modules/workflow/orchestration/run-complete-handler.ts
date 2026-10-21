@@ -1,3 +1,4 @@
+import { continueTaskForAgentNotes } from "../core/agent-coordination.ts";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -51,6 +52,9 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     prettyStreamJson,
     getWorktreeDiffSummary,
     hasVisibleDiffSummary,
+    taskExecutionSessions,
+    startTaskExecutionForAgent,
+    getDeptName,
   } = deps;
 
   function handleTaskRunComplete(taskId: string, exitCode: number): void {
@@ -260,6 +264,27 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
     if (result) {
       db.prepare("UPDATE tasks SET result = ? WHERE id = ?").run(result, taskId);
     }
+
+    if (
+      startTaskExecutionForAgent &&
+      continueTaskForAgentNotes({
+        db,
+        taskId,
+        exitCode: finalExitCode,
+        session: taskExecutionSessions?.get(taskId),
+        stopped: stopRequested,
+        log: (message) => appendTaskLog(taskId, "system", message),
+        start: (agent, departmentId) =>
+          startTaskExecutionForAgent(
+            taskId,
+            agent,
+            departmentId,
+            departmentId ? getDeptName(departmentId) : "Unassigned",
+            { reuseWorktree: true },
+          ),
+      })
+    )
+      return;
 
     // Auto-complete own-department subtasks on CLI success; foreign ones get delegated
     if (finalExitCode === 0) {
@@ -660,7 +685,22 @@ export function createRunCompleteHandler(deps: CreateRunCompleteHandlerDeps) {
 
       // Clean up worktree on failure — failed work shouldn't persist
       const failWtInfo = taskWorktrees.get(taskId);
-      if (failWtInfo) {
+      const failedSession = taskExecutionSessions?.get(taskId);
+      const wasNoteContinuation = (failedSession?.coordinationContinuations ?? 0) > 0;
+      if (wasNoteContinuation) {
+        for (const noteId of failedSession.coordinationNoteIds ?? []) {
+          db.prepare("UPDATE task_agent_notes SET delivered_at = NULL WHERE target_task_id = ? AND id = ?").run(
+            taskId,
+            noteId,
+          );
+        }
+        appendTaskLog(
+          taskId,
+          "system",
+          "Agent note continuation failed; prior worktree/branch preserved and notes returned to inbox.",
+        );
+      }
+      if (failWtInfo && !wasNoteContinuation) {
         cleanupWorktree(failWtInfo.projectPath, taskId);
         appendTaskLog(taskId, "system", "Worktree cleaned up (task failed)");
       }

@@ -3,7 +3,9 @@ import type { Agent, Department, SubTask, Task, TaskStatus } from "../../types";
 import { useI18n } from "../../i18n";
 import AgentAvatar from "../AgentAvatar";
 import AgentSelect from "../AgentSelect";
+import DelegatedScopeView from "./DelegatedScopeView";
 import DiffModal from "./DiffModal";
+import RelatedWorkPanel from "./RelatedWorkPanel";
 import {
   getTaskTypeBadge,
   isHideableStatus,
@@ -13,12 +15,14 @@ import {
   taskStatusLabel,
   timeAgo,
 } from "./constants";
+import { parseDelegatedScope } from "./delegated-scope";
 
 interface TaskCardProps {
   task: Task;
   agents: Agent[];
   departments: Department[];
   taskSubtasks: SubTask[];
+  relatedTasks?: Task[];
   isHiddenTask?: boolean;
   onUpdateTask: (id: string, data: Partial<Task>) => void;
   onDeleteTask: (id: string) => void;
@@ -47,6 +51,7 @@ export default function TaskCard({
   agents,
   departments,
   taskSubtasks,
+  relatedTasks = [],
   isHiddenTask,
   onUpdateTask,
   onDeleteTask,
@@ -78,6 +83,7 @@ export default function TaskCard({
   const assignedLabel = assignedDisplayName || fallbackAssignedName || null;
   const department = departments.find((d) => d.id === task.department_id);
   const typeBadge = getTaskTypeBadge(task.task_type, t);
+  const delegatedScope = parseDelegatedScope(task.description);
 
   const canRun = task.status === "planned" || task.status === "inbox";
   const canStop = task.status === "in_progress";
@@ -109,11 +115,13 @@ export default function TaskCard({
         </span>
       </div>
 
-      {task.description && (
+      {delegatedScope ? (
+        <DelegatedScopeView scope={delegatedScope} expanded={expanded} />
+      ) : task.description ? (
         <p className={`mb-2 text-xs leading-relaxed text-slate-400 ${expanded ? "" : "line-clamp-2"}`}>
           {task.description}
         </p>
-      )}
+      ) : null}
 
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeBadge.color}`}>{typeBadge.label}</span>
@@ -198,6 +206,8 @@ export default function TaskCard({
           </p>
         )}
       </div>
+
+      <RelatedWorkPanel relatedTasks={relatedTasks} agents={agents} departments={departments} />
 
       {(task.subtask_total ?? 0) > 0 && (
         <div className="mb-3">

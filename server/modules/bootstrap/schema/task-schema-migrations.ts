@@ -66,6 +66,20 @@ export function applyTaskSchemaMigrations(db: DbLike): void {
     /* table missing or migration in progress */
   }
 
+  // Additive inbox; also covers existing installations.
+  db.exec(`
+CREATE TABLE IF NOT EXISTS task_agent_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  source_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  target_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  delivered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_task_agent_notes_inbox ON task_agent_notes(target_task_id, delivered_at, id);
+CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(source_task_id, id);
+
+  `);
+
   // Interrupt prompt injection queue (pause -> inject -> resume)
   try {
     db.exec(`
