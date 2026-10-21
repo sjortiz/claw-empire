@@ -127,8 +127,9 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const transcript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true, rawOutput: true };
-        const resolvedVerdicts = new Map<string, ResolvedMeetingVerdict>();
+        const resolvedVerdicts = new Map<object, ResolvedMeetingVerdict>();
         const nonBlockingNotes = new Set<string>();
+        const nonBlockingNoteTexts = new Set<string>();
         const wantsRevision = (content: string): boolean =>
           /보완|수정|보류|리스크|추가.?필요|hold|revise|revision|required|pending|risk|block|保留|修正|补充|暂缓/i.test(
             content,
@@ -142,9 +143,10 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             log: (message) =>
               appendTaskLog(taskId, "system", `Planned round ${round} reviewer ${leader.id}: ${message}`),
           });
-          for (const note of resolved.verdict.non_blocking_notes)
+          for (const note of resolved.verdict.non_blocking_notes) {
             nonBlockingNotes.add(`${getAgentDisplayName(leader, lang)}: ${note}`);
-          resolvedVerdicts.set(leader.id, resolved);
+            nonBlockingNoteTexts.add(note);
+          }
           return resolved;
         };
         const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
@@ -195,14 +197,16 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           return true;
         };
 
-        const pushTranscript = (leader: any, content: string) => {
-          transcript.push({
+        const pushTranscript = (leader: any, content: string, resolved?: ResolvedMeetingVerdict) => {
+          const entry = {
             speaker_agent_id: leader.id,
             speaker: getAgentDisplayName(leader, lang),
             department: getDeptName(leader.department_id ?? "", taskWorkflowPackKey),
             role: getRoleLabel(leader.role, lang),
             content,
-          });
+          };
+          transcript.push(entry);
+          if (resolved) resolvedVerdicts.set(entry, resolved);
         };
         const speak = (
           leader: any,
@@ -211,12 +215,13 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           receiverId: string | null,
           content: string,
           planningContent = content,
+          resolved?: ResolvedMeetingVerdict,
         ) => {
           if (isTaskWorkflowInterrupted(taskId)) return;
           sendAgentMessage(leader, content, messageType, receiverType, receiverId, taskId);
           const seatIndex = seatIndexByAgent.get(leader.id) ?? 0;
           emitMeetingSpeech(leader.id, seatIndex, "kickoff", taskId, content, lang);
-          pushTranscript(leader, planningContent);
+          pushTranscript(leader, planningContent, resolved);
           if (meetingId) {
             appendMeetingMinuteEntry(meetingId, minuteSeq++, leader, lang, messageType, content, taskWorkflowPackKey);
           }
@@ -281,6 +286,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             planningLeader.id,
             draft.value.displayText,
             draft.value.text,
+            draft.value.resolved,
           );
           if (effectiveMeetingVerdict(draft.value.resolved.verdict) === "revise") hasSupplementSignals = true;
         }
@@ -305,18 +311,26 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
         const summaryVerdict = await resolveReviewer(planningLeader, String(summaryRun?.text ?? ""));
         if (abortIfInactive()) return;
-        speak(planningLeader, "report", "all", null, summaryVerdict.content);
+        speak(planningLeader, "report", "all", null, summaryVerdict.content, summaryVerdict.content, summaryVerdict);
         if (nonBlockingNotes.size > 0)
           appendTaskProjectMemo(taskId, "planned", round, [...nonBlockingNotes], lang, "non_blocking");
-        // A structured verdict's notes are never inputs to the legacy action extractor.
+        // Keep approved planning prose when consolidation has no usable graph, but
+        // exclude verdict metadata and notes echoed by any participant from work.
         // Explicit executable plan_items remain the primary plan, independently of approval.
         const actionTranscript = transcript.flatMap((entry) => {
-          const resolved = resolvedVerdicts.get(entry.speaker_agent_id);
+          const resolved = resolvedVerdicts.get(entry);
           if (!resolved) return [entry];
           if (resolved.source === "fallback") return [{ ...entry, content: resolved.originalText }];
-          return effectiveMeetingVerdict(resolved.verdict) === "revise"
-            ? resolved.verdict.blocking_items.map((content) => ({ ...entry, content }))
-            : [];
+          if (effectiveMeetingVerdict(resolved.verdict) === "revise")
+            return resolved.verdict.blocking_items.map((content) => ({ ...entry, content }));
+          const isVerdictMetadata = (text: string) => /"(?:verdict|blocking_items|non_blocking_notes)"\s*:/.test(text);
+          let content = resolved.originalText.replace(/```(?:json)?\s*\n([\s\S]*?)\n```/gi, (block, body) =>
+            isVerdictMetadata(body) ? "" : block,
+          );
+          if (/^\s*\{[\s\S]*\}\s*$/.test(content) && isVerdictMetadata(content)) content = "";
+          for (const note of nonBlockingNoteTexts) content = content.split(note).join("");
+          content = content.trim();
+          return content ? [{ ...entry, content }] : [];
         });
         const planItems = graph
           ? [JSON.stringify({ plan_items: graph })]
