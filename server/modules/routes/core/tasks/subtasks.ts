@@ -90,9 +90,18 @@ export function registerTaskSubtaskRoutes(deps: TaskSubtaskRouteDeps): void {
     const targetDeptId = analyzeSubtaskDepartment((body as any).title, parentTaskDept?.department_id ?? null);
     if (targetDeptId) {
       const targetDeptName = getDeptName(targetDeptId);
+      const blockedReason = pickL(
+        l(
+          [`${targetDeptName} 협업 대기`],
+          [`Waiting for ${targetDeptName} collaboration`],
+          [`${targetDeptName}の協業待ち`],
+          [`等待${targetDeptName}协作`],
+        ),
+        resolveLang((body as any).title),
+      );
       db.prepare(
         "UPDATE subtasks SET target_department_id = ?, status = 'blocked', blocked_reason = ? WHERE id = ?",
-      ).run(targetDeptId, `${targetDeptName} 협업 대기`, id);
+      ).run(targetDeptId, blockedReason, id);
     }
 
     const subtask = db.prepare("SELECT * FROM subtasks WHERE id = ?").get(id);

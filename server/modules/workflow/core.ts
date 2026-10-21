@@ -225,6 +225,7 @@ export function initializeWorkflowPartA(ctx: RuntimeContext): WorkflowCoreExport
     db: db as any,
     isGitRepo,
     taskWorktrees,
+    getPreferredLanguage,
   });
 
   // ---------------------------------------------------------------------------

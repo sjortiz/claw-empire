@@ -50,7 +50,7 @@ export type DirectChatDeps = {
     projectPath: string | null;
     coreGoal: string | null;
   };
-  buildRoundGoal: (projectCoreGoal: string, message: string) => string;
+  buildRoundGoal: (projectCoreGoal: string, message: string, lang?: Lang) => string;
   getDeptName: (deptId: string) => string;
   l: (ko: string[], en: string[], ja?: string[], zh?: string[]) => L10n;
   pickL: (pool: L10n, lang: Lang) => string;

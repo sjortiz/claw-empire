@@ -26,6 +26,8 @@ import type { OAuthCallbackResult, RoomThemeMap, View } from "./types";
 import AppHeaderBar from "./AppHeaderBar";
 import {
   buildOfficePackStarterAgents,
+  localizeOfficePackPersonality,
+  localizeOfficePackDepartment,
   buildOfficePackPresentation,
   getOfficePackRoomThemes,
   listOfficePackOptions,
@@ -225,8 +227,20 @@ export default function AppMainLayout({
     [officePackKey, uiLanguage, departments, agents, customRoomThemes],
   );
 
-  const activePackProfile =
-    officePackKey === "development" ? null : (settings.officePackProfiles?.[officePackKey] ?? null);
+  const activePackProfile = useMemo(() => {
+    const profile = officePackKey === "development" ? null : settings.officePackProfiles?.[officePackKey];
+    if (!profile) return null;
+    return {
+      ...profile,
+      agents: profile.agents.map((agent) => ({
+        ...agent,
+        personality: localizeOfficePackPersonality(officePackKey, agent.personality, uiLanguage, profile.departments),
+      })),
+      departments: profile.departments.map((department) =>
+        localizeOfficePackDepartment(officePackKey, department, uiLanguage),
+      ),
+    };
+  }, [officePackKey, settings.officePackProfiles, uiLanguage]);
 
   const seededPackAgents = useMemo(() => {
     if (officePackKey === "development") return [] as Agent[];
@@ -282,21 +296,26 @@ export default function AppMainLayout({
     () =>
       resolvePackDepartmentsForDisplay({
         packKey: officePackKey,
-        globalDepartments: departments,
+        globalDepartments: departments.map((department) =>
+          localizeOfficePackDepartment(officePackKey, department, uiLanguage),
+        ),
         packDepartments: packProfileDepartments,
         preferPackProfile: !isHydratedOfficePack,
       }),
-    [departments, isHydratedOfficePack, officePackKey, packProfileDepartments],
+    [departments, isHydratedOfficePack, officePackKey, packProfileDepartments, uiLanguage],
   );
 
   const { scopedAgents: officeScopedAgents, mergedAgents: displayAgents } = useMemo(
     () =>
       resolvePackAgentViews({
         packKey: officePackKey,
-        globalAgents: agents,
+        globalAgents: agents.map((agent) => ({
+          ...agent,
+          personality: localizeOfficePackPersonality(officePackKey, agent.personality, uiLanguage, displayDepartments),
+        })),
         packAgents: packProfileAgents,
       }),
-    [agents, officePackKey, packProfileAgents],
+    [agents, officePackKey, packProfileAgents, uiLanguage, displayDepartments],
   );
 
   const managerDepartments =

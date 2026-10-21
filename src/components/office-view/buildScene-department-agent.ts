@@ -13,6 +13,7 @@ import {
 } from "./model";
 import { hashStr } from "./drawing-core";
 import { drawDesk } from "./drawing-furniture-a";
+import { LOCALE_TEXT, type SupportedLocale, pickLocale } from "./themes-locale";
 
 interface RenderDeskAgentAndSubClonesParams {
   room: Container;
@@ -33,6 +34,7 @@ interface RenderDeskAgentAndSubClonesParams {
   addedWorkingSubIds: Set<string>;
   nextSubSnapshot: Map<string, { parentAgentId: string; x: number; y: number }>;
   themeAccent: number;
+  activeLocale: SupportedLocale;
 }
 
 export function renderDeskAgentAndSubClones({
@@ -54,6 +56,7 @@ export function renderDeskAgentAndSubClones({
   addedWorkingSubIds,
   nextSubSnapshot,
   themeAccent,
+  activeLocale,
 }: RenderDeskAgentAndSubClonesParams): void {
   const spriteNum = spriteMap.get(agent.id) ?? (hashStr(agent.id) % 13) + 1;
   const charContainer = new Container();
@@ -198,7 +201,14 @@ export function renderDeskAgentAndSubClones({
 
       nextSubSnapshot.set(sub.id, { parentAgentId: agent.id, x: sx, y: sy });
       if (addedWorkingSubIds.has(sub.id)) {
-        emitSubCloneSmokeBurst(room, subCloneBurstParticlesRef.current, sx, sy, "spawn");
+        emitSubCloneSmokeBurst(
+          room,
+          subCloneBurstParticlesRef.current,
+          sx,
+          sy,
+          "spawn",
+          pickLocale(activeLocale, LOCALE_TEXT.subCloneBurst),
+        );
         emitSubCloneFireworkBurst(room, subCloneBurstParticlesRef.current, sx, sy - 24);
         addedWorkingSubIds.delete(sub.id);
       }

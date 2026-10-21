@@ -246,6 +246,16 @@ export function useAppActions({
       }
       try {
         await api.saveSettings(nextSettings);
+        if (nextSettings.language !== previousSettings.language) {
+          // Server re-localizes untouched default agent personalities on language change
+          const nextPack = normalizeOfficeWorkflowPack(nextSettings.officeWorkflowPack ?? "development");
+          api
+            .getAgents({ includeSeed: nextPack !== "development" })
+            .then(setAgents)
+            .catch((refreshErr) => {
+              console.error("Agent refresh after language change failed:", refreshErr);
+            });
+        }
         if (autoUpdateChanged) {
           try {
             await api.setAutoUpdateEnabled(Boolean(nextSettings.autoUpdateEnabled));
@@ -263,7 +273,7 @@ export function useAppActions({
         console.error("Save settings failed:", error);
       }
     },
-    [settings, setSettings],
+    [settings, setSettings, setAgents],
   );
 
   const handleDismissAutoUpdateNotice = useCallback(async () => {

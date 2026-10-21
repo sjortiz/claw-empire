@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
+import { I18nProvider } from "../i18n";
 import AppHeaderBar from "./AppHeaderBar";
 
 function createBaseProps(): ComponentProps<typeof AppHeaderBar> {
@@ -66,5 +67,34 @@ describe("AppHeaderBar mobile office pack selector", () => {
     render(<AppHeaderBar {...props} />);
 
     expect(screen.queryByLabelText("Office Pack")).not.toBeInTheDocument();
+  });
+});
+
+describe("AppHeaderBar i18n", () => {
+  it("renders English theme toggle title and mobile menu label when language is en", () => {
+    const props = createBaseProps();
+    render(
+      <I18nProvider language="en">
+        <AppHeaderBar {...props} />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByTitle("Light mode")).toBeInTheDocument();
+    expect(screen.getByLabelText("More menu")).toBeInTheDocument();
+    expect(screen.queryByTitle("라이트 모드")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("더보기 메뉴")).not.toBeInTheDocument();
+  });
+
+  it("keeps Korean labels when language is ko", () => {
+    const props = createBaseProps();
+    props.theme = "light";
+    render(
+      <I18nProvider language="ko">
+        <AppHeaderBar {...props} />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByTitle("다크 모드")).toBeInTheDocument();
+    expect(screen.getByLabelText("더보기 메뉴")).toBeInTheDocument();
   });
 });

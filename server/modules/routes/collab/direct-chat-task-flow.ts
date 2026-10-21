@@ -65,7 +65,7 @@ export function createDirectTaskFlow(deps: TaskFlowDeps) {
     const detectedPath =
       deps.detectProjectPath(options.projectPath || selectedProject.projectPath || ceoMessage) ||
       selectedProject.projectPath;
-    const roundGoal = deps.buildRoundGoal(projectCoreGoal, ceoMessage);
+    const roundGoal = deps.buildRoundGoal(projectCoreGoal, ceoMessage, lang);
     const deptId = agent.department_id ?? null;
     const deptName = deptId ? deps.getDeptName(deptId) : "Unassigned";
     const descriptionLines = [`[CEO DIRECT] ${ceoMessage}`];

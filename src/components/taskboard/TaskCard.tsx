@@ -245,7 +245,7 @@ export default function TaskCard({
                         className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium"
                         style={{ backgroundColor: targetDepartment.color + "30", color: targetDepartment.color }}
                       >
-                        {targetDepartment.icon} {targetDepartment.name_ko}
+                        {targetDepartment.icon} {locale === "ko" ? targetDepartment.name_ko : targetDepartment.name}
                       </span>
                     )}
                     {subtask.delegated_task_id && subtask.status !== "done" && (

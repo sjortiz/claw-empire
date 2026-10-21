@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../api";
+import { localeName } from "../../i18n";
 import AgentAvatar, { useSpriteMap } from "../AgentAvatar";
 import {
   MESSENGER_CHANNELS,
@@ -529,7 +530,7 @@ export default function GatewaySettingsTab({ t, form, setForm, persistSettings }
               const meta = CHANNEL_META[row.channel];
               const assignedAgent = row.session.agentId ? agentById.get(row.session.agentId) : undefined;
               const assignedAgentName = assignedAgent
-                ? assignedAgent.name_ko || assignedAgent.name
+                ? localeName(form.language, assignedAgent)
                 : row.session.agentId || "";
               const workflowPackKey = isWorkflowPackKey(row.session.workflowPackKey)
                 ? row.session.workflowPackKey

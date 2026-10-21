@@ -203,7 +203,7 @@ export default function ChatEditorModal({
                   };
                 });
               }}
-              placeholder={channelTargetHint(editor.channel)}
+              placeholder={channelTargetHint(editor.channel, t)}
               className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:border-blue-500"
             />
             {editor.channel === "discord" && (

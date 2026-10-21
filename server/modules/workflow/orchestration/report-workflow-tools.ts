@@ -266,6 +266,11 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
 
     const childTaskId = randomUUID();
     const t = nowMs();
+    const designTitlePrefix = pickL(
+      l(["[디자인 컨펌]"], ["[Design Review]"], ["[デザイン確認]"], ["[设计确认]"]),
+      lang,
+    );
+    const designTaskTitle = `${designTitlePrefix} ${task.title.length > 48 ? `${task.title.slice(0, 45).trimEnd()}...` : task.title}`;
     const designWorkflowPackKey = resolveWorkflowPackKeyForTask({
       db: db as any,
       sourceTaskPackKey: task.workflow_pack_key,
@@ -302,7 +307,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
 `,
     ).run(
       childTaskId,
-      `[디자인 컨펌] ${task.title.length > 48 ? `${task.title.slice(0, 45).trimEnd()}...` : task.title}`,
+      designTaskTitle,
       designDescription,
       designAgent.id,
       task.project_id ?? null,
@@ -314,7 +319,7 @@ export function createReportWorkflowTools(deps: CreateReportWorkflowToolsDeps) {
     );
     recordTaskCreationAudit({
       taskId: childTaskId,
-      taskTitle: `[디자인 컨펌] ${task.title.length > 48 ? `${task.title.slice(0, 45).trimEnd()}...` : task.title}`,
+      taskTitle: designTaskTitle,
       taskStatus: "planned",
       departmentId: "design",
       assignedAgentId: designAgent.id,

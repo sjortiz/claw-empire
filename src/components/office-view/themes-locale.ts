@@ -231,6 +231,12 @@ const LOCALE_TEXT = {
     ja: "データなし",
     zh: "无数据",
   },
+  subCloneBurst: {
+    ko: "펑",
+    en: "Poof",
+    ja: "ポン",
+    zh: "砰",
+  },
   soon: {
     ko: "곧",
     en: "soon",

@@ -423,6 +423,32 @@ describe("ops settings seed init guard", () => {
       db.close();
     }
   });
+
+  it("PUT /api/settings language change re-localizes default personalities but keeps edited ones", () => {
+    const db = setupDb();
+    try {
+      const insertAgent = db.prepare("INSERT INTO agents (id, name, personality) VALUES (?, ?, ?)");
+      insertAgent.run("aria", "Aria", "꼼꼼한 시니어 개발자");
+      insertAgent.run("bolt", "Bolt", "My own custom persona");
+      const { putRoutes } = createHarness(db);
+      const putHandler = putRoutes.get("/api/settings");
+
+      const res = createFakeResponse();
+      putHandler?.({ body: { language: "en" } }, res);
+      expect(res.statusCode).toBe(200);
+
+      const readPersonality = (id: string) =>
+        (db.prepare("SELECT personality FROM agents WHERE id = ?").get(id) as { personality: string | null })
+          .personality;
+      expect(readPersonality("aria")).toBe("Meticulous senior developer");
+      expect(readPersonality("bolt")).toBe("My own custom persona");
+
+      putHandler?.({ body: { language: "ko" } }, createFakeResponse());
+      expect(readPersonality("aria")).toBe("꼼꼼한 시니어 개발자");
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("merge policy settings", () => {

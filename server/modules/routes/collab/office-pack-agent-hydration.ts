@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { localizeOfficePackPersonality } from "../../../../src/app/office-workflow-pack.ts";
+import { readLanguageSetting } from "../../bootstrap/schema/default-agent-personalities.ts";
 import type { AgentRow } from "./direct-chat-types.ts";
 import {
   DEFAULT_WORKFLOW_PACK_KEY,
@@ -330,6 +332,12 @@ export function hydrateOfficePackAgentFromSettings(db: DbLike, agentId: string, 
   const found = findOfficePackProfileAgentById(root, normalizedAgentId, now);
   if (!found) return null;
 
+  found.agent.personality = localizeOfficePackPersonality(
+    found.packKey,
+    found.agent.personality,
+    readLanguageSetting(db),
+    found.department ? [found.department] : [],
+  );
   const deptId = ensureDepartmentExists(db, found.packKey, found.agent.department_id, found.department, now);
   const includeWorkflowPackKey = hasAgentWorkflowPackColumn(db);
 
@@ -408,6 +416,22 @@ function upsertOfficePackProfileAgent(
 ): number {
   const deptId = ensureDepartmentExists(db, packKey, agent.department_id, department, now);
   const includeWorkflowPackKey = hasAgentWorkflowPackColumn(db);
+  const existing = db.prepare("SELECT personality FROM agents WHERE id = ?").get(agent.id) as
+    | { personality: string | null }
+    | undefined;
+  const existingIsCustom =
+    existing &&
+    (existing.personality === null ||
+      localizeOfficePackPersonality(packKey, existing.personality, "en", department ? [department] : []) ===
+        localizeOfficePackPersonality(packKey, existing.personality, "ko", department ? [department] : []));
+  const personality = existingIsCustom
+    ? existing.personality
+    : localizeOfficePackPersonality(
+        packKey,
+        agent.personality,
+        readLanguageSetting(db),
+        department ? [department] : [],
+      );
   try {
     const result = includeWorkflowPackKey
       ? (db
@@ -450,7 +474,7 @@ function upsertOfficePackProfileAgent(
             agent.cli_provider,
             agent.avatar_emoji,
             agent.sprite_number,
-            agent.personality,
+            personality,
             agent.created_at,
             agent.cli_model,
             agent.cli_reasoning_level,
@@ -492,7 +516,7 @@ function upsertOfficePackProfileAgent(
             agent.cli_provider,
             agent.avatar_emoji,
             agent.sprite_number,
-            agent.personality,
+            personality,
             agent.created_at,
             agent.cli_model,
             agent.cli_reasoning_level,

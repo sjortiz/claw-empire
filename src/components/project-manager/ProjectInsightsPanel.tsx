@@ -3,6 +3,11 @@ import type { Project } from "../../types";
 import type { GroupedProjectTaskCard, ProjectI18nTranslate } from "./types";
 import { fmtTime } from "./utils";
 
+function pickAgentName(t: ProjectI18nTranslate, nameKo?: string | null, name?: string | null): string {
+  const fallback = name || nameKo || "-";
+  return t({ ko: nameKo || name || "-", en: fallback, ja: fallback, zh: fallback });
+}
+
 interface ProjectInsightsPanelProps {
   t: ProjectI18nTranslate;
   selectedProject: Project | null;
@@ -105,7 +110,7 @@ export default function ProjectInsightsPanel({
                 </p>
                 <p className="mt-1 break-all text-[11px] text-slate-500">
                   {t({ ko: "담당", en: "Owner", ja: "担当", zh: "负责人" })}:{" "}
-                  {group.root.assigned_agent_name_ko || group.root.assigned_agent_name || "-"}
+                  {pickAgentName(t, group.root.assigned_agent_name_ko, group.root.assigned_agent_name)}
                 </p>
                 <p className="mt-1 text-[11px] text-blue-300">
                   {t({ ko: "하위 작업", en: "Sub tasks", ja: "サブタスク", zh: "子任务" })}: {group.children.length}

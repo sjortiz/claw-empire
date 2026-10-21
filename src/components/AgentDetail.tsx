@@ -319,10 +319,11 @@ export default function AgentDetail({
             existing_leader?: { name?: string | null; name_ko?: string | null };
             pack_key?: WorkflowPackKey | null;
           };
+          const existingLeader = details.existing_leader;
           const existingLeaderName = String(
-            details.existing_leader?.name_ko ||
-              details.existing_leader?.name ||
-              t({ ko: "기존 리더", en: "current leader" }),
+            (language === "ko"
+              ? existingLeader?.name_ko || existingLeader?.name
+              : existingLeader?.name || existingLeader?.name_ko) || t({ ko: "기존 리더", en: "current leader" }),
           ).trim();
           const packKey = details.pack_key ?? activeOfficeWorkflowPack;
           const packLabel = resolvePackLabel(packKey);
@@ -360,6 +361,7 @@ export default function AgentDetail({
       agent.id,
       agent.role,
       actsAsPlanningLead,
+      language,
       onAgentUpdated,
       resolvePackLabel,
       savingPlanningLead,

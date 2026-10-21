@@ -106,9 +106,13 @@ export function useAppBootstrapData({
       }
 
       if (shouldAutoAssignLanguage && mergedSettings.language !== autoDetectedLanguage) {
-        api.saveSettings(nextSettings).catch((error) => {
-          console.error("Auto language sync failed:", error);
-        });
+        api
+          .saveSettings(nextSettings)
+          .then(() => api.getAgents({ includeSeed: includeSeedAgents }))
+          .then(setAgents)
+          .catch((error) => {
+            console.error("Auto language sync failed:", error);
+          });
       }
       setSubtasks(subs);
       setMeetingPresence(presence);

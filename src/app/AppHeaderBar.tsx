@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n";
 import type { WorkflowPackKey } from "../types";
 import type { View } from "./types";
 
@@ -67,6 +68,7 @@ export default function AppHeaderBar({
   onToggleMobileHeaderMenu,
   onCloseMobileHeaderMenu,
 }: AppHeaderBarProps) {
+  const { t } = useI18n();
   return (
     <header
       className="sticky top-0 z-30 flex items-center justify-between px-3 py-2 backdrop-blur-sm sm:px-4 sm:py-3 lg:px-6"
@@ -170,7 +172,11 @@ export default function AppHeaderBar({
           onClick={onToggleTheme}
           className="theme-toggle-btn"
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          title={theme === "dark" ? "라이트 모드" : "다크 모드"}
+          title={
+            theme === "dark"
+              ? t({ ko: "라이트 모드", en: "Light mode", ja: "ライトモード", zh: "浅色模式" })
+              : t({ ko: "다크 모드", en: "Dark mode", ja: "ダークモード", zh: "深色模式" })
+          }
         >
           <span className="theme-toggle-icon">
             {theme === "dark" ? (
@@ -219,7 +225,7 @@ export default function AppHeaderBar({
               background: "var(--th-bg-surface)",
               color: "var(--th-text-secondary)",
             }}
-            aria-label="더보기 메뉴"
+            aria-label={t({ ko: "더보기 메뉴", en: "More menu", ja: "その他のメニュー", zh: "更多菜单" })}
           >
             <svg
               width="18"

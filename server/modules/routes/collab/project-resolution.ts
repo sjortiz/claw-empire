@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
 import type { MessengerChannel } from "../../../messenger/channels.ts";
+import type { Lang } from "../../../types/lang.ts";
 
 export type DelegationOptions = {
   skipPlannedMeeting?: boolean;
@@ -33,7 +34,7 @@ export function initializeProjectResolution({ db }: InitializeProjectResolutionA
     projectPath: string | null;
     coreGoal: string | null;
   };
-  buildRoundGoal(coreGoal: string | null, ceoMessage: string): string;
+  buildRoundGoal(coreGoal: string | null, ceoMessage: string, lang?: Lang): string;
 } {
   function normalizeTextField(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -161,9 +162,27 @@ export function initializeProjectResolution({ db }: InitializeProjectResolutionA
     return { id: null, name: null, projectPath: null, coreGoal: null };
   }
 
-  function buildRoundGoal(coreGoal: string | null, ceoMessage: string): string {
+  function buildRoundGoal(coreGoal: string | null, ceoMessage: string, lang: Lang = "ko"): string {
     if (coreGoal) {
+      if (lang === "en") {
+        return `Keep the project core goal ("${coreGoal}") while delivering this request ("${ceoMessage}") as actionable output in this round`;
+      }
+      if (lang === "ja") {
+        return `プロジェクトの中核目標（"${coreGoal}"）を維持しつつ、今回の依頼（"${ceoMessage}"）を今ラウンドで実行可能な成果物として完遂`;
+      }
+      if (lang === "zh") {
+        return `在保持项目核心目标（"${coreGoal}"）的同时，将本次请求（"${ceoMessage}"）在本轮完成为可执行的产出物`;
+      }
       return `프로젝트 핵심목표("${coreGoal}")를 유지하면서 이번 요청("${ceoMessage}")을 이번 라운드에서 실행 가능한 산출물로 완수`;
+    }
+    if (lang === "en") {
+      return `Define this request ("${ceoMessage}") as the goal of this round and deliver it through actionable output`;
+    }
+    if (lang === "ja") {
+      return `今回の依頼（"${ceoMessage}"）を今ラウンドの目標と定め、実行可能な成果物まで完遂`;
+    }
+    if (lang === "zh") {
+      return `将本次请求（"${ceoMessage}"）定为本轮目标，并完成到可执行的产出物`;
     }
     return `이번 요청("${ceoMessage}")을 이번 라운드 목표로 정의하고 실행 가능한 산출물까지 완수`;
   }

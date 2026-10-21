@@ -4,6 +4,10 @@ import {
   decryptMessengerChannelsForClient,
   encryptMessengerChannelsForStorage,
 } from "../../../messenger/token-crypto.ts";
+import {
+  readLanguageSetting,
+  syncDefaultAgentPersonalities,
+} from "../../bootstrap/schema/default-agent-personalities.ts";
 import { syncOfficePackAgentsForPack } from "../collab/office-pack-agent-hydration.ts";
 
 const MESSENGER_SETTINGS_KEY = "messengerChannels";
@@ -117,6 +121,7 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
         .prepare("SELECT value FROM settings WHERE key = ? LIMIT 1")
         .get(OFFICE_PACK_PROFILES_KEY) as { value?: unknown } | undefined;
       maybeHydratePackOnFirstSelection(selectedPackRow?.value, profilesRow?.value);
+      syncDefaultAgentPersonalities(db, readLanguageSetting(db));
     } catch {
       // best-effort hydration only
     }
@@ -163,6 +168,7 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
       if (selectedOfficePackInPayload !== undefined) {
         maybeHydratePackOnFirstSelection(selectedOfficePackInPayload, officePackProfilesInPayload);
       }
+      syncDefaultAgentPersonalities(db, readLanguageSetting(db));
     } catch (err: any) {
       const detail = err?.message || String(err);
       return res.status(500).json({ ok: false, error: "settings_write_failed", detail });

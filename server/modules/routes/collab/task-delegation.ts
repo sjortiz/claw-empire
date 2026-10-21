@@ -31,7 +31,7 @@ interface TaskDelegationDeps {
     projectPath: string | null;
     coreGoal: string | null;
   };
-  buildRoundGoal: (projectCoreGoal: string | null, ceoMessage: string) => string;
+  buildRoundGoal: (projectCoreGoal: string | null, ceoMessage: string, lang?: Lang) => string;
   resolveDirectiveProjectPath: (
     text: string,
     options: DelegationOptions,
@@ -157,7 +157,7 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       const t = nowMs();
       const taskTitle = ceoMessage.length > 60 ? ceoMessage.slice(0, 57) + "..." : ceoMessage;
       const projectContextHint = normalizeTextField(options.projectContext) || selectedProject.coreGoal;
-      const roundGoal = buildRoundGoal(selectedProject.coreGoal, ceoMessage);
+      const roundGoal = buildRoundGoal(selectedProject.coreGoal, ceoMessage, lang);
       const { projectPath: detectedPathRaw, source: projectPathSource } = resolveDirectiveProjectPath(ceoMessage, {
         ...options,
         projectPath: options.projectPath ?? selectedProject.projectPath,

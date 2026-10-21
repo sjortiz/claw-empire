@@ -171,6 +171,7 @@ function emitSubCloneSmokeBurst(
   x: number,
   y: number,
   mode: "spawn" | "despawn",
+  burstLabel: string,
 ): void {
   const baseColor = mode === "spawn" ? 0xc7d4ec : 0xb7bfd1;
   const strokeColor = mode === "spawn" ? 0xe6edff : 0xd4dae8;
@@ -208,7 +209,7 @@ function emitSubCloneSmokeBurst(
   });
 
   const burstTxt = new Text({
-    text: "펑",
+    text: burstLabel,
     style: new TextStyle({
       fontSize: 7,
       fill: mode === "spawn" ? 0xeff4ff : 0xdde4f5,

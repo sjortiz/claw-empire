@@ -50,19 +50,24 @@ export function useCustomSkillsState({
     setShowCustomModal(false);
   }, [customSkillSubmitting]);
 
-  const handleCustomFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setCustomSkillFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setCustomSkillContent(reader.result as string);
-    };
-    reader.onerror = () => {
-      setCustomSkillError("파일 읽기 실패");
-    };
-    reader.readAsText(file);
-  }, []);
+  const handleCustomFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setCustomSkillFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setCustomSkillContent(reader.result as string);
+      };
+      reader.onerror = () => {
+        setCustomSkillError(
+          t({ ko: "파일 읽기 실패", en: "Failed to read file", ja: "ファイル読み込み失敗", zh: "文件读取失败" }),
+        );
+      };
+      reader.readAsText(file);
+    },
+    [t],
+  );
 
   const toggleCustomProvider = useCallback((provider: SkillLearnProvider) => {
     setCustomSkillProviders((prev) =>

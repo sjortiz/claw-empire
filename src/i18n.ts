@@ -1,7 +1,8 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-export type UiLanguage = "ko" | "en" | "ja" | "zh";
+import type { UiLanguage } from "./types/language";
+export type { UiLanguage } from "./types/language";
 export const LANGUAGE_STORAGE_KEY = "climpire.language";
 export const LANGUAGE_USER_SET_STORAGE_KEY = "climpire.language.user_set";
 

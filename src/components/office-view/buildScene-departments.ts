@@ -183,7 +183,14 @@ export function buildDepartmentRooms({
       const removedBursts = removedSubBurstsByParent.get(agent.id);
       if (removedBursts && removedBursts.length > 0) {
         for (const burst of removedBursts) {
-          emitSubCloneSmokeBurst(room, subCloneBurstParticlesRef.current, burst.x, burst.y, "despawn");
+          emitSubCloneSmokeBurst(
+            room,
+            subCloneBurstParticlesRef.current,
+            burst.x,
+            burst.y,
+            "despawn",
+            pickLocale(activeLocale, LOCALE_TEXT.subCloneBurst),
+          );
         }
         removedSubBurstsByParent.delete(agent.id);
       }
@@ -210,6 +217,7 @@ export function buildDepartmentRooms({
           addedWorkingSubIds,
           nextSubSnapshot,
           themeAccent: theme.accent,
+          activeLocale,
         });
       }
     });

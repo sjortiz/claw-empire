@@ -621,6 +621,85 @@ function buildPackDepartmentPrompt(params: {
   return `[Department Role] ${deptName}\n[Execution Standard] ${summary}\nBreak requests into actionable steps and clearly provide rationale and deliverables.`;
 }
 
+type SeedDepartment = Pick<Department, "id" | "name" | "name_ko"> & Partial<Pick<Department, "name_ja" | "name_zh">>;
+
+function seedDepartmentNames(department: SeedDepartment): Localized {
+  return {
+    ko: department.name_ko || department.name,
+    en: department.name,
+    ja: department.name_ja || department.name,
+    zh: department.name_zh || department.name,
+  };
+}
+
+function fallbackSeedPrefix(department: SeedDepartment): Localized {
+  return {
+    ko: `${department.name_ko ?? department.name} 팀원`,
+    en: `${department.name} Member`,
+    ja: `${department.name_ja ?? department.name} メンバー`,
+    zh: `${department.name_zh ?? department.name} 成员`,
+  };
+}
+
+// Recognize only exact, generated defaults. Custom and cleared values are left verbatim.
+// Shared with the server migration so displayed and injected personas use the same text.
+export function localizeOfficePackPersonality(
+  packKey: WorkflowPackKey,
+  personality: string | null,
+  locale: UiLanguageLike,
+  departments: SeedDepartment[] = [],
+): string | null {
+  if (!personality || packKey === "development") return personality;
+  const preset = PACK_PRESETS[packKey];
+  const entries = new Map(Object.entries(preset.departments));
+  for (const department of departments) {
+    if (!entries.has(department.id))
+      entries.set(department.id, {
+        name: seedDepartmentNames(department),
+        agentPrefix: fallbackSeedPrefix(department),
+        icon: "",
+        avatarPool: [],
+      });
+  }
+  for (const [deptId, department] of entries) {
+    if (!department) continue;
+    for (const role of ["team_leader", "senior", "junior", "intern"] as const) {
+      const build = (language: UiLanguageLike) =>
+        buildSeedPersonality({
+          packKey,
+          deptId,
+          role,
+          locale: language,
+          defaultPrefix: department.agentPrefix,
+          departmentName: department.name,
+        });
+      if ((["ko", "en", "ja", "zh"] as const).some((language) => build(language) === personality)) {
+        return build(locale);
+      }
+    }
+  }
+  return personality;
+}
+
+export function localizeOfficePackDepartment<
+  T extends { id: string; description: string | null; prompt: string | null },
+>(packKey: WorkflowPackKey, department: T, locale: UiLanguageLike): T {
+  if (packKey === "development") return department;
+  const preset = PACK_PRESETS[packKey];
+  const departmentName = preset.departments[department.id]?.name;
+  if (!departmentName) return department;
+  const localize = (value: string | null, build: typeof buildPackDepartmentDescription) => {
+    const render = (language: UiLanguageLike) =>
+      build({ locale: language, packSummary: preset.summary, departmentName });
+    return (["ko", "en", "ja", "zh"] as const).some((language) => render(language) === value) ? render(locale) : value;
+  };
+  return {
+    ...department,
+    description: localize(department.description, buildPackDepartmentDescription),
+    prompt: localize(department.prompt, buildPackDepartmentPrompt),
+  };
+}
+
 export function getOfficePackMeta(packKey: WorkflowPackKey): { label: Localized; summary: Localized } {
   const preset = PACK_PRESETS[packKey] ?? PACK_PRESETS.development;
   return { label: preset.label, summary: preset.summary };
@@ -754,16 +833,7 @@ export function buildOfficePackStarterAgents(params: {
     const presetInfo = preset.departments[deptId];
     if (presetInfo) return presetInfo.agentPrefix;
     const department = departmentById.get(deptId);
-    const baseName = department?.name ?? deptId;
-    const baseNameKo = department?.name_ko ?? baseName;
-    const baseNameJa = department?.name_ja ?? baseName;
-    const baseNameZh = department?.name_zh ?? baseName;
-    return {
-      ko: `${baseNameKo} 팀원`,
-      en: `${baseName} Member`,
-      ja: `${baseNameJa} メンバー`,
-      zh: `${baseNameZh} 成员`,
-    };
+    return fallbackSeedPrefix(department ?? { id: deptId, name: deptId, name_ko: deptId });
   };
 
   const resolveAvatar = (deptId: string, order: number): string => {

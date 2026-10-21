@@ -14,10 +14,27 @@ type CreateProjectContextToolsDeps = {
   db: DbLike;
   isGitRepo: (dir: string) => boolean;
   taskWorktrees: Map<string, { worktreePath: string; branchName: string; projectPath: string }>;
+  getPreferredLanguage: () => string;
 };
 
 export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
-  const { db, isGitRepo, taskWorktrees } = deps;
+  const { db, isGitRepo, taskWorktrees, getPreferredLanguage } = deps;
+
+  const MVP_CODE_REVIEW_POLICY_EN_LINES = [
+    "[MVP Code Review Policy]",
+    "- CRITICAL/HIGH: fix immediately",
+    "- MEDIUM/LOW: warning report only, no code changes",
+  ];
+  const EXECUTION_CONTINUITY_POLICY_EN_LINES = [
+    "[Execution Continuity]",
+    "- Continue from the latest state without self-introduction or kickoff narration",
+    "- Reuse prior codebase understanding and read only files needed for this delta",
+    "- Focus on unresolved checklist items and produce concrete diffs first",
+    "[Git Workflow Guardrail]",
+    "- Do NOT run git merge/rebase/cherry-pick/push during task execution. Merge is performed only by the system after final review approval",
+  ];
+  const WARNING_FIX_OVERRIDE_EN_LINE =
+    "- Exception override: User explicitly requested warning-level fixes for this task. You may fix the requested MEDIUM/LOW items";
 
   const MVP_CODE_REVIEW_POLICY_BASE_LINES = [
     "[MVP Code Review Policy / 코드 리뷰 정책]",
@@ -52,9 +69,9 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
     return warningFixPair.test(text);
   }
 
-  function buildMvpCodeReviewPolicyBlock(allowWarningFix: boolean): string {
-    const lines = [...MVP_CODE_REVIEW_POLICY_BASE_LINES];
-    if (allowWarningFix) lines.push(WARNING_FIX_OVERRIDE_LINE);
+  function buildMvpCodeReviewPolicyBlock(allowWarningFix: boolean, lang: string): string {
+    const lines = [...(lang === "en" ? MVP_CODE_REVIEW_POLICY_EN_LINES : MVP_CODE_REVIEW_POLICY_BASE_LINES)];
+    if (allowWarningFix) lines.push(lang === "en" ? WARNING_FIX_OVERRIDE_EN_LINE : WARNING_FIX_OVERRIDE_LINE);
     return lines.join("\n");
   }
 
@@ -62,10 +79,11 @@ export function createProjectContextTools(deps: CreateProjectContextToolsDeps) {
     parts: Array<string | null | undefined>,
     opts: { allowWarningFix?: boolean } = {},
   ): string {
+    const lang = getPreferredLanguage();
     return [
       ...parts,
-      EXECUTION_CONTINUITY_POLICY_LINES.join("\n"),
-      buildMvpCodeReviewPolicyBlock(Boolean(opts.allowWarningFix)),
+      (lang === "en" ? EXECUTION_CONTINUITY_POLICY_EN_LINES : EXECUTION_CONTINUITY_POLICY_LINES).join("\n"),
+      buildMvpCodeReviewPolicyBlock(Boolean(opts.allowWarningFix), lang),
     ]
       .filter(Boolean)
       .join("\n");
