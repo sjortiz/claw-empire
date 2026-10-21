@@ -96,7 +96,9 @@ describe("directive planner assignment", () => {
     expect(start).toHaveBeenCalledTimes(3);
     db.prepare("UPDATE tasks SET status = 'done' WHERE id = 'graph-child'").run();
     vi.advanceTimersByTime(1000);
-    expect(start).toHaveBeenCalledTimes(4);
-    expect(start.mock.calls[3][0]).toBe(root.id);
+    // Integration completion and the persistent sweep own consolidation.
+    // No closure-only integration poll remains after the graph is seeded.
+    expect(start).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

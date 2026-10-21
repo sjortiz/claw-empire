@@ -1,3 +1,4 @@
+import { createDelegationWait } from "./delegation-wait.ts";
 import { buildAgentCoordinationContext } from "../../workflow/core/agent-coordination.ts";
 import { resolveCliReasoningLevel } from "../../workflow/core/reasoning-effort.ts";
 import fs from "node:fs";
@@ -158,6 +159,8 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     buildSubtaskDelegationPrompt,
   } = deps;
 
+  const delegationWait = createDelegationWait({ db, nowMs, appendTaskLog, notifyCeo, broadcast });
+
   function getConstrainedAgentIds(parentTask: ParentTaskRow, targetDeptId: string | null): string[] | null {
     return resolveConstrainedAgentScopeForTask(db as any, {
       workflow_pack_key: parentTask.workflow_pack_key ?? null,
@@ -213,6 +216,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
     const targetDeptId = subtasks[0].target_department_id!;
     const targetDeptName = getDeptName(targetDeptId, parentTask.workflow_pack_key ?? null);
     const subtaskIds = subtasks.map((st) => st.id);
+    const waitKey = `department-batch:${targetDeptId}:${[...subtaskIds].sort().join(",")}`;
     const firstTitle = subtasks[0].title;
     const batchTitle = subtasks.length > 1 ? `${firstTitle} +${subtasks.length - 1}` : firstTitle;
     const projectCandidateAgentIds = getConstrainedAgentIds(parentTask, targetDeptId);
@@ -230,18 +234,9 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         onBatchDone?.();
         return;
       }
-      const reason = pickL(
-        l(
-          ["부서 책임자 배정을 기다리는 중"],
-          ["Waiting for an eligible department leader"],
-          ["部門責任者の割り当て待ち"],
-          ["等待符合条件的部门负责人"],
-        ),
-        lang,
-      );
-      for (const sid of subtaskIds) {
-        db.prepare("UPDATE subtasks SET status = 'blocked', blocked_reason = ? WHERE id = ?").run(reason, sid);
-        broadcast("subtask_update", db.prepare("SELECT * FROM subtasks WHERE id = ?").get(sid));
+      if (!delegationWait.wait(parentTask.id, waitKey, `eligible department leader (${targetDeptId})`, subtaskIds)) {
+        onBatchDone?.();
+        return;
       }
       const retry = setTimeout(
         () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
@@ -345,9 +340,25 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
       const execAgent =
         availableAgent(crossSubAtRun) ??
         availableAgent(crossLeaderAllowed ? crossLeader : manualPoolFallbackAtRun) ??
-        availableAgent(crossCoordinator);
+        availableAgent(crossCoordinator) ??
+        availableAgent(
+          pickManualPoolAgent(
+            projectCandidateAgentIds ??
+              (
+                db
+                  .prepare(
+                    "SELECT id FROM agents WHERE department_id = ? AND COALESCE(workflow_pack_key, 'development') = ?",
+                  )
+                  .all(targetDeptId, parentTask.workflow_pack_key || "development") as Array<{ id: string }>
+              ).map((agent) => agent.id),
+            targetDeptId,
+          ),
+        );
       if (!execAgent) {
-        appendTaskLog(parentTask.id, "system", `Department batch waiting for an available agent (${targetDeptId})`);
+        if (!delegationWait.wait(parentTask.id, waitKey, `available department agent (${targetDeptId})`, subtaskIds)) {
+          onBatchDone?.();
+          return;
+        }
         const retry = setTimeout(
           () => delegateSubtaskBatch(subtasks, queueIndex, queueTotal, parentTask, onBatchDone),
           5_000,
@@ -355,6 +366,7 @@ export function createSubtaskDelegationBatch(deps: BatchDeps) {
         retry.unref?.();
         return;
       }
+      delegationWait.resolve(parentTask.id, waitKey);
       const execName = getAgentDisplayName(execAgent, lang);
 
       sendAgentMessage(
