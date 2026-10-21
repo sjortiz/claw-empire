@@ -1,45 +1,78 @@
 # Review automation
 
-Both review automation settings are off by default. In **Settings → General**,
-turn on **Start review meetings automatically** to remove the project-level CEO
-approval step. In the project editor each setting can use the global value,
-explicitly enable automation, or explicitly disable it. Project overrides win even
-when the global value is enabled. Existing projects inherit the global settings.
+Two settings let review meetings and revision picks proceed without a CEO click in
+the Decision Inbox. Both default to off, so existing behaviour is unchanged.
 
-Meetings start when every active project task is in Review. The automation starts
-all eligible root task meetings, keeping the existing unfinished-subtask,
-collaboration, and video artifact checks. Pending revision-pick decisions are not
-advanced by this setting. The gate is checked when a task reaches review and in
-the background, so enabling the setting for an already-ready project also works.
-An in-progress meeting is not started again. Unchanged safety holds retry after
-30 seconds, with backoff capped at five minutes to avoid repeating CEO notices on
-every timer tick. Task or subtask progress and fresh gate arrivals retry immediately.
+| Setting (UI)                         | Global key        | Project override    |
+| ------------------------------------ | ----------------- | ------------------- |
+| Start review meetings automatically  | `reviewAutoStart` | `review_auto_start` |
+| Apply all review items automatically | `reviewAutoApply` | `review_auto_apply` |
 
-Each automatic start logs exactly `Review meeting started automatically (setting)`.
-The decision inbox keeps an informational item for each automatically started
-task. It can be opened during the meeting and after completion, including after
-restart; it has no approval action. The latest 100 task notices are shown.
+Scoping works like the merge policy (`docs/merge-policy.md`). The global keys are
+booleans in settings; `PUT /api/settings` rejects other values. A project's
+override is `null` (inherit the global value), `"on"` or `"off"`, and the project
+override beats the global setting. The additive SQLite migration leaves existing
+projects at `null`. The project API rejects other values before writing changes.
+The settings are independent: auto-apply does not require auto-start.
 
-**Apply all review items automatically** is independent. When enabled it submits
-all offered revision-pick options in a pending review round through the existing
-revision workflow. It does not choose Skip, start meetings, approve the final
-review, or change merge policy. With only meeting auto-start enabled, revision
-picks still wait for the CEO.
+## Start review meetings automatically
 
-The pre-existing **YOLO mode** remains a separate broader opt-in: it can still make
-its existing review decisions, including selecting recommended revision items,
-when these new settings are off. When automatic review-item application is on,
-all offered items are applied before YOLO's recommended-item selection.
+The project review gate holds a root task in Review until every active task of its
+project is in Review. Without this setting it then waits for the CEO to approve
+"project-level review meeting" in the Decision Inbox. The task log shows
+`Review gate: waiting for project-level decision (N/N active tasks in review)`.
 
-## API and storage
+With the setting on:
 
-- Global settings: `reviewMeetingAutoStart` and `reviewItemsAutoApply` accept JSON
-  booleans; missing values read as `false`.
-- Project fields: `review_meeting_auto_start` and `review_items_auto_apply` accept
-  JSON booleans or `null` (inherit). Responses return booleans or `null`.
-- Invalid values are rejected before settings or project changes are written.
-- The additive SQLite migration leaves old projects inheriting and preserves
-  explicit overrides across restart.
+- While other tasks are still running, the gate keeps waiting and logs
+  `Review gate: waiting for other project tasks (…)`.
+- When the gate conditions are met, the team-lead review meeting starts for every
+  root task of the project in Review, as if the CEO had approved it. Each started
+  task logs `Review meeting started automatically (setting)`.
+- The CEO gets a chat notice and an informational Decision Inbox item
+  ("Review Meeting Auto-Started"). It lists the tasks, needs no decision, and stays
+  until the CEO clicks **Acknowledge**.
+- It waits, as the Decision Inbox item does, while a project review meeting is
+  running or a review round decision is pending, so a revision pick is never
+  skipped.
+- The existing review holds still apply (unfinished subtasks, collaboration
+  children, video artifacts). A held task starts later, when the gate runs again.
+  No notice is posted for held tasks.
 
-Review automation does not grant permission to publish. See [merge policy](merge-policy.md)
-for independent local integration and manual merge behavior.
+The gate runs when a task reaches Review and on existing workflow retries, such
+as delegated-subtask completion. Saving the setting does not itself retry gates
+that are already waiting. Approve an already-waiting gate from the Decision Inbox,
+or let the next workflow gate pass use the newly effective setting. Until that
+pass starts a meeting, the manual inbox item remains available. Once the meeting
+starts, the running-meeting guard suppresses that manual item and the informational
+auto-start notice remains available for acknowledgment.
+
+## Apply all review items automatically
+
+When a review round ends with revision requests, the Decision Inbox asks the CEO
+which review items to apply. With this setting on, once the planning lead
+has prepared the options, every review item is applied as revision work. The
+round's skip option and the planner's recommendation are ignored. The task logs
+`Review items applied automatically (setting)` after the regular
+`Decision inbox: review decision resolved (action=apply_review_pick, …)` entry.
+This includes video pre-production tasks, whose picks YOLO mode leaves manual.
+
+With the setting off, revision picks stay manual even when review meetings start
+automatically.
+
+## Relation to YOLO mode
+
+YOLO mode (`yoloMode`) answers every Decision Inbox item with the planner's
+recommendations. These settings are narrower and can be enabled per project.
+Auto-apply runs before YOLO mode, so with both on, review rounds apply every item.
+The informational auto-start item is never answered automatically.
+
+## Testing
+
+Server tests cover the gate with the setting off (waits, as before) and on (starts
+without a decision, once). They also cover waiting for other tasks, the project
+override beating the global setting in both directions, and auto-apply
+choosing every item only when its own setting is on. Further tests cover API
+validation, the migration, the inbox notice and its acknowledgement. Web tests
+cover the global toggles, the project selectors and the inbox notice label in
+all four UI languages.

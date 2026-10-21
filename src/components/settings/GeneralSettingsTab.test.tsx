@@ -6,13 +6,7 @@ import GeneralSettingsTab from "./GeneralSettingsTab";
 import type { LocalSettings } from "./types";
 
 function SettingsForm({ language, onSave }: { language: UiLanguage; onSave: (form: LocalSettings) => void }) {
-  const [form, setForm] = useState<LocalSettings>({
-    ...DEFAULT_SETTINGS,
-    mergePolicy: undefined,
-    reviewMeetingAutoStart: undefined,
-    reviewItemsAutoApply: undefined,
-    language,
-  });
+  const [form, setForm] = useState<LocalSettings>({ ...DEFAULT_SETTINGS, mergePolicy: undefined, language });
   return (
     <GeneralSettingsTab
       t={(messages) => messages[language]}
@@ -52,12 +46,13 @@ describe("GeneralSettingsTab merge policy", () => {
 describe("GeneralSettingsTab review automation", () => {
   it.each([
     ["en", "Start review meetings automatically", "Apply all review items automatically", "Save"],
-    ["ko", "리뷰 회의 자동 시작", "모든 리뷰 항목 자동 적용", "저장"],
-    ["ja", "レビュー会議を自動で開始", "すべてのレビュー項目を自動で適用", "保存"],
-    ["zh", "自动启动评审会议", "自动应用所有评审项", "保存"],
-  ] as const)("defaults legacy values off and saves independent controls in %s", (language, start, apply, save) => {
+    ["ko", "리뷰 회의 자동 시작", "리뷰 항목 모두 자동 반영", "저장"],
+    ["ja", "レビュー会議を自動開始", "レビュー項目をすべて自動反映", "保存"],
+    ["zh", "自动启动评审会议", "自动应用全部评审项", "保存"],
+  ] as const)("defaults both settings off and saves each independently in %s", (language, start, apply, save) => {
     const onSave = vi.fn();
     render(<SettingsForm language={language} onSave={onSave} />);
+
     const startToggle = screen.getByRole("button", { name: start });
     const applyToggle = screen.getByRole("button", { name: apply });
     expect(startToggle).toHaveAttribute("aria-pressed", "false");
@@ -65,19 +60,10 @@ describe("GeneralSettingsTab review automation", () => {
 
     fireEvent.click(startToggle);
     fireEvent.click(screen.getByRole("button", { name: save }));
-    expect(onSave).toHaveBeenLastCalledWith(
-      expect.objectContaining({ reviewMeetingAutoStart: true, reviewItemsAutoApply: undefined }),
-    );
-    fireEvent.click(applyToggle);
-    fireEvent.click(startToggle);
-    fireEvent.click(screen.getByRole("button", { name: save }));
-    expect(onSave).toHaveBeenLastCalledWith(
-      expect.objectContaining({ reviewMeetingAutoStart: false, reviewItemsAutoApply: true }),
-    );
-  });
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ reviewAutoStart: true, reviewAutoApply: false }));
 
-  it("keeps both defaults off for new installations", () => {
-    expect(DEFAULT_SETTINGS.reviewMeetingAutoStart).toBe(false);
-    expect(DEFAULT_SETTINGS.reviewItemsAutoApply).toBe(false);
+    fireEvent.click(applyToggle);
+    fireEvent.click(screen.getByRole("button", { name: save }));
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ reviewAutoStart: true, reviewAutoApply: true }));
   });
 });

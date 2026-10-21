@@ -1,0 +1,8 @@
+
+> climpire@2.0.4 build /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/35b4a4e9
+> tsc -b && vite build
+
+server/modules/workflow/orchestration/review-finalize-tools.review-auto-start.test.ts(95,11): error TS2322: Type 'null' is not assignable to type 'string'.
+server/modules/workflow/orchestration/review-finalize-tools.review-auto-start.test.ts(96,11): error TS2322: Type 'null' is not assignable to type 'string'.
+server/modules/workflow/orchestration/review-finalize-tools.review-auto-start.test.ts(97,11): error TS2322: Type 'null' is not assignable to type 'string'.
+ ELIFECYCLE  Command failed with exit code 2.

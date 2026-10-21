@@ -1,6 +1,5 @@
 import type { CliProvider, MergePolicy } from "../../types";
 import type { LocalSettings, SetLocalSettings, TFunction } from "./types";
-import { REVIEW_AUTOMATION_SETTINGS } from "./review-automation";
 
 interface GeneralSettingsTabProps {
   t: TFunction;
@@ -110,6 +109,40 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
 
           <ToggleSettingCard
             label={t({
+              ko: "리뷰 회의 자동 시작",
+              en: "Start review meetings automatically",
+              ja: "レビュー会議を自動開始",
+              zh: "自动启动评审会议",
+            })}
+            checked={form.reviewAutoStart === true}
+            onToggle={() => setForm({ ...form, reviewAutoStart: !(form.reviewAutoStart === true) })}
+            title={t({
+              ko: "프로젝트의 모든 작업이 Review에 도달하면 CEO 승인 없이 팀장 회의를 시작하고 의사결정 인박스에 알림을 남깁니다. 프로젝트별로 재정의할 수 있습니다.",
+              en: "Once all of a project's tasks reach Review, start the team-lead meeting without CEO approval and leave a notice in the Decision Inbox. Projects can override this.",
+              ja: "プロジェクトの全タスクがReviewに達したら、CEO承認なしでチームリーダー会議を開始し、Decision Inboxに通知を残します。プロジェクトごとに上書きできます。",
+              zh: "项目所有任务进入 Review 后，无需 CEO 批准即启动组长会议，并在 Decision Inbox 留下通知。项目可覆盖此设置。",
+            })}
+          />
+
+          <ToggleSettingCard
+            label={t({
+              ko: "리뷰 항목 모두 자동 반영",
+              en: "Apply all review items automatically",
+              ja: "レビュー項目をすべて自動反映",
+              zh: "自动应用全部评审项",
+            })}
+            checked={form.reviewAutoApply === true}
+            onToggle={() => setForm({ ...form, reviewAutoApply: !(form.reviewAutoApply === true) })}
+            title={t({
+              ko: "리뷰 라운드의 모든 의견을 보완 작업으로 자동 반영합니다. 끄면 반영할 항목을 CEO가 직접 선택합니다. 프로젝트별로 재정의할 수 있습니다.",
+              en: "Apply every item of a review round as revision work. When off, the CEO picks which items to apply. Projects can override this.",
+              ja: "レビューラウンドの全項目を補完作業として自動反映します。オフの場合はCEOが反映項目を選択します。プロジェクトごとに上書きできます。",
+              zh: "将评审轮次的全部意见自动转为整改工作。关闭时由 CEO 选择要应用的项。项目可覆盖此设置。",
+            })}
+          />
+
+          <ToggleSettingCard
+            label={t({
               ko: "자동 업데이트 (전역)",
               en: "Auto Update (Global)",
               ja: "Auto Update（全体）",
@@ -139,20 +172,6 @@ export default function GeneralSettingsTab({ t, form, setForm, saved, onSave }: 
         </div>
 
         <div>
-          {REVIEW_AUTOMATION_SETTINGS.map(({ key, label, help }) => (
-            <div key={key} className="mb-4">
-              <ToggleSettingCard
-                label={t(label)}
-                checked={form[key] === true}
-                onToggle={() => setForm({ ...form, [key]: form[key] !== true })}
-                title={t(help)}
-              />
-              <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--th-text-secondary)" }}>
-                {t(help)}
-              </p>
-            </div>
-          ))}
-
           <label htmlFor="merge-policy" className="block text-xs mb-1" style={{ color: "var(--th-text-secondary)" }}>
             {t({
               ko: "승인 후 병합 정책",

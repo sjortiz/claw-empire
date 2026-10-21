@@ -201,12 +201,21 @@ export default function DecisionInboxModal({
         zh: "评审轮次决策",
       });
     }
+    if (kind === "review_auto_started") {
+      return t({
+        ko: "리뷰 회의 자동 시작 (알림)",
+        en: "Review Meeting Auto-Started (Notice)",
+        ja: "レビュー会議の自動開始（通知）",
+        zh: "评审会议已自动启动（通知）",
+      });
+    }
     return t({ ko: "에이전트 요청", en: "Agent Request", ja: "エージェント要請", zh: "代理请求" });
   };
   const getKindAvatarFallback = (kind: DecisionInboxItem["kind"]) => {
     if (kind === "project_review_ready") return "🧑‍💼";
     if (kind === "task_timeout_resume") return "⏱️";
     if (kind === "review_round_pick") return "🧾";
+    if (kind === "review_auto_started") return "▶️";
     return "🤖";
   };
 
@@ -417,26 +426,19 @@ export default function DecisionInboxModal({
                       })
                     ) : (
                       <p className="rounded-md border border-slate-700/70 bg-slate-900/50 px-2.5 py-2 text-xs text-slate-400">
-                        {item.informational
+                        {item.kind === "project_review_ready"
                           ? t({
-                              ko: "자동으로 시작되었습니다. CEO의 조치가 필요하지 않습니다.",
-                              en: "Started automatically. No CEO action is needed.",
-                              ja: "自動で開始されました。CEO の操作は不要です。",
-                              zh: "已自动启动，无需 CEO 操作。",
+                              ko: "기획팀장 의견 취합중...",
+                              en: "Planning lead is consolidating opinions...",
+                              ja: "企画リードが意見を集約中...",
+                              zh: "规划负责人正在汇总意见...",
                             })
-                          : item.kind === "project_review_ready"
-                            ? t({
-                                ko: "기획팀장 의견 취합중...",
-                                en: "Planning lead is consolidating opinions...",
-                                ja: "企画リードが意見を集約中...",
-                                zh: "规划负责人正在汇总意见...",
-                              })
-                            : t({
-                                ko: "선택지 준비 중...",
-                                en: "Options are being prepared...",
-                                ja: "選択肢を準備中...",
-                                zh: "正在准备选项...",
-                              })}
+                          : t({
+                              ko: "선택지 준비 중...",
+                              en: "Options are being prepared...",
+                              ja: "選択肢を準備中...",
+                              zh: "正在准备选项...",
+                            })}
                       </p>
                     )}
                   </div>

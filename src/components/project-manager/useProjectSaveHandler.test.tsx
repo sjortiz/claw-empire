@@ -27,8 +27,8 @@ describe("project review automation persistence", () => {
 
   it.each([
     [null, null, null],
-    [null, true, false],
-    ["project-1", false, true],
+    [null, "on", "off"],
+    ["project-1", "off", "on"],
     ["project-1", null, null],
   ] as const)("saves explicit and inherited overrides for %s (%s, %s)", async (editingProjectId, start, apply) => {
     const pathTools = {
@@ -42,8 +42,7 @@ describe("project review automation persistence", () => {
         setSaving: vi.fn(),
         assignmentMode: "auto",
         mergePolicy: null,
-        reviewMeetingAutoStart: start,
-        reviewItemsAutoApply: apply,
+        reviewAutomation: { review_auto_start: start, review_auto_apply: apply },
         getManualAssignmentWarning: () => null,
         setManualAssignmentWarning: vi.fn(),
         projectPath: "/workspace/review",
@@ -63,8 +62,8 @@ describe("project review automation persistence", () => {
     );
     await act(async () => result.current());
     const payload = expect.objectContaining({
-      review_meeting_auto_start: start,
-      review_items_auto_apply: apply,
+      review_auto_start: start,
+      review_auto_apply: apply,
     });
     if (editingProjectId) {
       expect(updateProject).toHaveBeenCalledWith(editingProjectId, payload);

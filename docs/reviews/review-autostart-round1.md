@@ -4,6 +4,71 @@ This is an acceptance evidence record, not an implementation specification.
 Planning coordinates and reviews; Development owns implementation and command
 execution, and Design owns the requested UI captures.
 
+## Integration revision (2026-10-21)
+
+The failed integration combined different implementations. Parent `9baff52`
+retained the original `4020c85` production files even though its acceptance
+record reviewed the replacement candidate. Selected integration
+`f3187fe758b3d0ec640fa04c5338d9c1b72cd67a` contains Development `b2da2b6`,
+Development evidence/regression `0fa17c5`, and Design evidence `2d95c9f`.
+Their shared base with the parent is `5561a2735574769fbfff3b77278385ca4da42296`.
+The system reported 16 conflicting paths, including schema, project persistence,
+gate, inbox, settings UI and feature documentation.
+
+Development reconciled this checkout to the selected file contents: 61 files
+restored exactly and seven obsolete variant paths removed. The selected schema,
+API, gate, inbox and UI remain unchanged. The Design screenshots and Development
+evidence are now present directly in this checkout, alongside this parent review
+record. No separate specification or competing implementation was added.
+
+Planning independently compared all 505 selected `src/` and `server/` files plus
+the seven obsolete paths against the pinned target's Git blobs: zero mismatches.
+Development's disposable-index comparison also confirms all 68 reconciled paths
+match, including documentation and image artifacts. Before adding fresh command
+evidence, its composed tree differed from the selected target only by this review
+record. No merge, rebase or cherry-pick was performed; system integration and
+renewed approval remain separate steps.
+
+The round-3 excerpts reference explicit-verdict revision `302cd3d`. Its check
+results do not establish acceptance or absence of this feature in the selected
+autostart candidate. The source, UI artifacts and gate/inbox evidence below are
+bound to the autostart revisions listed here. Historical check counts must not
+be presented as fresh results for the reconciled parent.
+
+### Fresh verification of the revised parent
+
+Development ran the required commands in this actual checkout. Planning inspected
+the command logs, exit-status manifest, source identity and compatibility proof;
+Planning did not execute the tests.
+
+| Command | Final exit | Result |
+| --- | --- | --- |
+| `pnpm run format:check` | 0 | Passed after isolating stale generated artifacts |
+| `pnpm run lint` | 0 | 0 errors, 40 existing warnings |
+| `pnpm run build` | 0 | Successful; existing chunk-size warning |
+| `pnpm run test:web` | 0 | 44 files, 204 tests passed |
+| `pnpm run test:api` | 0 | 86 files, 538 tests passed |
+
+The [fresh manifest](../review-automation-checks/integration-revision/checks-manifest.json)
+and [compatibility proof](../review-automation-checks/integration-revision/compatibility-proof.json)
+are committed beside the raw command logs. Initial format failures involved
+temporary preview/extracted slide artifacts and an unformatted generated proof,
+not production source. The old preview directory was preserved intact in this
+checkout's ignored `logs/review-integration-revision-local-archive/`, with its
+original `.tmp` path retained as a symlink. Generated proof JSON was formatted;
+the exact required format command then passed. Tracked formatting policy was
+unchanged. Runtime databases, logs and temporary files stayed inside this checkout.
+
+Planning approves this reconciled package for renewed integration review. No
+critical/high finding remains from this focused review; this is not a claim that
+the system integration has run successfully. The selected behavior remains:
+saving auto-start does not immediately retry an already-waiting gate; manual
+approval or the next workflow pass releases it. Hover-only global help, the
+missing effective-global hint, lint warnings and the bundle warning remain
+documented nonblocking limitations. The UI fixtures still do not establish
+end-to-end persistence or live CLI/LLM meeting execution. The live checkout and
+database were untouched, and nothing was pushed or published to GitHub.
+
 ## Revision and provenance
 
 - Selected Development revision: `b2da2b6c68e5c747e8a80110e2fc95db01898380`.
@@ -11,8 +76,8 @@ execution, and Design owns the requested UI captures.
 - Both have source tree `9b6c7a033e3ea1f33f407a6c829d2bbdfb8b3cb4`.
 - Final Development evidence/regression: `0fa17c569ff704077b5012da9ecc352b118b8713`.
 - Design evidence: `2d95c9f`.
-- The Planning checkout remains on the older implementation; no integration or
-  production edits were performed in this continuation.
+- At the original evidence review, the Planning checkout retained the older
+  implementation. The integration revision above addresses that divergence.
 
 The selected API is `reviewAutoStart` / `reviewAutoApply`, with nullable
 `"on"` / `"off"` project overrides in `review_auto_start` / `review_auto_apply`.

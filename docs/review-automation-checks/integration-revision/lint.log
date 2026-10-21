@@ -1,0 +1,75 @@
+
+> climpire@2.0.4 lint /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41
+> eslint src server
+
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/server/modules/routes/collab/language-policy.ts
+  86:26  warning  Unnecessary escape character: \[  no-useless-escape
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/server/modules/workflow/core/cli-tools.ts
+  31:29  warning  Unexpected control character(s) in regular expression: \x1b, \x07, \x07, \x1b  no-control-regex
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/server/modules/workflow/core/interrupt-injection-tools.ts
+  7:27  warning  Unexpected control character(s) in regular expression: \x1b, \x07, \x07, \x1b              no-control-regex
+  8:28  warning  Unexpected control character(s) in regular expression: \x00, \x08, \x0b, \x0c, \x0e, \x1f  no-control-regex
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/server/modules/workflow/core/project-context-tools.ts
+  191:13  warning  Empty block statement  no-empty
+  194:13  warning  Empty block statement  no-empty
+  197:13  warning  Empty block statement  no-empty
+  200:13  warning  Empty block statement  no-empty
+  207:13  warning  Empty block statement  no-empty
+  236:15  warning  Empty block statement  no-empty
+  257:15  warning  Empty block statement  no-empty
+  292:15  warning  Empty block statement  no-empty
+  360:15  warning  Empty block statement  no-empty
+  394:19  warning  Empty block statement  no-empty
+  399:15  warning  Empty block statement  no-empty
+  423:13  warning  Empty block statement  no-empty
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/server/modules/workflow/orchestration/planning-archive-tools.ts
+  28:16  warning  Unexpected control character(s) in regular expression: \x1b  no-control-regex
+  42:34  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:45  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:48  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:60  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:63  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:79  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:82  warning  Unnecessary escape character: \"                             no-useless-escape
+  42:89  warning  Unnecessary escape character: \"                             no-useless-escape
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/app/useRealtimeSync.ts
+  464:6  warning  React Hook useEffect has missing dependencies: 'activeChatRef', 'agentsRef', 'codexThreadBindingTsRef', 'codexThreadToSubAgentIdRef', 'setAgents', 'setCeoOfficeCalls', 'setCrossDeptDeliveries', 'setMeetingPresence', 'setMessages', 'setStreamingMessage', 'setSubAgents', 'setSubtasks', 'setTaskReport', 'setUnreadAgentIds', 'subAgentStreamTailRef', 'subAgentsRef', 'tasksRef', and 'viewRef'. Either include them or remove the dependency array. If 'setAgents' changes too often, find the parent component that defines it and wrap that definition in useCallback  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/components/AgentManager.tsx
+  225:6  warning  React Hook useCallback has a missing dependency: 'officePackKey'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  365:6  warning  React Hook useCallback has a missing dependency: 'officePackKey'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/components/ChatPanel.tsx
+  119:6  warning  React Hook useEffect has a missing dependency: 'mode'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  223:6  warning  React Hook useCallback has a missing dependency: 'tr'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/components/ProjectManagerModal.tsx
+  116:6  warning  React Hook useEffect has missing dependencies: 'loadProjects' and 'search'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/components/SkillHistoryPanel.tsx
+  115:66  warning  The ref value 'unlearnEffectTimersRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'unlearnEffectTimersRef.current' to a variable inside the effect, and use that variable in the cleanup function  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/components/office-view/useOfficePixiRuntime.ts
+   91:17  warning  Empty block statement                                                                                                                                                                                                                                              no-empty
+  146:17  warning  Empty block statement                                                                                                                                                                                                                                              no-empty
+  207:17  warning  The ref value 'initIdRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'initIdRef.current' to a variable inside the effect, and use that variable in the cleanup function  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/components/skills-library/useSkillsLibraryState.ts
+  215:66  warning  The ref value 'unlearnEffectTimersRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'unlearnEffectTimersRef.current' to a variable inside the effect, and use that variable in the cleanup function  react-hooks/exhaustive-deps
+  252:6   warning  React Hook useEffect has a missing dependency: 'learnJob'. Either include it or remove the dependency array                                                                                                                                                                                  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/hooks/usePolling.ts
+  19:6  warning  React Hook useCallback was passed a dependency list that is not an array literal. This means we can't statically verify whether you've passed the correct dependencies                                                           react-hooks/exhaustive-deps
+  19:6  warning  React Hook useCallback has a missing dependency: 'fetcher'. Either include it or remove the dependency array. If 'fetcher' changes too often, find the parent component that defines it and wrap that definition in useCallback  react-hooks/exhaustive-deps
+
+/Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41/src/hooks/useWebSocket.ts
+  69:17  warning  Empty block statement  no-empty
+
+✖ 40 problems (0 errors, 40 warnings)
+

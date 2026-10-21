@@ -1,0 +1,22 @@
+
+> climpire@2.0.4 format:check /Users/shailynortiz/projects/oss/claw-empire-review-autostart/.climpire-worktrees/84cd5a41
+> prettier --check "**/*.{ts,tsx,js,mjs,cjs,json,yml,yaml,css,scss,html}"
+
+Checking formatting...
+[warn] .tmp/review-round1-b2da2b6/harness/index.html
+[warn] .tmp/review-round1-b2da2b6/harness/main.tsx
+[warn] .tmp/review-round1-b2da2b6/harness/vite.config.mjs
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/build-pptx.cjs
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/build-pptx.mjs
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/html2pptx.cjs
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-01.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-02.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-03.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-04.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-05.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-06.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-07.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-08.html
+[warn] .tmp/review-round1-b2da2b6/source/docs/reports/Sample_Slides/slide-09.html
+[warn] Code style issues found in 15 files. Run Prettier with --write to fix.
+ ELIFECYCLE  Command failed with exit code 1.

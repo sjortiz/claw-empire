@@ -125,7 +125,9 @@ export function runYoloDecisionAutopilot(input: {
   applyDecisionReply: (decisionId: string, body: Record<string, unknown>) => DecisionApplyResult;
   maxSteps?: number;
   shouldSkipItem?: (item: DecisionInboxRouteItem) => boolean;
+  buildReplyPayload?: (item: DecisionInboxRouteItem) => YoloDecisionReplyPayload | null;
 }): number {
+  const buildReplyPayload = input.buildReplyPayload ?? buildYoloDecisionReplyPayload;
   const maxSteps = Math.max(1, Math.min(Math.trunc(input.maxSteps ?? 24), 120));
   const failedDecisionIds = new Set<string>();
   const retryableAttemptCountByDecisionId = new Map<string, number>();
@@ -141,7 +143,7 @@ export function runYoloDecisionAutopilot(input: {
 
     let chosen: { id: string; payload: YoloDecisionReplyPayload } | null = null;
     for (const item of items) {
-      const payload = buildYoloDecisionReplyPayload(item);
+      const payload = buildReplyPayload(item);
       if (!payload) continue;
       chosen = { id: item.id, payload };
       break;

@@ -35,10 +35,9 @@ export type DecisionInboxRouteOption = {
 
 export type DecisionInboxRouteItem = {
   id: string;
-  kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick";
+  kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick" | "review_auto_started";
   created_at: number;
   summary: string;
-  informational?: boolean;
   agent_id?: string | null;
   agent_name?: string | null;
   agent_name_ko?: string | null;
@@ -56,7 +55,7 @@ export type DecisionInboxRouteItem = {
 export type DecisionInboxReplyResult = {
   ok: boolean;
   resolved: boolean;
-  kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick";
+  kind: "project_review_ready" | "task_timeout_resume" | "review_round_pick" | "review_auto_started";
   action: string;
   started_task_ids?: string[];
   task_id?: string;
