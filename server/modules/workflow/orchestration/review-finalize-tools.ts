@@ -1,6 +1,8 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { resolveTaskMergePolicy } from "../core/worktree/merge-policy.ts";
+import { REVIEW_AUTO_START_LOG, resolveReviewAutomation } from "../core/review-automation.ts";
 import path from "node:path";
 import {
   discoverVideoArtifact,
@@ -146,6 +148,96 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
     appendTaskLog(taskId, "system", `Delegated subtask sync: marked ${linked.length} linked subtask(s) as blocked`);
   }
 
+  // Start the project-level review meeting the gate would otherwise hold for a CEO decision.
+  function autoStartProjectReview(projectId: string, lang: string, taskId: string): void {
+    projectReviewGateNotifiedAt.delete(projectId);
+    // Same conditions as the Decision Inbox item: never run over a running meeting or a pending revision pick.
+    const blockingMeeting = db
+      .prepare(
+        `
+  SELECT mm.status
+  FROM tasks t
+  JOIN meeting_minutes mm ON mm.task_id = t.id
+  WHERE t.project_id = ?
+    AND t.status = 'review'
+    AND t.source_task_id IS NULL
+    AND mm.meeting_type = 'review'
+    AND (mm.status = 'in_progress' OR mm.status = 'revision_requested')
+    AND mm.id = (
+      SELECT mm2.id
+      FROM meeting_minutes mm2
+      WHERE mm2.task_id = t.id
+        AND mm2.meeting_type = 'review'
+      ORDER BY mm2.started_at DESC, mm2.created_at DESC
+      LIMIT 1
+    )
+  LIMIT 1
+`,
+      )
+      .get(projectId) as { status: string } | undefined;
+    if (blockingMeeting) {
+      appendTaskLog(
+        taskId,
+        "system",
+        blockingMeeting.status === "in_progress"
+          ? "Review gate: waiting for the running project review meeting before starting automatically (setting)"
+          : "Review gate: waiting for a pending review round decision before starting automatically (setting)",
+      );
+      return;
+    }
+    const reviewTasks = db
+      .prepare(
+        `
+  SELECT id, title
+  FROM tasks
+  WHERE project_id = ?
+    AND status = 'review'
+    AND source_task_id IS NULL
+  ORDER BY updated_at ASC, created_at ASC
+`,
+      )
+      .all(projectId) as Array<{ id: string; title: string }>;
+    const startedTasks: Array<{ id: string; title: string }> = [];
+    for (const task of reviewTasks) {
+      if (reviewInFlight.has(task.id)) continue;
+      finishReview(task.id, task.title, { bypassProjectDecisionGate: true, trigger: "review_auto_start" });
+      const after = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as { status?: string } | undefined;
+      // Tasks held by a review gate (unfinished subtasks, video artifacts) log their own hold reason.
+      if (!reviewInFlight.has(task.id) && after?.status === "review") continue;
+      appendTaskLog(task.id, "system", REVIEW_AUTO_START_LOG);
+      startedTasks.push(task);
+    }
+    if (startedTasks.length === 0) return;
+
+    db.prepare(
+      "INSERT INTO review_auto_start_notices (id, project_id, task_ids_json, created_at) VALUES (?, ?, ?, ?)",
+    ).run(randomUUID(), projectId, JSON.stringify(startedTasks.map((task) => task.id)), nowMs());
+    const project = db.prepare("SELECT name FROM projects WHERE id = ?").get(projectId) as
+      | { name: string | null }
+      | undefined;
+    const projectName = (project?.name || projectId).trim();
+    notifyCeo(
+      pickL(
+        l(
+          [
+            `[CEO OFFICE] 프로젝트 '${projectName}'의 팀장 회의가 설정에 따라 자동으로 시작되었습니다 (${startedTasks.length}건). 의사결정 인박스에서 확인할 수 있습니다.`,
+          ],
+          [
+            `[CEO OFFICE] Project '${projectName}': team-lead review meeting started automatically by setting (${startedTasks.length} task(s)). Details are in the Decision Inbox.`,
+          ],
+          [
+            `[CEO OFFICE] プロジェクト'${projectName}'のチームリーダー会議を設定により自動開始しました（${startedTasks.length}件）。詳細はDecision Inboxで確認できます。`,
+          ],
+          [
+            `[CEO OFFICE] 项目'${projectName}'的组长评审会议已按设置自动启动（${startedTasks.length} 个任务）。详情见 Decision Inbox。`,
+          ],
+        ),
+        lang,
+      ),
+      startedTasks[0].id,
+    );
+  }
+
   // Move a reviewed task to 'done'
   function finishReview(
     taskId: string,
@@ -171,6 +263,18 @@ export function createReviewFinalizeTools(deps: CreateReviewFinalizeToolsDeps) {
 
     if (!options?.bypassProjectDecisionGate && !currentTask.source_task_id && currentTask.project_id) {
       const gateSnapshot = getProjectReviewGateSnapshot(currentTask.project_id);
+      if (resolveReviewAutomation(db, "reviewAutoStart", currentTask.project_id).enabled) {
+        if (gateSnapshot.ready) {
+          autoStartProjectReview(currentTask.project_id, lang, taskId);
+        } else {
+          appendTaskLog(
+            taskId,
+            "system",
+            `Review gate: waiting for other project tasks (${gateSnapshot.activeReview}/${gateSnapshot.activeTotal} active tasks in review); the review meeting starts automatically (setting)`,
+          );
+        }
+        return;
+      }
       appendTaskLog(
         taskId,
         "system",
