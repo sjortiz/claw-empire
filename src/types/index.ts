@@ -126,6 +126,8 @@ export interface Task {
   output_format?: string | null;
   project_path: string | null;
   result: string | null;
+  planning_attention_reason?: string | null;
+  planning_meeting_failures?: number;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;

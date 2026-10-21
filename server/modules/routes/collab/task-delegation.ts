@@ -439,6 +439,13 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
       };
 
       const runPlanningPhase = (afterPlan: () => void) => {
+        const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as
+          | { status: string }
+          | undefined;
+        if (current?.status !== "planned") {
+          persistentWait.clear(taskId, "planning-agent");
+          return;
+        }
         if (isTaskWorkflowInterrupted(taskId)) return;
         if (isPlanningLead) {
           const fresh = db.prepare("SELECT * FROM agents WHERE id = ?").get(teamLeader.id) as AgentRow | undefined;
@@ -542,6 +549,13 @@ export function createTaskDelegationHandler(deps: TaskDelegationDeps) {
         broadcast("agent_status", db.prepare("SELECT * FROM agents WHERE id = ?").get(teamLeader.id));
 
         const startWhenAvailable = () => {
+          const current = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as
+            | { status: string }
+            | undefined;
+          if (current?.status !== "planned") {
+            persistentWait.clear(taskId, "root-execution-agent");
+            return;
+          }
           if (isTaskWorkflowInterrupted(taskId)) return;
           const fresh = db.prepare("SELECT * FROM agents WHERE id = ?").get(teamLeader.id) as AgentRow | undefined;
           if (

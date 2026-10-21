@@ -177,6 +177,15 @@ CREATE INDEX IF NOT EXISTS idx_task_agent_notes_source ON task_agent_notes(sourc
   migrateLegacyTasksStatusSchema(db);
   repairLegacyTaskForeignKeys(db);
   ensureMessagesIdempotencySchema(db);
+  // Add after legacy table rebuilds so they cannot drop recovery state columns.
+  // Preserve planning failures across restarts; only an explicit retry clears attention.
+  for (const definition of ["planning_attention_reason TEXT", "planning_meeting_failures INTEGER NOT NULL DEFAULT 0"]) {
+    try {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${definition}`);
+    } catch {
+      /* already exists */
+    }
+  }
 }
 
 function safeJsonParse(raw: string): unknown {

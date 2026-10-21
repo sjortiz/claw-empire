@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   output_format TEXT,
   project_path TEXT,
   result TEXT,
+  planning_attention_reason TEXT,
+  planning_meeting_failures INTEGER NOT NULL DEFAULT 0,
   started_at INTEGER,
   completed_at INTEGER,
   created_at INTEGER DEFAULT (unixepoch()*1000),

@@ -1,3 +1,5 @@
+import { registerTaskExecutionControlRoutes } from "../../routes/core/tasks/execution-control.ts";
+import { getCsrfToken } from "../../../security/auth.ts";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
@@ -125,6 +127,94 @@ describe("persistent root recovery", () => {
       current_task_id: "root",
     });
     expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+  });
+  it("retries an attention-marked planning meeting from the task card resume route", () => {
+    vi.useFakeTimers();
+    try {
+      const deps = fixture();
+      db.exec(
+        "DELETE FROM subtasks; UPDATE tasks SET planning_attention_reason = 'provider unavailable', planning_meeting_failures = 2",
+      );
+      const routes = new Map<string, (...args: any[]) => any>();
+      registerTaskExecutionControlRoutes({
+        ...deps,
+        app: { post: (path: string, handler: (...args: any[]) => any) => routes.set(path, handler) },
+        resolveLang: () => "en",
+        taskExecutionSessions: new Map(),
+        stopRequestModeByTask: new Map(),
+        isTaskWorkflowInterrupted: () => false,
+        randomDelay: () => 1,
+        l: (_ko: string[], en: string[]) => ({ en }),
+        pickL: (pool: { en: string[] }) => pool.en[0],
+      } as any);
+      const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+      routes.get("/api/tasks/:id/resume")!(
+        {
+          params: { id: "root" },
+          body: {},
+          method: "POST",
+          header: (name: string) => (name === "x-csrf-token" ? getCsrfToken() : undefined),
+        },
+        res,
+      );
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ ok: true, status: "planned", auto_resumed: true }),
+      );
+      expect(
+        db.prepare("SELECT planning_attention_reason, planning_meeting_failures FROM tasks WHERE id = 'root'").get(),
+      ).toEqual({ planning_attention_reason: null, planning_meeting_failures: 0 });
+      vi.runAllTimers();
+      expect(deps.startPlannedApprovalMeeting).toHaveBeenCalledOnce();
+      expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+  it("restores dependency dispatch on manual graph retry without running root early", () => {
+    vi.useFakeTimers();
+    try {
+      const deps = fixture();
+      deps.appendTaskLog("root", "system", "Planned graph seeded 1 subtasks with explicit dependencies");
+      db.exec("UPDATE tasks SET status = 'planned'; UPDATE subtasks SET status = 'pending'");
+      expect(resumeTaskExecution(deps, "root", "manual retry")).toBe(true);
+      expect(deps.processSubtaskDelegations).toHaveBeenCalledWith("root");
+      expect(deps.startTaskExecutionForAgent).not.toHaveBeenCalled();
+      expect(db.prepare("SELECT status FROM tasks WHERE id = 'root'").get()).toEqual({ status: "collaborating" });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+  it("preserves a review round waiting for CEO remediation picks", () => {
+    const deps = fixture();
+    db.exec(
+      "UPDATE tasks SET status = 'review'; INSERT INTO meeting_minutes (id,task_id,meeting_type,round,title,status,started_at) VALUES ('meeting','root','review',1,'Review','revision_requested',1)",
+    );
+    sweepReadyRoots(deps);
+    expect(deps.finishReview).not.toHaveBeenCalled();
+  });
+  it("restores legacy department cooperation with the manual project agent scope", () => {
+    const deps = fixture();
+    db.exec(
+      "UPDATE tasks SET status = 'planned'; DELETE FROM subtasks; UPDATE agents SET acts_as_planning_leader = 1; INSERT INTO projects (id,name,project_path,core_goal,assignment_mode) VALUES ('project','Project','/project','Goal','manual'); INSERT INTO project_agents (project_id,agent_id) VALUES ('project','owner'); UPDATE tasks SET project_id = 'project'",
+    );
+    const cooperate = vi.fn();
+    const recovered = {
+      ...deps,
+      detectTargetDepartments: () => ["dev"],
+      startCrossDeptCooperation: cooperate,
+      resolveLang: () => "en",
+    };
+    sweepReadyRoots(recovered);
+    const approved = deps.startPlannedApprovalMeeting.mock.calls[0][3] as unknown as (notes: string[]) => void;
+    approved(["Legacy planning action"]);
+    expect(cooperate).toHaveBeenCalledWith(
+      ["dev"],
+      0,
+      expect.objectContaining({ taskId: "root", projectCandidateAgentIds: ["owner"] }),
+    );
+    expect(deps.startTaskExecutionForAgent).toHaveBeenCalledOnce();
   });
   it("recovers review via the existing gate without bypass options", () => {
     const deps = fixture();

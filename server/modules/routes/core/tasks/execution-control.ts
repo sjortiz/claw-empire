@@ -46,7 +46,17 @@ export type TaskExecutionControlRouteDeps = Pick<
   | "isTaskWorkflowInterrupted"
   | "startTaskExecutionForAgent"
   | "randomDelay"
->;
+> &
+  Partial<
+    Pick<
+      RuntimeContext,
+      | "startPlannedApprovalMeeting"
+      | "seedApprovedPlanSubtasks"
+      | "processSubtaskDelegations"
+      | "startCrossDeptCooperation"
+      | "detectTargetDepartments"
+    >
+  >;
 
 export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRouteDeps): void {
   const {
@@ -487,6 +497,8 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
           title: string;
           status: string;
           assigned_agent_id: string | null;
+          planning_attention_reason?: string | null;
+          planning_meeting_failures?: number;
         }
       | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
@@ -502,6 +514,12 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
       return res.status(400).json({ error: "invalid_status", message: `Cannot resume from '${task.status}'` });
     }
 
+    const retryPlanning = Boolean(task.planning_attention_reason);
+    if (retryPlanning || task.planning_meeting_failures) {
+      db.prepare("UPDATE tasks SET planning_attention_reason = NULL, planning_meeting_failures = 0 WHERE id = ?").run(
+        id,
+      );
+    }
     resetPersistentWaits(db, id, nowMs());
     stopRequestedTasks.delete(id);
     stopRequestModeByTask.delete(id);
@@ -525,7 +543,9 @@ export function registerTaskExecutionControlRoutes(deps: TaskExecutionControlRou
         setTimeout(
           () => {
             if (isTaskWorkflowInterrupted(id) || activeProcesses.has(id)) return;
-            resumeTaskExecution(deps, id, "manual resume");
+            resumeTaskExecution(deps, id, retryPlanning ? "manual planning meeting retry" : "manual resume", {
+              planning: retryPlanning,
+            });
           },
           randomDelay(450, 900),
         );

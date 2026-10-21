@@ -36,6 +36,7 @@ type CreatePlannedApprovalToolsDeps = {
   collectPlannedActionItems: (...args: any[]) => any[];
   appendTaskProjectMemo: (...args: any[]) => any;
   appendTaskLog: (...args: any[]) => any;
+  broadcast?: (...args: any[]) => any;
   classifyMeetingReviewDecision: (text: string) => MeetingReviewDecision;
   reviewMeetingOneShotTimeoutMs?: number;
 };
@@ -72,7 +73,21 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     appendTaskLog,
     classifyMeetingReviewDecision,
     reviewMeetingOneShotTimeoutMs,
+    broadcast,
   } = deps;
+
+  function markPlanningAttention(taskId: string, reason: string): void {
+    db.prepare("UPDATE tasks SET status = 'pending', planning_attention_reason = ?, updated_at = ? WHERE id = ?").run(
+      reason,
+      Date.now(),
+      taskId,
+    );
+    db.prepare(
+      "UPDATE agents SET current_task_id = NULL WHERE current_task_id = ? AND status IN ('idle', 'break')",
+    ).run(taskId);
+    broadcast?.("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+    appendTaskLog(taskId, "error", `Planning needs attention: ${reason}. Retry planning meeting from the task card.`);
+  }
 
   function startPlannedApprovalMeeting(
     taskId: string,
@@ -88,13 +103,14 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
 
     void (async () => {
       let meetingId: string | null = null;
-      const leaders = getTaskReviewLeaders(taskId, departmentId);
-      if (leaders.length === 0) {
-        reviewInFlight.delete(lockKey);
-        onApproved([]);
-        return;
-      }
+      let leaders: any[] = [];
       try {
+        leaders = getTaskReviewLeaders(taskId, departmentId);
+        if (leaders.length === 0) {
+          reviewInFlight.delete(lockKey);
+          onApproved([]);
+          return;
+        }
         const round = (reviewRoundState.get(lockKey) ?? 0) + 1;
         reviewRoundState.set(lockKey, round);
 
@@ -348,6 +364,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           dismissLeadersFromCeoOffice(taskId, leaders);
           reviewRoundState.delete(lockKey);
           reviewInFlight.delete(lockKey);
+          markPlanningAttention(taskId, "A planning reviewer did not provide a structured verdict after clarification");
           return;
         }
         // Only stripped department drafts feed fallback work. Consolidation repeats
@@ -391,6 +408,9 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         );
         if (meetingId) finishMeetingMinutes(meetingId, "completed");
         dismissLeadersFromCeoOffice(taskId, leaders);
+        db.prepare("UPDATE tasks SET planning_meeting_failures = 0, planning_attention_reason = NULL WHERE id = ?").run(
+          taskId,
+        );
         reviewRoundState.delete(lockKey);
         reviewInFlight.delete(lockKey);
         onApproved(planItems);
@@ -403,22 +423,42 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         }
         const msg = err?.message ? String(err.message) : String(err);
         appendTaskLog(taskId, "error", `Planned meeting error: ${msg}`);
+        if (meetingId) finishMeetingMinutes(meetingId, "failed");
+        dismissLeadersFromCeoOffice(taskId, leaders);
+        reviewInFlight.delete(lockKey);
+        db.prepare(
+          "UPDATE tasks SET planning_meeting_failures = COALESCE(planning_meeting_failures, 0) + 1 WHERE id = ?",
+        ).run(taskId);
+        const failureState = db.prepare("SELECT planning_meeting_failures FROM tasks WHERE id = ?").get(taskId) as
+          | { planning_meeting_failures: number }
+          | undefined;
+        if (failureState?.planning_meeting_failures === 1) {
+          appendTaskLog(taskId, "system", `Automatic re-queue: planned meeting failed; retrying once: ${msg}`);
+          startPlannedApprovalMeeting(taskId, taskTitle, departmentId, onApproved);
+          return;
+        }
+        markPlanningAttention(taskId, msg);
         const errLang = resolveLang(taskTitle);
         notifyCeo(
           pickL(
             l(
-              [`[CEO OFFICE] '${taskTitle}' Planned 회의 처리 중 오류가 발생했습니다: ${msg}`],
-              [`[CEO OFFICE] Error while processing planned meeting for '${taskTitle}': ${msg}`],
-              [`[CEO OFFICE] '${taskTitle}' のPlanned会議処理中にエラーが発生しました: ${msg}`],
-              [`[CEO OFFICE] 处理'${taskTitle}'的 Planned 会议时发生错误：${msg}`],
+              [
+                `[CEO OFFICE] '${taskTitle}' Planned 회의가 재시도 후에도 실패하여 확인이 필요합니다: ${msg}. 작업 카드에서 계획 회의를 재시도하세요.`,
+              ],
+              [
+                `[CEO OFFICE] Planned meeting for '${taskTitle}' failed after one retry and needs attention: ${msg}. Use Retry planning meeting on the task card.`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' のPlanned会議が再試行後も失敗し、確認が必要です: ${msg}。タスクカードから計画会議を再試行してください。`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' 的 Planned 会议在重试后仍失败，需要关注：${msg}。请在任务卡中重试规划会议。`,
+              ],
             ),
             errLang,
           ),
           taskId,
         );
-        if (meetingId) finishMeetingMinutes(meetingId, "failed");
-        dismissLeadersFromCeoOffice(taskId, leaders);
-        reviewInFlight.delete(lockKey);
       }
     })();
   }

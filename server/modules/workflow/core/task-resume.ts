@@ -1,3 +1,4 @@
+import { parseStoredMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
 import { createPersistentWait, hasExhaustedWait } from "./persistent-wait.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
 import { resolveConstrainedAgentScopeForTask } from "../../routes/core/tasks/execution-run-auto-assign.ts";
@@ -40,6 +41,46 @@ export function resumeTaskExecution(
   if (!task || activeProcesses.has(taskId) || !["pending", "planned", "collaborating"].includes(task.status))
     return false;
   if (deps.stopRequestedTasks?.has(taskId) || hasExhaustedWait(db, taskId)) return false;
+  // Retrying a held graph restores dependency dispatch; consolidation must
+  // still wait for every child to be approved and integrated.
+  if (!options?.planning && deps.processSubtaskDelegations) {
+    const graph = db
+      .prepare("SELECT 1 FROM task_logs WHERE task_id = ? AND message LIKE 'Planned graph seeded %' LIMIT 1")
+      .get(taskId);
+    const unfinished =
+      graph &&
+      db
+        .prepare(
+          `SELECT 1 FROM subtasks s LEFT JOIN tasks child ON child.id = s.delegated_task_id
+      WHERE s.task_id = ? AND (s.status NOT IN ('done','cancelled') OR
+      (s.status = 'done' AND (child.status IS NULL OR child.status != 'done'))) LIMIT 1`,
+        )
+        .get(taskId);
+    if (unfinished) {
+      if (task.status !== "collaborating") {
+        db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(
+          "collaborating",
+          deps.nowMs(),
+          taskId,
+        );
+        appendTaskLog(taskId, "system", `Automatic re-queue: ${reason}: restoring planning graph dependency dispatch`);
+        deps.broadcast("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+      }
+      db.prepare(
+        "UPDATE agents SET current_task_id = NULL WHERE id = ? AND current_task_id = ? AND status IN ('idle','break')",
+      ).run(task.assigned_agent_id, taskId);
+      deps.processSubtaskDelegations(taskId);
+      ownerWait(deps).wait(
+        taskId,
+        "planning-integration",
+        "Planning graph waiting for child approval and integration",
+        () => resumeTaskExecution(deps, taskId, reason),
+        { maxWaitMs: 60 * 60_000 },
+      );
+      return true;
+    }
+    ownerWait(deps).clear(taskId, "planning-integration");
+  }
   const agent = task.assigned_agent_id
     ? db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id)
     : null;
@@ -183,6 +224,18 @@ export function recoverReadyRoot(deps: any, taskId: string, trigger: string): bo
     });
   }
   if (task.status === "review") {
+    const latest = db
+      .prepare(
+        "SELECT id, status FROM meeting_minutes WHERE task_id = ? AND meeting_type = 'review' ORDER BY started_at DESC, created_at DESC LIMIT 1",
+      )
+      .get(taskId);
+    if (latest?.status === "revision_requested") return false;
+    if (latest?.status === "failed") {
+      const entries = db
+        .prepare("SELECT content FROM meeting_minute_entries WHERE meeting_id = ?")
+        .all(latest.id) as Array<{ content: string }>;
+      if (entries.some((entry) => parseStoredMeetingVerdict(entry.content)?.verdict === "no_verdict")) return false;
+    }
     appendRecoveryReview(deps, task, trigger);
     return true;
   }
