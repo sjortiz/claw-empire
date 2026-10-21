@@ -1,4 +1,4 @@
-import { parseMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../../src/lib/meeting-verdict.ts";
+import { parseStoredMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../../src/lib/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import { randomUUID } from "node:crypto";
 
@@ -187,16 +187,12 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
     const out: string[] = [];
     const seen = new Set<string>();
     const perDept = new Map<string, number>();
-    const isIssue = (text: string) =>
-      /보완|보류|리스크|미첨부|미구축|미완료|불가|부족|0%|hold|revise|revision|required|pending|risk|block|missing|not attached|incomplete|保留|修正|补充|未完成|未附|风险/i.test(
-        text,
-      );
 
     for (const row of transcript) {
-      const verdict = parseMeetingVerdict(row.content);
-      if (verdict && !meetingVerdictNeedsRevision(verdict)) continue;
-      const base = (verdict ? verdict.blocking_items.join("; ") : row.content).replace(/\s+/g, " ").trim();
-      if (!base || (!verdict && !isIssue(base))) continue;
+      const verdict = parseStoredMeetingVerdict(row.content);
+      if (!verdict || !meetingVerdictNeedsRevision(verdict)) continue;
+      const base = verdict.blocking_items.join("; ").replace(/\s+/g, " ").trim();
+      if (!base) continue;
       const deptKey = row.department.replace(/\s+/g, " ").trim().toLowerCase() || "unknown";
       const deptCount = perDept.get(deptKey) ?? 0;
       if (deptCount >= maxPerDepartment) continue;
@@ -219,7 +215,7 @@ export function createMeetingMinutesTools(deps: MeetingMinutesDeps) {
     const seen = new Set<string>();
     for (const row of transcript) {
       // Structured reviewer prose and informational notes are never fallback work items.
-      const verdict = parseMeetingVerdict(row.content);
+      const verdict = parseStoredMeetingVerdict(row.content);
       if (verdict) continue;
       const base = row.content.replace(/\s+/g, " ").trim();
       if (!base || base.length < 8) continue;

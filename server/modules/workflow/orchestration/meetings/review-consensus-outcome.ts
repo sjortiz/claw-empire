@@ -1,5 +1,5 @@
+import { meetingVerdictClarification } from "../../meeting-verdict.ts";
 import { parseMeetingVerdict, meetingVerdictNeedsRevision } from "../../../../../src/lib/meeting-verdict.ts";
-import type { Lang } from "../../../../types/lang.ts";
 import type { MeetingTranscriptEntry } from "./minutes.ts";
 
 type OutcomeContext = any;
@@ -18,17 +18,10 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
     leaders,
     transcript,
     lang,
-    workflowPackKey,
     meetingId,
     onApproved,
     abortIfInactive,
-    meetingReviewDecisionByAgent,
-    verdictSources,
     findLatestTranscriptContentByAgent,
-    isDeferrableReviewHold,
-    summarizeForMeetingBubble,
-    getDeptName,
-    getAgentDisplayName,
     appendTaskLog,
     REVIEW_MAX_REVISION_SIGNALS_PER_ROUND,
     REVIEW_MAX_REVISION_SIGNALS_PER_DEPT_PER_ROUND,
@@ -64,6 +57,24 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   if (informationalNotes.length)
     appendTaskProjectMemo(taskId, "review", round, informationalNotes, lang, "non_blocking");
 
+  const missingVerdicts = (leaders as any[]).filter(
+    (leader) =>
+      !parseMeetingVerdict(findLatestTranscriptContentByAgent(transcript as MeetingTranscriptEntry[], leader.id)),
+  );
+  if (missingVerdicts.length) {
+    appendTaskLog(
+      taskId,
+      "system",
+      `Review round ${round}: no verdict; clarification required (${missingVerdicts.map((leader) => leader.id).join(", ")})`,
+    );
+    notifyCeo(`[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)}`, taskId);
+    if (meetingId) finishMeetingMinutes(meetingId, "failed");
+    dismissLeadersFromCeoOffice(taskId, leaders);
+    reviewRoundState.delete(taskId);
+    reviewInFlight.delete(taskId);
+    return true;
+  }
+
   // Final review result should follow each leader's last approval statement,
   // not stale "needs revision" flags from earlier feedback turns.
   const finalHoldLeaders: any[] = [];
@@ -73,21 +84,7 @@ export async function processReviewConsensusOutcome(ctx: OutcomeContext): Promis
   for (const leader of leaders as any[]) {
     const latestDecisionLine = findLatestTranscriptContentByAgent(transcript as MeetingTranscriptEntry[], leader.id);
     const verdict = parseMeetingVerdict(latestDecisionLine);
-    if (verdict ? !meetingVerdictNeedsRevision(verdict) : meetingReviewDecisionByAgent.get(leader.id) !== "hold")
-      continue;
-    if ((!verdict || verdictSources?.get(leader.id) === "legacy") && isDeferrableReviewHold(latestDecisionLine)) {
-      const clipped = summarizeForMeetingBubble(latestDecisionLine, 160, lang as Lang);
-      deferredMonitoringLeaders.push(leader);
-      deferredMonitoringNotes.push(
-        `${getDeptName(leader.department_id ?? "", workflowPackKey)} ${getAgentDisplayName(leader, lang)}: ${clipped}`,
-      );
-      appendTaskLog(
-        taskId,
-        "system",
-        `Review round ${round}: converted deferrable hold to post-merge monitoring (${leader.id})`,
-      );
-      continue;
-    }
+    if (!verdict || !meetingVerdictNeedsRevision(verdict)) continue;
     if (finalHoldLeaders.length >= REVIEW_MAX_REVISION_SIGNALS_PER_ROUND) {
       appendTaskLog(
         taskId,

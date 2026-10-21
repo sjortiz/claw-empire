@@ -3,6 +3,7 @@ import {
   formatMeetingVerdict,
   meetingVerdictNeedsRevision,
   parseMeetingVerdict,
+  parseStoredMeetingVerdict,
   stripMeetingVerdict,
 } from "../../../src/lib/meeting-verdict.ts";
 import { meetingVerdictInstruction, planningWorkFromVerdict, resolveMeetingVerdict } from "./meeting-verdict.ts";
@@ -31,7 +32,7 @@ const core = createReplyCoreTools({
 describe("explicit meeting verdicts", () => {
   it("approves text mentioning blocks downstream work and risk", () => {
     expect(core.classifyMeetingReviewDecision(reply())).toBe("approved");
-    expect(core.classifyMeetingReviewDecision(stripMeetingVerdict(reply()))).toBe("hold");
+    expect(core.classifyMeetingReviewDecision(stripMeetingVerdict(reply()))).toBe("reviewing");
     expect(core.wantsReviewRevision(reply())).toBe(false);
   });
   it("requires concrete blockers for revision", () => {
@@ -52,9 +53,33 @@ describe("explicit meeting verdicts", () => {
       expect(parseMeetingVerdict(text)).toBeNull();
     expect(stripMeetingVerdict(reply())).toBe("Approved: #47 blocks downstream work, with risk documented.");
   });
+  it("reads only the final line and keeps historical JSON out of live classification", () => {
+    const historical = formatMeetingVerdict(revise).replace(/\nREVISE$/, "");
+    expect(parseMeetingVerdict(historical)).toBeNull();
+    expect(parseStoredMeetingVerdict(historical)).toEqual(revise);
+    expect(core.classifyMeetingReviewDecision(historical)).toBe("reviewing");
+    expect(parseMeetingVerdict(`${historical}\nAPPROVE`)?.verdict).toBe("approve");
+    for (const text of ["Approve", "VERDICT: APPROVE", "APPROVE with risk", "APPROVE\ntrailing prose", "REVISE\n???"])
+      expect(core.classifyMeetingReviewDecision(text)).toBe("reviewing");
+    expect(parseMeetingVerdict("Earlier REVISE example\r\nAPPROVE\r\n")?.verdict).toBe("approve");
+  });
+  it("persists and strips an explicit no-verdict result without approving or creating work", () => {
+    const missing = { verdict: "no_verdict" as const, blocking_items: [], non_blocking_notes: [] };
+    const text = `Risk is required.\n${formatMeetingVerdict(missing)}`;
+    expect(parseMeetingVerdict(text)).toBeNull();
+    expect(parseStoredMeetingVerdict(text)).toEqual(missing);
+    expect(stripMeetingVerdict(text)).toBe("Risk is required.");
+    expect(core.classifyMeetingReviewDecision(text)).toBe("reviewing");
+    const minutes = createMeetingMinutesTools({
+      REVIEW_MAX_MEMO_ITEMS_PER_ROUND: 10,
+      REVIEW_MAX_MEMO_ITEMS_PER_DEPT: 4,
+    } as any);
+    const rows = [{ speaker_agent_id: "dev", speaker: "Dev", department: "dev", role: "leader", content: text }];
+    expect(minutes.collectRevisionMemoItems(rows)).toEqual([]);
+    expect(minutes.collectPlannedActionItems(rows)).toEqual([]);
+  });
   it("does not retry a valid structured verdict", async () => {
     const retry = vi.fn();
-    const fallback = vi.fn();
     const log = vi.fn();
     const result = await resolveMeetingVerdict({
       text: reply(),
@@ -62,17 +87,14 @@ describe("explicit meeting verdicts", () => {
       reviewer: "dev",
       phase: "review",
       retry,
-      fallback,
       log,
     });
-    expect(result.source).toBe("structured");
+    expect(result.source).toBe("explicit");
     expect(retry).not.toHaveBeenCalled();
-    expect(fallback).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("blocking_items=0, effective=approve"));
   });
-  it("retries exactly once for a missing verdict, then uses the original legacy classifier", async () => {
+  it("retries exactly once for a missing verdict, then records no verdict without guessing", async () => {
     const retry = vi.fn().mockResolvedValue({ text: "still missing" });
-    const fallback = vi.fn((text: string) => core.wantsReviewRevision(text));
     const log = vi.fn();
     const result = await resolveMeetingVerdict({
       text: "Approve, but risk remains",
@@ -80,27 +102,24 @@ describe("explicit meeting verdicts", () => {
       reviewer: "dev",
       phase: "review",
       retry,
-      fallback,
       log,
     });
     expect(retry).toHaveBeenCalledTimes(1);
-    expect(retry.mock.calls[0][0]).toContain("verdict block");
-    expect(fallback).toHaveBeenCalledExactlyOnceWith("Approve, but risk remains");
-    expect(result.source).toBe("legacy");
-    expect(meetingVerdictNeedsRevision(result.verdict)).toBe(true);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("legacy classifier fallback"));
+    expect(retry.mock.calls[0][0]).toContain("final APPROVE or REVISE line");
+    expect(result.source).toBe("no_verdict");
+    expect(result.verdict).toEqual({ verdict: "no_verdict", blocking_items: [], non_blocking_notes: [] });
+    expect(meetingVerdictNeedsRevision(result.verdict)).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("clarification required after one retry"));
   });
-  it("uses a successful retry and falls back if the retry throws", async () => {
-    const fallback = vi.fn(() => false);
-    const common = { text: "Approve with risk", lang: "ja", reviewer: "dev", phase: "planned", fallback, log: vi.fn() };
+  it("uses a successful retry and records no verdict if the retry throws", async () => {
+    const common = { text: "Approve with risk", lang: "ja", reviewer: "dev", phase: "planned", log: vi.fn() };
     const result = await resolveMeetingVerdict({
       ...common,
       retry: vi.fn().mockResolvedValue({ text: formatMeetingVerdict(approve) }),
     });
     expect(result).toEqual({ verdict: approve, source: "retry" });
-    expect(fallback).not.toHaveBeenCalled();
     const failed = await resolveMeetingVerdict({ ...common, retry: vi.fn().mockRejectedValue(new Error("offline")) });
-    expect(failed.source).toBe("legacy");
+    expect(failed.source).toBe("no_verdict");
   });
   it.each(["ko", "en", "ja", "zh"])("provides a localized contract for %s", (lang) => {
     expect(parseMeetingVerdict(meetingVerdictInstruction(lang))).toEqual({

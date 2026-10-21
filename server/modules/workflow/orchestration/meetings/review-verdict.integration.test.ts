@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../../bootstrap/schema/task-schema-migrations.ts";
 import { createReplyCoreTools } from "../../core/reply-core-tools.ts";
-import { formatMeetingVerdict, type MeetingVerdict } from "../../../../../src/lib/meeting-verdict.ts";
+import {
+  formatMeetingVerdict,
+  parseStoredMeetingVerdict,
+  type MeetingVerdict,
+} from "../../../../../src/lib/meeting-verdict.ts";
 import { createMeetingMinutesTools } from "./minutes.ts";
 import { createReviewConsensusTools } from "./review-consensus.ts";
 
@@ -102,6 +106,7 @@ async function runReview(finalVerdict: MeetingVerdict | null, feedbackVerdict = 
     ).not.toEqual({ status: "in_progress" }),
   );
   return {
+    tools,
     onApproved,
     appendTaskLog,
     runAgentOneShot,
@@ -140,13 +145,37 @@ describe("review verdict orchestration", () => {
     const result = await runReview({ ...approval, verdict: "revise" });
     expect(result.onApproved).toHaveBeenCalledTimes(1);
   });
-  it("retries missing reviewer verdicts once each and logs legacy fallback", async () => {
+  it("retries every missing leader verdict once and waits for clarification without remediation", async () => {
     const result = await runReview(null);
-    expect(result.runAgentOneShot).toHaveBeenCalledTimes(6); // opening, feedback + retry, summary, approval + retry
+    expect(result.runAgentOneShot).toHaveBeenCalledTimes(8); // one retry for opening, feedback, summary, approval
     expect(
-      result.appendTaskLog.mock.calls.filter((call) => String(call[2]).includes("legacy classifier fallback")),
-    ).toHaveLength(2);
-    expect(result.status).toBe("revision_requested");
+      result.appendTaskLog.mock.calls.filter((call) =>
+        String(call[2]).includes("clarification required after one retry"),
+      ),
+    ).toHaveLength(4);
+    expect(result.status).toBe("failed");
+    expect(result.onApproved).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT count(*) AS count FROM review_revision_history").get()).toEqual({ count: 0 });
+    const stored = db.prepare("SELECT content FROM meeting_minute_entries ORDER BY seq").all() as { content: string }[];
+    expect(stored).toHaveLength(4);
+    expect(stored.map((entry) => parseStoredMeetingVerdict(entry.content)?.verdict)).toEqual(
+      Array(4).fill("no_verdict"),
+    );
+  });
+  it("does not force approval for no verdict in the final round or consume a round on clarification", async () => {
+    const result = await runReview(null, null, 3);
+    expect(result.status).toBe("failed");
+    expect(result.onApproved).not.toHaveBeenCalled();
+    result.runAgentOneShot.mockImplementation(async () => ({ text: formatMeetingVerdict(approval) }));
+    result.tools.startReviewConsensusMeeting("task", "Review", "dev", result.onApproved);
+    await vi.waitFor(() => expect(result.onApproved).toHaveBeenCalledTimes(1));
+    expect(
+      db.prepare("SELECT round, status FROM meeting_minutes WHERE id != 'previous' ORDER BY created_at").all(),
+    ).toEqual([
+      { round: 3, status: "failed" },
+      { round: 3, status: "completed" },
+    ]);
+    expect(result.appendTaskLog.mock.calls.some((call) => String(call[2]).includes("exceeds max_rounds"))).toBe(false);
   });
   it("preserves forced finalization in the final round", async () => {
     const result = await runReview(

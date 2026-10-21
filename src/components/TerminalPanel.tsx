@@ -1,4 +1,5 @@
-import { parseMeetingVerdict, meetingVerdictNeedsRevision, stripMeetingVerdict } from "../lib/meeting-verdict";
+import MeetingVerdictView, { MeetingVerdictBadge } from "./MeetingVerdictView";
+import { parseStoredMeetingVerdict, meetingVerdictNeedsRevision, stripMeetingVerdict } from "../lib/meeting-verdict";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { Agent, Task, MeetingMinute } from "../types";
 import * as api from "../api";
@@ -14,6 +15,30 @@ import {
   type TaskLogEntry,
   type TerminalPanelProps,
 } from "./terminal-panel/model";
+
+function MeetingVerdictCounts({ meeting }: { meeting: MeetingMinute }) {
+  const { t } = useI18n();
+  // Count each leader's last statement once, never their intermediate feedback.
+  const latest = new Map<string, ReturnType<typeof parseStoredMeetingVerdict>>();
+  for (const entry of meeting.entries)
+    latest.set(entry.speaker_agent_id ?? entry.speaker_name, parseStoredMeetingVerdict(entry.content));
+  let approved = 0,
+    revised = 0,
+    missing = 0;
+  for (const verdict of latest.values()) {
+    if (verdict?.verdict === "no_verdict") missing++;
+    else if (!verdict) continue;
+    else if (meetingVerdictNeedsRevision(verdict)) revised++;
+    else approved++;
+  }
+  return (
+    <span className="text-[10px]" style={{ color: "var(--th-text-secondary)" }}>
+      APPROVE {approved} · REVISE {revised}
+      {missing > 0 &&
+        ` · ${missing} ${t({ ko: "판정 확인 대기", en: "awaiting clarification", ja: "判定確認待ち", zh: "等待确认判定" })}`}
+    </span>
+  );
+}
 
 export default function TerminalPanel({
   taskId,
@@ -738,13 +763,14 @@ export default function TerminalPanel({
                   >
                     {meetingStatusLabel(meeting.status)}
                   </span>
+                  <MeetingVerdictCounts meeting={meeting} />
                   <span className="ml-auto text-[10px]" style={{ color: "var(--th-text-muted)" }}>
                     {new Date(meeting.started_at).toLocaleString(locale)}
                   </span>
                 </div>
                 <div className="space-y-1.5">
                   {meeting.entries.map((entry) => {
-                    const verdict = parseMeetingVerdict(entry.content);
+                    const verdict = parseStoredMeetingVerdict(entry.content);
                     return (
                       <div
                         key={entry.id}
@@ -759,48 +785,16 @@ export default function TerminalPanel({
                           <span className="text-cyan-300">{entry.speaker_name}</span>
                           {entry.department_name && <span>{entry.department_name}</span>}
                           {entry.role_label && <span>· {entry.role_label}</span>}
-                          {verdict && (
-                            <span
-                              className={`ml-auto rounded px-2 py-0.5 ${meetingVerdictNeedsRevision(verdict) ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}
-                              title={
-                                verdict.verdict === "revise" && !meetingVerdictNeedsRevision(verdict)
-                                  ? tr(
-                                      "차단 항목 없는 보완 요청 · 승인 처리",
-                                      "Revise without blocking items; counted as approval",
-                                      "ブロッキングなしの修正要請・承認扱い",
-                                      "无阻塞项的修订请求 · 按批准处理",
-                                    )
-                                  : undefined
-                              }
-                            >
-                              {meetingVerdictNeedsRevision(verdict)
-                                ? t({ ko: "수정 요청", en: "Revise", ja: "修正依頼", zh: "需修改" })
-                                : t({ ko: "승인", en: "Approve", ja: "承認", zh: "批准" })}
-                              {meetingVerdictNeedsRevision(verdict) &&
-                                ` · ${verdict.blocking_items.length} ${tr("차단 항목", "blocking", "ブロッキング", "阻塞项")}`}
-                            </span>
-                          )}
+                          <span className="ml-auto">
+                            <MeetingVerdictBadge verdict={verdict} />
+                          </span>
                         </div>
                         <div
                           className="text-xs leading-relaxed whitespace-pre-wrap break-words"
                           style={{ color: "var(--th-text-primary)" }}
                         >
                           {stripMeetingVerdict(entry.content)}
-                          {verdict && (
-                            <div className="mt-1">
-                              {meetingVerdictNeedsRevision(verdict) &&
-                                verdict.blocking_items.map((item, index) => (
-                                  <div key={`block-${index}`}>
-                                    {t({ ko: "차단 항목", en: "Blocking", ja: "阻害項目", zh: "阻塞项" })}: {item}
-                                  </div>
-                                ))}
-                              {verdict.non_blocking_notes.map((note, index) => (
-                                <div key={`note-${index}`} style={{ color: "var(--th-text-muted)" }}>
-                                  {t({ ko: "참고 사항", en: "Note", ja: "参考情報", zh: "备注" })}: {note}
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                          <MeetingVerdictView verdict={verdict} showBadge={false} />
                         </div>
                       </div>
                     );
