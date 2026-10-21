@@ -6,6 +6,7 @@ import {
 } from "../../../../../src/lib/meeting-verdict.ts";
 import type { Lang } from "../../../../types/lang.ts";
 import { processReviewConsensusOutcome } from "./review-consensus-outcome.ts";
+import { isTimeoutRun } from "../../core/meeting-run.ts";
 
 type ReviewConsensusDeps = any;
 
@@ -182,10 +183,6 @@ export function createReviewConsensusTools(deps: ReviewConsensusDeps) {
             leader,
           );
           return `${prose}\n\n${formatMeetingVerdict(resolved.verdict)}`;
-        };
-        const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
-          const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
-          return /timeout after|timed out|request timed out|aborted/i.test(source);
         };
         const compactPromptForRetry = (prompt: string): string => {
           const raw = String(prompt ?? "");

@@ -3,6 +3,7 @@ import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/m
 import type { MeetingReviewDecision } from "../core/conversation-types.ts";
 import { parsePlanningGraph } from "../agents/planning-graph.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
+import { isTimeoutRun } from "../core/meeting-run.ts";
 
 type CreatePlannedApprovalToolsDeps = {
   reviewInFlight: Set<string>;
@@ -133,10 +134,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         const workTranscript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };
-        const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
-          const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
-          return /timeout after|timed out|request timed out|aborted/i.test(source);
-        };
         const compactPromptForRetry = (prompt: string): string => {
           const raw = String(prompt ?? "");
           const maxHead = 2600;
