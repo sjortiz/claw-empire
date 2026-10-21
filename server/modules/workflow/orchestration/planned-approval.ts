@@ -1,5 +1,9 @@
-import { parsePlanningGraph } from "../agents/planning-graph.ts";
+import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
+import { formatMeetingVerdict, stripMeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
+import type { MeetingReviewDecision } from "../core/conversation-types.ts";
+import { mergeOversizedPlanningGraph } from "./planning-graph-size.ts";
 import { isPlanningAgent } from "../../routes/collab/planner-selection.ts";
+import { isTimeoutRun } from "../core/meeting-run.ts";
 
 type CreatePlannedApprovalToolsDeps = {
   reviewInFlight: Set<string>;
@@ -32,6 +36,8 @@ type CreatePlannedApprovalToolsDeps = {
   collectPlannedActionItems: (...args: any[]) => any[];
   appendTaskProjectMemo: (...args: any[]) => any;
   appendTaskLog: (...args: any[]) => any;
+  broadcast?: (...args: any[]) => any;
+  classifyMeetingReviewDecision: (text: string) => MeetingReviewDecision;
   reviewMeetingOneShotTimeoutMs?: number;
 };
 
@@ -65,8 +71,23 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     collectPlannedActionItems,
     appendTaskProjectMemo,
     appendTaskLog,
+    classifyMeetingReviewDecision,
     reviewMeetingOneShotTimeoutMs,
+    broadcast,
   } = deps;
+
+  function markPlanningAttention(taskId: string, reason: string): void {
+    db.prepare("UPDATE tasks SET status = 'pending', planning_attention_reason = ?, updated_at = ? WHERE id = ?").run(
+      reason,
+      Date.now(),
+      taskId,
+    );
+    db.prepare(
+      "UPDATE agents SET current_task_id = NULL WHERE current_task_id = ? AND status IN ('idle', 'break')",
+    ).run(taskId);
+    broadcast?.("task_update", db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId));
+    appendTaskLog(taskId, "error", `Planning needs attention: ${reason}. Retry planning meeting from the task card.`);
+  }
 
   function startPlannedApprovalMeeting(
     taskId: string,
@@ -82,17 +103,19 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
 
     void (async () => {
       let meetingId: string | null = null;
-      const leaders = getTaskReviewLeaders(taskId, departmentId);
-      if (leaders.length === 0) {
-        reviewInFlight.delete(lockKey);
-        onApproved([]);
-        return;
-      }
+      let leaders: any[] = [];
       try {
+        leaders = getTaskReviewLeaders(taskId, departmentId);
+        if (leaders.length === 0) {
+          reviewInFlight.delete(lockKey);
+          onApproved([]);
+          return;
+        }
         const round = (reviewRoundState.get(lockKey) ?? 0) + 1;
         reviewRoundState.set(lockKey, round);
 
         let hasSupplementSignals = false;
+        let hasMissingVerdicts = false;
         const seatIndexByAgent = new Map(leaders.slice(0, 6).map((leader: any, idx: number) => [leader.id, idx]));
 
         const taskCtx = db
@@ -123,16 +146,10 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         });
         const lang = resolveLang(taskDescription ?? taskTitle);
         const transcript: any[] = [];
+        const informationalNotes: string[] = [];
+        const workTranscript: any[] = [];
         const oneShotTimeoutMs = Math.max(5_000, Number(reviewMeetingOneShotTimeoutMs ?? 65_000));
         const oneShotOptions = { projectPath, timeoutMs: oneShotTimeoutMs, noTools: true };
-        const wantsRevision = (content: string): boolean =>
-          /보완|수정|보류|리스크|추가.?필요|hold|revise|revision|required|pending|risk|block|保留|修正|补充|暂缓/i.test(
-            content,
-          );
-        const isTimeoutRun = (run: { text?: string; error?: string } | null | undefined): boolean => {
-          const source = `${run?.error ?? ""}\n${run?.text ?? ""}`;
-          return /timeout after|timed out|request timed out|aborted/i.test(source);
-        };
         const compactPromptForRetry = (prompt: string): string => {
           const raw = String(prompt ?? "");
           const maxHead = 2600;
@@ -234,6 +251,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             const draftPrompt = buildMeetingPrompt(leader, {
               meetingType: "planned",
               planningPhase: "draft",
+              verdictRequired: true,
               round,
               taskTitle,
               taskDescription,
@@ -249,10 +267,21 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             if (run?.error || isTimeoutRun(run) || !String(run?.text ?? "").trim()) {
               throw new Error(run?.error || "Department planning draft did not complete");
             }
+            const resolved = await resolveMeetingVerdict({
+              text: String(run.text),
+              lang,
+              reviewer: leader.id,
+              phase: "planned draft",
+              retry: (prompt) => runAgentOneShot(leader, prompt, { ...oneShotOptions, rawOutput: true }),
+              log: (message) => appendTaskLog(taskId, "system", message),
+            });
+            const workText = planningWorkFromVerdict(String(run.text), resolved.verdict);
             return {
               leader,
-              text: String(run.text).trim(),
-              displayText: chooseSafeReply(run, lang, "feedback", leader),
+              verdict: resolved.verdict,
+              workText,
+              text: `${workText}\n\n${formatMeetingVerdict({ ...resolved.verdict, non_blocking_notes: [] })}`,
+              displayText: `${chooseSafeReply({ ...run, text: stripMeetingVerdict(String(run.text)) }, lang, "feedback", leader)}\n\n${formatMeetingVerdict(resolved.verdict)}`,
             };
           }),
         );
@@ -267,19 +296,34 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             draft.value.displayText,
             draft.value.text,
           );
-          if (wantsRevision(draft.value.text)) hasSupplementSignals = true;
+          workTranscript.push({
+            speaker_agent_id: draft.value.leader.id,
+            speaker: getAgentDisplayName(draft.value.leader, lang),
+            department: getDeptName(draft.value.leader.department_id ?? "", taskWorkflowPackKey),
+            role: getRoleLabel(draft.value.leader.role, lang),
+            content: draft.value.workText,
+          });
+          if (draft.value.verdict.verdict === "no_verdict") hasMissingVerdicts = true;
+          if (classifyMeetingReviewDecision(draft.value.text) === "hold") hasSupplementSignals = true;
+          informationalNotes.push(
+            ...draft.value.verdict.non_blocking_notes.map(
+              (note) => `${getAgentDisplayName(draft.value.leader, lang)}: ${note}`,
+            ),
+          );
         }
 
         const summaryPrompt = buildMeetingPrompt(planningLeader, {
           meetingType: "planned",
           planningPhase: "consolidation",
+          verdictRequired: true,
           round,
           taskTitle,
           taskDescription,
           workflowPackKey: taskWorkflowPackKey,
           transcript,
-          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. End with a JSON fenced block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
-          stanceHint: "Keep kickoff moving and show concrete planned next steps instead of blocking.",
+          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a JSON fenced plan block before the verdict metadata block and final APPROVE/REVISE line: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
+          stanceHint:
+            "Keep kickoff moving and show concrete planned next steps. Nonblocking reviewer notes are informational only; never turn them into plan_items or remediation work.",
           lang,
         });
         const summaryRun = await runMeetingOneShotWithRetry(planningLeader, summaryPrompt, "summary");
@@ -287,17 +331,56 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         if (summaryRun?.error || isTimeoutRun(summaryRun)) {
           throw new Error(summaryRun?.error || "Planning consolidation did not complete");
         }
-        const graph = parsePlanningGraph(String(summaryRun?.text ?? ""));
-        const summaryText = chooseSafeReply(summaryRun, lang, "summary", planningLeader);
+        const graph = await mergeOversizedPlanningGraph(
+          String(summaryRun?.text ?? ""),
+          (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+          (message) => appendTaskLog(taskId, "system", message),
+        );
+        if (abortIfInactive()) return;
+        const summaryVerdict = await resolveMeetingVerdict({
+          text: String(summaryRun?.text ?? ""),
+          lang,
+          reviewer: planningLeader.id,
+          phase: "planned consolidation",
+          retry: (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
+          log: (message) => appendTaskLog(taskId, "system", message),
+        });
+        if (abortIfInactive()) return;
+        informationalNotes.push(
+          ...summaryVerdict.verdict.non_blocking_notes.map(
+            (note) => `${getAgentDisplayName(planningLeader, lang)}: ${note}`,
+          ),
+        );
+        if (classifyMeetingReviewDecision(formatMeetingVerdict(summaryVerdict.verdict)) === "hold")
+          hasSupplementSignals = true;
+        const summaryText = `${chooseSafeReply({ ...summaryRun, text: stripMeetingVerdict(String(summaryRun?.text ?? "")) }, lang, "summary", planningLeader)}\n\n${formatMeetingVerdict(summaryVerdict.verdict)}`;
         speak(planningLeader, "report", "all", null, summaryText);
-        const planItems = graph ? [JSON.stringify({ plan_items: graph })] : collectPlannedActionItems(transcript, 10);
+        if (hasMissingVerdicts || summaryVerdict.verdict.verdict === "no_verdict") {
+          if (informationalNotes.length)
+            appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
+          appendTaskLog(taskId, "system", `Planned meeting round ${round}: no verdict; clarification required`);
+          notifyCeo(`[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)}`, taskId);
+          if (meetingId) finishMeetingMinutes(meetingId, "failed");
+          dismissLeadersFromCeoOffice(taskId, leaders);
+          reviewRoundState.delete(lockKey);
+          reviewInFlight.delete(lockKey);
+          markPlanningAttention(taskId, "A planning reviewer did not provide a structured verdict after clarification");
+          return;
+        }
+        // Only stripped department drafts feed fallback work. Consolidation repeats
+        // those drafts, and verdict notes are informational rather than executable.
+        const planItems = graph
+          ? [JSON.stringify({ plan_items: graph })]
+          : collectPlannedActionItems(workTranscript, 10);
         const memoItems = graph
           ? graph.map(
               (item) =>
                 `${item.department_id}: ${item.title}${item.depends_on.length ? ` (depends on: ${item.depends_on.join(", ")})` : ""}`,
             )
           : planItems;
-        appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
+        if (memoItems.length) appendTaskProjectMemo(taskId, "planned", round, memoItems, lang);
+        if (informationalNotes.length)
+          appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
         appendTaskLog(
           taskId,
           "system",
@@ -325,6 +408,9 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         );
         if (meetingId) finishMeetingMinutes(meetingId, "completed");
         dismissLeadersFromCeoOffice(taskId, leaders);
+        db.prepare("UPDATE tasks SET planning_meeting_failures = 0, planning_attention_reason = NULL WHERE id = ?").run(
+          taskId,
+        );
         reviewRoundState.delete(lockKey);
         reviewInFlight.delete(lockKey);
         onApproved(planItems);
@@ -337,22 +423,42 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         }
         const msg = err?.message ? String(err.message) : String(err);
         appendTaskLog(taskId, "error", `Planned meeting error: ${msg}`);
+        if (meetingId) finishMeetingMinutes(meetingId, "failed");
+        dismissLeadersFromCeoOffice(taskId, leaders);
+        reviewInFlight.delete(lockKey);
+        db.prepare(
+          "UPDATE tasks SET planning_meeting_failures = COALESCE(planning_meeting_failures, 0) + 1 WHERE id = ?",
+        ).run(taskId);
+        const failureState = db.prepare("SELECT planning_meeting_failures FROM tasks WHERE id = ?").get(taskId) as
+          | { planning_meeting_failures: number }
+          | undefined;
+        if (failureState?.planning_meeting_failures === 1) {
+          appendTaskLog(taskId, "system", `Automatic re-queue: planned meeting failed; retrying once: ${msg}`);
+          startPlannedApprovalMeeting(taskId, taskTitle, departmentId, onApproved);
+          return;
+        }
+        markPlanningAttention(taskId, msg);
         const errLang = resolveLang(taskTitle);
         notifyCeo(
           pickL(
             l(
-              [`[CEO OFFICE] '${taskTitle}' Planned 회의 처리 중 오류가 발생했습니다: ${msg}`],
-              [`[CEO OFFICE] Error while processing planned meeting for '${taskTitle}': ${msg}`],
-              [`[CEO OFFICE] '${taskTitle}' のPlanned会議処理中にエラーが発生しました: ${msg}`],
-              [`[CEO OFFICE] 处理'${taskTitle}'的 Planned 会议时发生错误：${msg}`],
+              [
+                `[CEO OFFICE] '${taskTitle}' Planned 회의가 재시도 후에도 실패하여 확인이 필요합니다: ${msg}. 작업 카드에서 계획 회의를 재시도하세요.`,
+              ],
+              [
+                `[CEO OFFICE] Planned meeting for '${taskTitle}' failed after one retry and needs attention: ${msg}. Use Retry planning meeting on the task card.`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' のPlanned会議が再試行後も失敗し、確認が必要です: ${msg}。タスクカードから計画会議を再試行してください。`,
+              ],
+              [
+                `[CEO OFFICE] '${taskTitle}' 的 Planned 会议在重试后仍失败，需要关注：${msg}。请在任务卡中重试规划会议。`,
+              ],
             ),
             errLang,
           ),
           taskId,
         );
-        if (meetingId) finishMeetingMinutes(meetingId, "failed");
-        dismissLeadersFromCeoOffice(taskId, leaders);
-        reviewInFlight.delete(lockKey);
       }
     })();
   }

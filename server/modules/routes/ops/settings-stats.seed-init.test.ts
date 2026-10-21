@@ -489,6 +489,39 @@ describe("merge policy settings", () => {
   );
 });
 
+describe("review automation settings", () => {
+  it.each(["reviewAutoStart", "reviewAutoApply"])("round-trips %s as a boolean", (key) => {
+    const db = setupDb();
+    try {
+      const { getRoutes, putRoutes } = createHarness(db);
+      for (const value of [true, false]) {
+        const save = createFakeResponse();
+        putRoutes.get("/api/settings")?.({ body: { [key]: value } }, save);
+        expect(save.statusCode).toBe(200);
+        const read = createFakeResponse();
+        getRoutes.get("/api/settings")?.({}, read);
+        expect(read.payload).toMatchObject({ settings: { [key]: value } });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it.each([null, "true", 1, "on", {}])("rejects non-boolean %j before writing other settings", (value) => {
+    const db = setupDb();
+    try {
+      const { putRoutes } = createHarness(db);
+      const res = createFakeResponse();
+      putRoutes.get("/api/settings")?.({ body: { companyName: "Changed", reviewAutoStart: value } }, res);
+      expect(res.statusCode).toBe(400);
+      expect(res.payload).toMatchObject({ error: "invalid_review_automation", key: "reviewAutoStart" });
+      expect(db.prepare("SELECT value FROM settings WHERE key = 'companyName'").get()).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("Headroom settings contract", () => {
   it("returns defaults and persists normalized settings while omission preserves them", () => {
     const db = setupDb();

@@ -4,6 +4,8 @@
  */
 
 import type { JSX } from "react";
+import { parseStoredMeetingVerdict, stripMeetingVerdict } from "../lib/meeting-verdict";
+import MeetingVerdictView from "./MeetingVerdictView";
 
 interface MessageContentProps {
   content: string;
@@ -98,6 +100,8 @@ function renderInline(text: string): (string | JSX.Element)[] {
 }
 
 export default function MessageContent({ content, className = "" }: MessageContentProps) {
+  const verdict = parseStoredMeetingVerdict(content);
+  if (verdict) content = stripMeetingVerdict(content);
   // Split content into blocks (code blocks, tables, and regular text)
   const blocks: { type: "text" | "code" | "table"; content: string }[] = [];
 
@@ -155,6 +159,7 @@ export default function MessageContent({ content, className = "" }: MessageConte
 
   return (
     <div className={`space-y-2 ${className}`}>
+      {verdict && <MeetingVerdictView verdict={verdict} />}
       {finalBlocks.map((block, bi) => {
         if (block.type === "code") {
           return (

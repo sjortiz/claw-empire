@@ -111,6 +111,54 @@ describe("createCrossDeptCooperationTools", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(["dispatch", "acknowledgement"])("does not launch held collaboration at %s", (heldAt) => {
+    db = new DatabaseSync(":memory:");
+    applyBaseSchema(db);
+    applyTaskSchemaMigrations(db);
+    const { teamLeader, crossLeader, execAgent } = seedCollaborationFixture(db, "api");
+    const database = db;
+    const appendTaskLog = (taskId: string, kind: string, message: string) => {
+      database
+        .prepare("INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)")
+        .run(taskId, kind, message, Date.now());
+    };
+    const launchApiProviderAgent = vi.fn();
+    const { startCrossDeptCooperation } = createCrossDeptCooperationTools({
+      db,
+      nowMs: Date.now,
+      appendTaskLog,
+      notifyCeo: vi.fn(),
+      broadcast: vi.fn(),
+      getDeptName: (id: string) => id,
+      findTeamLeader: () => crossLeader,
+      findBestSubordinate: () => execAgent,
+      sendAgentMessage: vi.fn(),
+      l: (_ko: string[], en: string[]) => en,
+      pickL: pickVariant,
+      launchApiProviderAgent,
+    });
+    const pause = () => appendTaskLog("task-parent", "system", "PAUSE_BREAK: explicit pause");
+    if (heldAt === "dispatch") pause();
+    startCrossDeptCooperation(["dev"], 0, {
+      teamLeader,
+      taskId: "task-parent",
+      taskTitle: "Parent task",
+      ceoMessage: "Need development support",
+      leaderDeptId: "planning",
+      leaderDeptName: "Planning",
+      leaderName: "Planner",
+      lang: "en",
+      projectId: "project-1",
+    });
+    if (heldAt === "acknowledgement") pause();
+    vi.advanceTimersByTime(10_000);
+    expect(launchApiProviderAgent).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM tasks WHERE source_task_id = 'task-parent'").get()).toEqual({
+      count: 0,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each<ProviderCase>([
     { provider: "api", launchKind: "api", initiallyBusy: true },
     { provider: "api", launchKind: "api", worktreeFails: true },

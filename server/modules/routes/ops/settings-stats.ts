@@ -160,6 +160,11 @@ export function registerOpsSettingsStatsRoutes(ctx: RuntimeContext): void {
         return res.status(400).json({ ok: false, error: "invalid_headroom" });
       }
     }
+    for (const key of ["reviewAutoStart", "reviewAutoApply"]) {
+      if (Object.hasOwn(body, key) && typeof body[key] !== "boolean") {
+        return res.status(400).json({ ok: false, error: "invalid_review_automation", key });
+      }
+    }
     const officePackProfilesInPayload = (body as Record<string, unknown>)[OFFICE_PACK_PROFILES_KEY];
     const selectedOfficePackInPayload = (body as Record<string, unknown>)["officeWorkflowPack"];
 

@@ -127,6 +127,8 @@ export interface Task {
   output_format?: string | null;
   project_path: string | null;
   result: string | null;
+  planning_attention_reason?: string | null;
+  planning_meeting_failures?: number;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;
@@ -139,6 +141,13 @@ export interface Task {
 
 export type AssignmentMode = "auto" | "manual";
 export type MergePolicy = "auto" | "manual";
+export type ReviewAutomationOverride = "on" | "off";
+
+// Nullable project overrides for the reviewAutoStart/reviewAutoApply settings; null inherits the global value.
+export interface ProjectReviewAutomation {
+  review_auto_start: ReviewAutomationOverride | null;
+  review_auto_apply: ReviewAutomationOverride | null;
+}
 
 export interface Project {
   id: string;
@@ -148,6 +157,8 @@ export interface Project {
   default_pack_key?: WorkflowPackKey;
   assignment_mode: AssignmentMode;
   merge_policy?: MergePolicy | null;
+  review_auto_start?: ReviewAutomationOverride | null;
+  review_auto_apply?: ReviewAutomationOverride | null;
   assigned_agent_ids?: string[];
   last_used_at: number | null;
   created_at: number;
@@ -374,6 +385,8 @@ export interface CompanySettings {
   autoAssign: boolean;
   yoloMode?: boolean;
   mergePolicy?: MergePolicy;
+  reviewAutoStart?: boolean;
+  reviewAutoApply?: boolean;
   autoUpdateEnabled: boolean;
   autoUpdateNoticePending?: boolean;
   oauthAutoSwap?: boolean;
@@ -395,6 +408,8 @@ export const DEFAULT_SETTINGS: CompanySettings = {
   autoAssign: true,
   yoloMode: false,
   mergePolicy: "auto",
+  reviewAutoStart: false,
+  reviewAutoApply: false,
   autoUpdateEnabled: false,
   autoUpdateNoticePending: false,
   oauthAutoSwap: true,

@@ -97,6 +97,7 @@ export function initializeWorkflow(
     subtaskDelegationCallbacks: runtime.subtaskDelegationCallbacks,
     subtaskDelegationCompletionNoticeSent: runtime.subtaskDelegationCompletionNoticeSent,
     subtaskDelegationDispatchInFlight: runtime.subtaskDelegationDispatchInFlight,
+    reviewInFlight: runtime.reviewInFlight,
     taskExecutionSessions: runtime.taskExecutionSessions,
     taskWorktrees: runtime.taskWorktrees,
     wsClients: runtime.wsClients,
