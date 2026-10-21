@@ -64,3 +64,7 @@ Final required checks for this follow-up:
 - `git diff --check`: passed.
 
 Independent verification and the live Nexo API replay remain with their separately assigned owners.
+
+## Independent verification and HTTP replay completed
+
+Bolt's assigned verification and API replay are recorded in [the independent verification report](2026-10-21-development-independent-verification.md). The identical regression fails on current local main and the immediate pre-coverage revision, then passes on the integrated implementation. Final API total: 85 files / 575 tests. All available required checks pass; `pnpm run check` is unavailable because its script is absent.
