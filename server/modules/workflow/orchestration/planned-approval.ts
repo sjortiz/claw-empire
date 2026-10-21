@@ -1,4 +1,4 @@
-import { resolveMeetingVerdict, planningWorkFromVerdict } from "../meeting-verdict.ts";
+import { resolveMeetingVerdict, planningWorkFromVerdict, meetingVerdictClarification } from "../meeting-verdict.ts";
 import {
   formatMeetingVerdict,
   meetingVerdictNeedsRevision,
@@ -72,7 +72,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
     collectPlannedActionItems,
     appendTaskProjectMemo,
     appendTaskLog,
-    wantsReviewRevision,
     reviewMeetingOneShotTimeoutMs,
   } = deps;
 
@@ -101,6 +100,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         reviewRoundState.set(lockKey, round);
 
         let hasSupplementSignals = false;
+        let hasMissingVerdicts = false;
         const seatIndexByAgent = new Map(leaders.slice(0, 6).map((leader: any, idx: number) => [leader.id, idx]));
 
         const taskCtx = db
@@ -262,7 +262,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
               reviewer: leader.id,
               phase: "planned draft",
               retry: (prompt) => runAgentOneShot(leader, prompt, { ...oneShotOptions, rawOutput: true }),
-              fallback: wantsReviewRevision,
               log: (message) => appendTaskLog(taskId, "system", message),
             });
             return {
@@ -292,6 +291,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
             role: getRoleLabel(draft.value.leader.role, lang),
             content: draft.value.workText,
           });
+          if (draft.value.verdict.verdict === "no_verdict") hasMissingVerdicts = true;
           if (meetingVerdictNeedsRevision(draft.value.verdict)) hasSupplementSignals = true;
           informationalNotes.push(
             ...draft.value.verdict.non_blocking_notes.map(
@@ -309,7 +309,7 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           taskDescription,
           workflowPackKey: taskWorkflowPackKey,
           transcript,
-          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a JSON fenced plan block before the final verdict block: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
+          turnObjective: `Consolidate the department drafts into one executable plan. Preserve department ownership and explicit prerequisites; do not redraft their work. Include a JSON fenced plan block before the verdict metadata block and final APPROVE/REVISE line: {"plan_items":[{"key":"stable_local_key","title":"Action","description":"Evidence and checks","department_id":"actual_department_id","depends_on":[]}]}. Use local keys in depends_on only for real prerequisites, including cross-department dependencies; never invent department-order dependencies. Every item must name its owning department. The server will resolve keys into subtask IDs; independent items start together. Department IDs: ${[...new Set(leaders.map((leader: any) => leader.department_id).filter(Boolean))].join(", ")}.`,
           stanceHint:
             "Keep kickoff moving and show concrete planned next steps. Nonblocking reviewer notes are informational only; never turn them into plan_items or remediation work.",
           lang,
@@ -326,7 +326,6 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
           reviewer: planningLeader.id,
           phase: "planned consolidation",
           retry: (prompt) => runAgentOneShot(planningLeader, prompt, { ...oneShotOptions, rawOutput: true }),
-          fallback: wantsReviewRevision,
           log: (message) => appendTaskLog(taskId, "system", message),
         });
         if (abortIfInactive()) return;
@@ -338,6 +337,17 @@ export function createPlannedApprovalTools(deps: CreatePlannedApprovalToolsDeps)
         if (meetingVerdictNeedsRevision(summaryVerdict.verdict)) hasSupplementSignals = true;
         const summaryText = `${chooseSafeReply({ ...summaryRun, text: stripMeetingVerdict(String(summaryRun?.text ?? "")) }, lang, "summary", planningLeader)}\n\n${formatMeetingVerdict(summaryVerdict.verdict)}`;
         speak(planningLeader, "report", "all", null, summaryText);
+        if (hasMissingVerdicts || summaryVerdict.verdict.verdict === "no_verdict") {
+          if (informationalNotes.length)
+            appendTaskProjectMemo(taskId, "planned", round, [...new Set(informationalNotes)], lang, "non_blocking");
+          appendTaskLog(taskId, "system", `Planned meeting round ${round}: no verdict; clarification required`);
+          notifyCeo(`[CEO OFFICE] '${taskTitle}': ${meetingVerdictClarification(lang)}`, taskId);
+          if (meetingId) finishMeetingMinutes(meetingId, "failed");
+          dismissLeadersFromCeoOffice(taskId, leaders);
+          reviewRoundState.delete(lockKey);
+          reviewInFlight.delete(lockKey);
+          return;
+        }
         const planItems = graph
           ? [JSON.stringify({ plan_items: graph })]
           : collectPlannedActionItems(workTranscript, 10);

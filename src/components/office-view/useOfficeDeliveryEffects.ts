@@ -364,7 +364,7 @@ export function useCeoOfficeCallAnimations({
         const line = pickLine(call);
         const decision = resolveMeetingDecision(call.phase, call.decision, line);
         renderSpeechBubble(seat.x, seat.y, call.phase, line);
-        if (call.phase === "review") {
+        {
           const attendee = deliveriesRef.current.find((delivery) => {
             return delivery.agentId === call.fromAgentId && delivery.holdAtSeat && !delivery.sprite.destroyed;
           });

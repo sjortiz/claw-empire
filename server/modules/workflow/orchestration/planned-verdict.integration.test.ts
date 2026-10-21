@@ -3,7 +3,12 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyBaseSchema } from "../../bootstrap/schema/base-schema.ts";
 import { applyTaskSchemaMigrations } from "../../bootstrap/schema/task-schema-migrations.ts";
-import { formatMeetingVerdict, parseMeetingVerdict, type MeetingVerdict } from "../../../../src/lib/meeting-verdict.ts";
+import {
+  formatMeetingVerdict,
+  parseMeetingVerdict,
+  parseStoredMeetingVerdict,
+  type MeetingVerdict,
+} from "../../../../src/lib/meeting-verdict.ts";
 import { createPlannedApprovalTools } from "./planned-approval.ts";
 import { createMeetingMinutesTools } from "./meetings/minutes.ts";
 
@@ -11,13 +16,14 @@ let db: DatabaseSync;
 afterEach(() => db?.close());
 const approve: MeetingVerdict = { verdict: "approve", blocking_items: [], non_blocking_notes: ["Monitor risk later"] };
 
-async function runPlanning(draft: string, summary: string, retry = "invalid verdict") {
+async function runPlanning(draft: string, summary: string, retry = "invalid verdict", solo = false) {
   db = new DatabaseSync(":memory:");
   applyBaseSchema(db);
   applyTaskSchemaMigrations(db);
   db.exec(`INSERT INTO departments (id, name, name_ko, icon, color) VALUES ('planning', 'Planning', '기획', 'P', '#111'), ('dev', 'Development', '개발', 'D', '#111');
     INSERT INTO agents (id, name, department_id, role, cli_provider, status) VALUES ('planner', 'Planner', 'planning', 'team_leader', 'codex', 'idle'), ('dev', 'Dev', 'dev', 'team_leader', 'codex', 'idle');
     INSERT INTO tasks (id, title, department_id, assigned_agent_id, status) VALUES ('task', 'Plan', 'planning', 'planner', 'planned');`);
+  if (solo) db.exec("DELETE FROM agents WHERE id = 'dev'");
   const appendTaskLog = vi.fn();
   const deps = {
     db,
@@ -67,12 +73,17 @@ async function runPlanning(draft: string, summary: string, retry = "invalid verd
     sleepMs: async () => {},
     randomDelay: () => 0,
   }).startPlannedApprovalMeeting("task", "Plan", "planning", onApproved);
-  await vi.waitFor(() => expect(onApproved).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() =>
+    expect(db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get()).not.toEqual({
+      status: "in_progress",
+    }),
+  );
   return {
     onApproved,
     appendTaskLog,
     runAgentOneShot,
     buildMeetingPrompt,
+    status: (db.prepare("SELECT status FROM meeting_minutes WHERE task_id = 'task'").get() as any).status,
     description: (db.prepare("SELECT description FROM tasks WHERE id = 'task'").get() as any).description as string,
   };
 }
@@ -100,6 +111,23 @@ describe("planned meeting verdicts", () => {
     }>;
     expect(stored.map((entry) => parseMeetingVerdict(entry.content))).toEqual([approve, approve]);
   });
+  it("preserves a solo planning leader's draft instead of replacing it with the consolidation verdict", async () => {
+    const result = await runPlanning(
+      `Implement API\n${formatMeetingVerdict(approve)}`,
+      `Summary only\n${formatMeetingVerdict(approve)}`,
+      "invalid",
+      true,
+    );
+    expect(result.onApproved).toHaveBeenCalledExactlyOnceWith(["planning Planner: Implement API"]);
+    const rows = db.prepare("SELECT speaker_agent_id, content FROM meeting_minute_entries ORDER BY seq").all() as {
+      speaker_agent_id: string;
+      content: string;
+    }[];
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.speaker_agent_id === "planner")).toBe(true);
+    expect(rows[0].content).toContain("Implement API");
+    expect(rows[1].content).toContain("Summary only");
+  });
   it("records supplement signals only for revise with blocking items", async () => {
     const revise: MeetingVerdict = { ...approve, verdict: "revise", blocking_items: ["Specify API owner"] };
     const result = await runPlanning(`Implement API\n${formatMeetingVerdict(revise)}`, formatMeetingVerdict(approve));
@@ -122,20 +150,24 @@ describe("planned meeting verdicts", () => {
       expect.stringContaining("supplement-signals=no"),
     );
   });
-  it("uses the shared legacy classifier after retry exhaustion", async () => {
+  it("does not infer approval from prose after retry exhaustion", async () => {
     const result = await runPlanning("Implement API. Approved with no risk", formatMeetingVerdict(approve));
-    expect(result.appendTaskLog).toHaveBeenCalledWith(
-      "task",
-      "system",
-      expect.stringContaining("supplement-signals=no"),
-    );
+    expect(result.status).toBe("failed");
+    expect(result.onApproved).not.toHaveBeenCalled();
     expect(result.runAgentOneShot).toHaveBeenCalledTimes(3);
   });
-  it("retries missing verdicts once per reviewer and logs legacy fallback", async () => {
+  it("retries missing verdicts once per reviewer and persists no-verdict outcomes", async () => {
     const result = await runPlanning("Implement API with risk", "Consolidated plan");
     expect(result.runAgentOneShot).toHaveBeenCalledTimes(4);
     expect(
-      result.appendTaskLog.mock.calls.filter((call) => String(call[2]).includes("legacy classifier fallback")),
+      result.appendTaskLog.mock.calls.filter((call) =>
+        String(call[2]).includes("clarification required after one retry"),
+      ),
     ).toHaveLength(2);
+    expect(result.status).toBe("failed");
+    expect(result.onApproved).not.toHaveBeenCalled();
+    const rows = db.prepare("SELECT content FROM meeting_minute_entries ORDER BY seq").all() as { content: string }[];
+    expect(rows.map((row) => parseStoredMeetingVerdict(row.content)?.verdict)).toEqual(["no_verdict", "no_verdict"]);
+    expect(result.description ?? "").not.toContain("unresolved improvement items");
   });
 });
